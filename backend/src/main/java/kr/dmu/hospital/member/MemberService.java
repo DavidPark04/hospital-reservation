@@ -9,9 +9,12 @@ import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -22,12 +25,14 @@ public class MemberService {
     private final MongoTemplate mongo;
     private final BookingService booking;
     private final TransactionTemplate transaction;
+    private final PasswordEncoder passwords;
 
-    public MemberService(MongoTemplate mongo, BookingService booking, MongoTransactionManager transactionManager) {
+    public MemberService(MongoTemplate mongo, BookingService booking, MongoTransactionManager transactionManager, PasswordEncoder passwords) {
         this.mongo = mongo;
         this.booking = booking;
         this.transaction = new TransactionTemplate(transactionManager);
         this.transaction.setTimeout(20);
+        this.passwords = passwords;
     }
 
     public List<Document> list(String adminId) {
@@ -61,43 +66,94 @@ public class MemberService {
     }
 
     public Document delete(String adminId, String userId) {
+        return deleteMember(adminId, userId, false, null, null, null);
+    }
+
+    public Document withdraw(String userId, String password) {
+        return deleteMember(userId, userId, true, password, null, null);
+    }
+
+    /** Called only after a fresh OAuth callback has verified this exact provider identity. */
+    public Document withdrawSocial(String userId, String expectedIdentity, int expectedTokenVersion) {
+        if (expectedIdentity == null || expectedIdentity.isBlank()) {
+            throw new ApiException(403, "가입한 소셜 계정으로 다시 인증해 주세요.");
+        }
+        return deleteMember(userId, userId, true, null, expectedIdentity, expectedTokenVersion);
+    }
+
+    private Document deleteMember(String actorId, String userId, boolean withdrawal, String password, String socialIdentity, Integer expectedTokenVersion) {
         for (int attempt = 0; attempt < RETRIES; attempt++) {
             try {
                 return transaction.execute(status -> {
-                    requireAdmin(adminId);
-                    if (adminId.equals(userId)) {
-                        throw new ApiException(403, "현재 로그인한 관리자 계정은 삭제할 수 없습니다.");
+                    if (!withdrawal) {
+                        requireAdmin(actorId);
+                        if (actorId.equals(userId)) {
+                            throw new ApiException(403, "현재 로그인한 관리자 계정은 삭제할 수 없습니다.");
+                        }
                     }
                     Document user = mongo.findById(userId, Document.class, "users");
                     if (user == null) {
+                        if (withdrawal) throw new ApiException(401, "로그인이 필요합니다.");
                         throw new ApiException(404, "회원을 찾을 수 없습니다.");
                     }
                     if (!"USER".equals(user.getString("role"))) {
-                        throw new ApiException(403, "관리자 계정은 삭제할 수 없습니다.");
+                        throw new ApiException(403, withdrawal ? "관리자 계정은 탈퇴할 수 없습니다." : "관리자 계정은 삭제할 수 없습니다.");
+                    }
+                    if (withdrawal) {
+                        if (socialIdentity == null) verifyPassword(user, password);
+                        else verifySocialIdentity(user, socialIdentity, expectedTokenVersion);
                     }
                     // Booking mutations also write this user document, so an in-flight
                     // reservation must finish before deletion or retry after it and fail.
                     long deleted = mongo.remove(Query.query(Criteria.where("_id").is(userId)
                             .and("role").is("USER")), "users").getDeletedCount();
                     if (deleted != 1) {
-                        throw new ApiException(409, "회원 정보가 변경되었습니다. 목록을 다시 확인해 주세요.");
+                        throw new ApiException(409, "회원 정보가 변경되었습니다. 다시 확인해 주세요.");
                     }
-                    int canceled = booking.cancelMemberReservations(userId, adminId);
+                    int canceled = booking.cancelMemberReservations(userId, actorId);
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "requests");
-                    return new Document("message", "회원을 삭제했습니다.").append("deletedUserId", userId)
+                    mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_login_tickets");
+                    mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_withdrawal_proofs");
+                    return new Document("message", withdrawal ? "회원 탈퇴가 완료되었습니다." : "회원을 삭제했습니다.").append("deletedUserId", userId)
                             .append("canceledReservations", canceled);
                 });
             } catch (RuntimeException error) {
-                if (error instanceof ApiException || !retryable(error)) {
+                if (error instanceof ApiException || !retryable(error)
+                        || TransactionSynchronizationManager.isActualTransactionActive()) {
                     throw error;
                 }
                 if (attempt == RETRIES - 1) {
-                    throw new ApiException(409, "예약 요청이 처리 중입니다. 회원 목록을 확인한 뒤 다시 시도해 주세요.");
+                    throw new ApiException(409, "예약 요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
                 }
                 pause(attempt);
             }
         }
-        throw new ApiException(409, "회원 목록을 확인한 뒤 다시 시도해 주세요.");
+        throw new ApiException(409, "회원 정보를 확인한 뒤 다시 시도해 주세요.");
+    }
+
+    private void verifyPassword(Document user, String password) {
+        String provider = user.getString("authProvider");
+        if (provider != null && !"LOCAL".equals(provider)) {
+            throw new ApiException(403, "가입한 소셜 계정으로 다시 인증한 뒤 탈퇴해 주세요.");
+        }
+        if (password == null || password.isEmpty()) {
+            throw new ApiException(400, "현재 비밀번호를 입력해 주세요.");
+        }
+        String hash = user.getString("passwordHash");
+        if (password.getBytes(StandardCharsets.UTF_8).length > 72 || hash == null || !passwords.matches(password, hash)) {
+            throw new ApiException(403, "현재 비밀번호가 맞지 않습니다.");
+        }
+    }
+
+    private void verifySocialIdentity(Document user, String expectedIdentity, Integer expectedTokenVersion) {
+        String provider = user.getString("authProvider");
+        if (!("GOOGLE".equals(provider) || "KAKAO".equals(provider))
+                || !Boolean.TRUE.equals(user.getBoolean("profileComplete"))
+                || !expectedIdentity.equals(user.getString("socialIdentity"))
+                || !expectedIdentity.equals(provider + ":" + user.getString("socialSubject"))
+                || expectedTokenVersion == null || user.getInteger("tokenVersion", 0) != expectedTokenVersion) {
+            throw new ApiException(403, "가입한 소셜 계정으로 다시 인증해 주세요.");
+        }
     }
 
     private void requireAdmin(String adminId) {
@@ -129,7 +185,7 @@ public class MemberService {
             Thread.sleep(15L * (attempt + 1));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            throw new ApiException(503, "요청이 중단되었습니다. 회원 목록을 확인해 주세요.");
+            throw new ApiException(503, "요청이 중단되었습니다. 회원 정보를 확인해 주세요.");
         }
     }
 }

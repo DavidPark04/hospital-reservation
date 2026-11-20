@@ -38,6 +38,8 @@ public class UserIndexes implements ApplicationRunner {
             new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("oauth_authorization_expiry_v1"));
         mongo.getCollection(SocialLoginTickets.COLLECTION).createIndex(new Document("expiresAt", 1),
             new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("social_login_ticket_expiry_v1"));
+        mongo.getCollection(SocialWithdrawalService.COLLECTION).createIndex(new Document("expiresAt", 1),
+            new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("social_withdrawal_proof_expiry_v1"));
         mongo.getCollection(SocialSignups.COLLECTION).createIndex(new Document("socialIdentity", 1),
             new IndexOptions().unique(true).name("social_signup_identity_v1"));
         mongo.getCollection(SocialSignups.COLLECTION).createIndex(new Document("expiresAt", 1),

@@ -12,6 +12,7 @@ function currentRoute(){
   const hashRoute=window.location.hash.slice(1);
   if(hashRoute.startsWith('/'))return hashRoute;
   if(window.location.pathname==='/auth/social/callback')return '/auth/social/callback';
+  if(window.location.pathname==='/mypage')return '/mypage';
   if(window.location.pathname==='/login')return '/login';
   return '/';
 }
@@ -46,6 +47,7 @@ export default function App(){
   const [mobileMenu,setMobileMenu]=useState(false);
   const [booking,setBooking]=useState<BookingSelection|null>(null);
   const [toast,setToast]=useState('');
+  const [withdrawalReturn,setWithdrawalReturn]=useState(()=>window.location.pathname==='/mypage'?new URLSearchParams(window.location.search).get('withdrawal')||'':'');
   const profilePending=needsSocialProfile(user);
   const meta = useQuery({queryKey:['meta'],queryFn:()=>api<Meta>('/meta')});
   useEffect(()=>{
@@ -54,15 +56,24 @@ export default function App(){
     api<User>('/auth/me').then(value=>{if(active)setUser(value);}).catch(error=>{
       if(!active)return;
       clearToken();
+      if(withdrawalReturn){
+        setWithdrawalReturn('');setSocialError('로그인 정보를 확인하지 못했어요. 다시 로그인한 뒤 회원 탈퇴를 진행해 주세요.');setAuthMode('login');
+      }
       if(error instanceof ApiError&&error.status===401&&currentRoute()==='/complete-profile'){
         setSocialError('가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요.');setAuthMode('login');go('/login');
       }
     }).finally(()=>{if(active)setAuthReady(true);});
     return()=>{active=false;};
   },[]);
-  useEffect(()=>{const expired=()=>{setUser(null);setAuthMode('login');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});};window.addEventListener('auth-expired',expired);return()=>window.removeEventListener('auth-expired',expired);},[queryClient]);
+  useEffect(()=>{const expired=()=>{setUser(null);setWithdrawalReturn('');setAuthMode('login');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});};window.addEventListener('auth-expired',expired);return()=>window.removeEventListener('auth-expired',expired);},[queryClient]);
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),5000);return()=>clearTimeout(timer);},[toast]);
   useEffect(()=>setMobileMenu(false),[route]);
+  useEffect(()=>{
+    if(window.location.pathname==='/mypage'&&new URLSearchParams(window.location.search).has('withdrawal')){
+      window.history.replaceState(null,'','/#/mypage');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
+  },[]);
   useEffect(()=>{
     if(authReady&&profilePending){setAuthMode(null);if(route!=='/complete-profile')go('/complete-profile');}
     else if(authReady&&user&&route==='/complete-profile'&&currentRoute()==='/complete-profile')go('/mypage');
@@ -75,7 +86,7 @@ export default function App(){
     setSocialError('');
   }
   function completeLogin(result:AuthResult,destination?:string){
-    setToken(result.token);setUser(result.user);setAuthReady(true);setAuthMode(null);setSocialError('');setPreferredLogin(undefined);
+    setToken(result.token);setUser(result.user);setAuthReady(true);setAuthMode(null);setSocialError('');setPreferredLogin(undefined);setWithdrawalReturn('');
     queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});
     if(needsSocialProfile(result.user)){setToast('');go('/complete-profile');return;}
     let next=destination||(AUTH_RETURN_ROUTES.includes(route)?route:'/mypage');
@@ -89,7 +100,12 @@ export default function App(){
   function completeSocialLogin(result:AuthResult){
     const saved=readSocialReturn();setBooking(saved.booking);completeLogin(result,saved.route);
   }
-  async function logout(){try{await api('/auth/logout',{method:'POST'});}catch{/* Local session still ends. */}clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});go('/');setToast(profilePending?'가입을 중단했어요. 다시 진행하려면 소셜 로그인을 시작해 주세요.':'로그아웃했어요.');}
+  function completeWithdrawal(result:DeleteMemberResult){
+    clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);
+    setAuthMode(null);setPreferredLogin(undefined);setSocialError('');setWithdrawalReturn('');
+    queryClient.clear();go('/');setToast(result.message);
+  }
+  async function logout(){try{await api('/auth/logout',{method:'POST'});}catch{/* Local session still ends. */}clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);setWithdrawalReturn('');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});go('/');setToast(profilePending?'가입을 중단했어요. 다시 진행하려면 소셜 로그인을 시작해 주세요.':'로그아웃했어요.');}
   async function existingAccountLogin(provider:AuthProvider){
     const saved=readSocialReturn();
     await logout();
@@ -115,7 +131,7 @@ export default function App(){
       {route.startsWith('/chat')&&<ChatPage route={route} onBooking={startBooking}/>}
       {route==='/booking'&&(booking?<BookingPage selection={booking} user={user} login={()=>setAuthMode('login')} onDone={()=>{setToast(booking.reservation?'예약 일정을 변경했어요.':'모의 예약이 완료되었어요.');queryClient.invalidateQueries({queryKey:['reservations']});go('/reservations');}}/>:<EmptyPage icon={<CalendarDays/>} title="예약할 병원을 먼저 선택해 주세요" body="병원을 검색하거나 AI 상담에서 안내받은 병원의 예약을 시작할 수 있어요." action="병원 찾기" onAction={()=>go('/search')}/>)}
       {route==='/reservations'&&<ReservationsPage user={user} ready={authReady} login={()=>setAuthMode('login')} onBooking={startBooking} notify={setToast}/>}
-      {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')}/>}
+      {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')} withdrawalReturn={withdrawalReturn} onWithdrawalReturnHandled={()=>setWithdrawalReturn('')} onWithdrawn={completeWithdrawal}/>}
       {route==='/admin'&&<AdminPage user={user} login={()=>setAuthMode('login')} notify={setToast}/>}
       {route==='/admin/members'&&<AdminMembersPage user={user} ready={authReady} login={()=>setAuthMode('login')} notify={setToast}/>}
       {route==='/auth/social/callback'&&<SocialLoginCallback onSuccess={completeSocialLogin} onRetry={()=>{go('/login');setAuthMode('login');}}/>}
@@ -209,7 +225,7 @@ function ReservationsPage({user,ready,login,onBooking,notify}:{user:User|null;re
   return <div className="page-wrap reservations-page"><div className="page-heading"><span className="eyebrow">MY APPOINTMENTS</span><h1>{user.name}님의 예약</h1><p>예약한 일정을 확인하고, 필요한 경우 변경하거나 취소하세요.</p></div><div className="reservation-overview"><span className="overview-icon"><CalendarCheck2 size={30}/></span><div><span>나의 모의 예약</span><h2>예약 중인 일정 <strong>{upcoming}건</strong></h2></div><button className="button secondary" onClick={()=>go('/search')}><Plus size={17}/>새 예약</button></div><div className="tabs" role="tablist" aria-label="예약 상태"><button role="tab" aria-selected={tab==='RESERVED'} className={tab==='RESERVED'?'selected':''} onClick={()=>setTab('RESERVED')}>예약 중 <span>{upcoming}</span></button><button role="tab" aria-selected={tab==='CANCELED'} className={tab==='CANCELED'?'selected':''} onClick={()=>setTab('CANCELED')}>취소 내역 <span>{reservations.data?.items.filter(r=>r.status==='CANCELED').length||0}</span></button></div>{changeError&&<Notice tone="error">{changeError}</Notice>}{reservations.isLoading?<Loading text="예약 내역을 불러오고 있어요"/>:reservations.isError?<ErrorState error={reservations.error} retry={()=>reservations.refetch()}/>:items.length?<div className="reservation-list">{items.map(r=><article className="reservation-card panel" key={r.id}><div className="reservation-date"><span>{new Date(r.startAt).toLocaleDateString('ko-KR',{month:'short',timeZone:'Asia/Seoul'})}</span><strong>{new Date(r.startAt).toLocaleDateString('ko-KR',{day:'numeric',timeZone:'Asia/Seoul'}).replace('일','')}</strong><small>{new Date(r.startAt).toLocaleDateString('ko-KR',{weekday:'long',timeZone:'Asia/Seoul'})}</small></div><div className="reservation-detail"><span className={`status-badge ${r.status==='CANCELED'?'canceled':''}`}>{r.status==='CANCELED'?'취소 완료':'예약 완료'} · 모의 예약</span><h2>{r.hospitalName}</h2><p>{r.departmentName} · {r.doctorName} (가상 의료진)</p><p className="icon-text"><Clock3 size={15}/>{dateLabel(r.startAt)} {timeLabel(r.startAt)}</p><small className="reservation-number">예약 번호 {r.id.slice(0,8).toUpperCase()}</small></div>{r.status==='RESERVED'&&<div className="reservation-actions"><button className="button outline small" onClick={()=>change(r)} disabled={!!changing}>{changing===r.id?<LoaderCircle className="spin" size={16}/>:<CalendarDays size={16}/>}일정 변경</button><button className="button quiet small" onClick={()=>{cancel.reset();setCancelTarget(r);}}>예약 취소</button></div>}</article>)}</div>:<div className="empty-inline reservation-empty"><CalendarDays size={39}/><h3>{tab==='RESERVED'?'아직 예약한 일정이 없어요':'취소한 예약이 없어요'}</h3><p>{tab==='RESERVED'?'원하는 병원과 시간을 선택해 첫 모의 예약을 해보세요.':'취소한 예약은 여기에 표시됩니다.'}</p>{tab==='RESERVED'&&<button className="button primary" onClick={()=>go('/search')}>병원 찾기</button>}</div>}<Notice>모든 예약은 학습용 모의 예약이에요. 실제 진료가 필요하면 병원에 직접 예약해 주세요.</Notice>{cancelTarget&&<Dialog title="예약을 취소할까요?" close={()=>{if(!cancel.isPending)setCancelTarget(null);}}><p className="dialog-copy">{cancelTarget.hospitalName}<br/>{dateLabel(cancelTarget.startAt)} {timeLabel(cancelTarget.startAt)}</p><p className="muted">취소한 예약은 다시 예약해야 이용할 수 있어요.</p>{cancel.isError&&<Notice tone="error">{cancel.error.message}</Notice>}<div className="dialog-actions"><button className="button secondary" onClick={()=>setCancelTarget(null)} disabled={cancel.isPending}>유지하기</button><button className="button danger" onClick={()=>cancel.mutate(cancelTarget)} disabled={cancel.isPending}>{cancel.isPending?'취소 중':'예약 취소'}</button></div></Dialog>}</div>;
 }
 
-function MyPage({user,ready,login}:{user:User|null;ready:boolean;login:()=>void}){
+function MyPage({user,ready,login,withdrawalReturn,onWithdrawalReturnHandled,onWithdrawn}:{user:User|null;ready:boolean;login:()=>void;withdrawalReturn:string;onWithdrawalReturnHandled:()=>void;onWithdrawn:(result:DeleteMemberResult)=>void}){
   if(!ready)return <div className="page-wrap"><Loading text="내 정보를 확인하고 있어요"/></div>;
   if(!user)return <EmptyPage icon={<UserRound/>} title="로그인 후 내 정보를 확인해 주세요" body="마이페이지에서 가입한 아이디와 회원 정보를 확인할 수 있어요." action="로그인하기" onAction={login}/>;
   return <div className="page-wrap my-page"><div className="page-heading"><span className="eyebrow">MY ACCOUNT</span><h1>마이페이지</h1><p>{user.name}님의 회원 정보를 확인해 보세요.</p></div>
@@ -224,7 +240,79 @@ function MyPage({user,ready,login}:{user:User|null;ready:boolean;login:()=>void}
         <div><dt>회원 구분</dt><dd>{user.role==='ADMIN'?'관리자':'일반 회원'}</dd></div>
       </dl>
       <div className="profile-actions"><a className="button primary" href="#/reservations"><CalendarDays size={18}/>내 예약 보기</a>{user.role==='ADMIN'&&<a className="button secondary" href="#/admin/members">회원목록</a>}</div>
+      {user.role==='USER'&&<MembershipWithdrawal key={user.id} user={user} returnCode={withdrawalReturn} onReturnHandled={onWithdrawalReturnHandled} onSuccess={onWithdrawn}/>}
     </section>
+  </div>;
+}
+
+function withdrawalError(code:string){
+  if(code==='cancelled')return '본인 확인을 취소했어요. 회원 탈퇴는 진행되지 않았어요.';
+  if(code==='mismatch')return '현재 가입된 계정과 다른 계정이에요. 가입할 때 사용한 계정으로 다시 확인해 주세요.';
+  if(code==='session')return '본인 확인 시간이 지났어요. 다시 확인해 주세요.';
+  return '본인 확인을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.';
+}
+
+function MembershipWithdrawal({user,returnCode,onReturnHandled,onSuccess}:{user:User;returnCode:string;onReturnHandled:()=>void;onSuccess:(result:DeleteMemberResult)=>void}){
+  const social=user.authProvider==='GOOGLE'||user.authProvider==='KAKAO';
+  const provider=loginMethod(user.authProvider);
+  const [open,setOpen]=useState(!!returnCode);
+  const [verified,setVerified]=useState(returnCode==='verified');
+  const [redirecting,setRedirecting]=useState(false);
+  const [password,setPassword]=useState('');
+  const [error,setError]=useState(returnCode&&returnCode!=='verified'?withdrawalError(returnCode):'');
+  const busy=useRef(false);
+  const cancelRequest=useRef<Promise<unknown>|null>(null);
+  function showError(reason:unknown,fallback:string){
+    if(social&&reason instanceof ApiError&&reason.status===401){clearToken();window.dispatchEvent(new Event('auth-expired'));}
+    setError(reason instanceof Error?reason.message:fallback);
+  }
+  const remove=useMutation({
+    mutationFn:()=>social
+      ?api<DeleteMemberResult>('/auth/social/withdrawal/confirm',{method:'POST',body:'{}',credentials:'same-origin'})
+      :api<DeleteMemberResult>('/members/me',{method:'DELETE',body:JSON.stringify({password})}),
+    onSuccess:result=>{setPassword('');onSuccess(result);},
+    onError:reason=>{setPassword('');if(social)setVerified(false);showError(reason,'회원 탈퇴를 완료하지 못했어요. 다시 시도해 주세요.');},
+    onSettled:()=>{busy.current=false;}
+  });
+  const start=useMutation({
+    mutationFn:async()=>{await cancelRequest.current;return api<{authorizationUrl:string}>('/auth/social/withdrawal/start',{method:'POST',body:'{}',credentials:'same-origin'});},
+    onSuccess:result=>{setRedirecting(true);window.location.assign(result.authorizationUrl);},
+    onError:reason=>{busy.current=false;setRedirecting(false);showError(reason,'본인 확인을 시작하지 못했어요. 다시 시도해 주세요.');}
+  });
+  const pending=remove.isPending||start.isPending||redirecting;
+  useEffect(()=>{if(returnCode)onReturnHandled();},[returnCode,onReturnHandled]);
+  useEffect(()=>{
+    function restore(event:PageTransitionEvent){if(event.persisted){busy.current=false;start.reset();setVerified(false);setRedirecting(false);}}
+    window.addEventListener('pageshow',restore);return()=>window.removeEventListener('pageshow',restore);
+  },[start.reset]);
+  function close(){
+    if(busy.current)return;
+    setOpen(false);setPassword('');setError('');setVerified(false);
+    if(social)cancelRequest.current=api('/auth/social/withdrawal/cancel',{method:'POST',body:'{}',credentials:'same-origin'}).catch(()=>{});
+  }
+  function submit(event:FormEvent){
+    event.preventDefault();if(busy.current)return;
+    if(!social&&!password){setError('현재 비밀번호를 입력해 주세요.');return;}
+    busy.current=true;setError('');
+    if(social&&!verified)start.mutate();else remove.mutate();
+  }
+  return <div className="profile-withdrawal">
+    <p>서비스 이용을 마치려면 회원 탈퇴를 진행할 수 있어요.</p>
+    <button className="text-button withdrawal-link" type="button" onClick={()=>{setPassword('');setError('');setVerified(false);setOpen(true);}}>회원 탈퇴</button>
+    {open&&<Dialog title="회원 탈퇴" close={close}>
+      <p className="dialog-copy">탈퇴하면 회원 정보가 삭제되고 예약 중인 모의 예약이 모두 취소돼요. 탈퇴한 계정과 예약은 복구할 수 없어요.</p>
+      <form className="auth-form withdrawal-form" onSubmit={submit}>
+        {social?<>
+          <Notice tone={verified?'success':'info'}>{verified?`${provider} 계정 확인을 마쳤어요. 아래 버튼을 누르면 회원 탈퇴가 완료돼요.`:`가입할 때 사용한 ${provider} 계정으로 다시 본인 확인을 진행해 주세요. 확인 후 마지막으로 탈퇴 여부를 선택할 수 있어요.`}</Notice>
+          <p className="withdrawal-help">병원예약도우미에서만 탈퇴하며 {provider} 계정 자체는 삭제되지 않아요.</p>
+        </>:<label className="field">현재 비밀번호<input name="currentPassword" type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} required maxLength={100} disabled={pending} placeholder="현재 비밀번호를 입력해 주세요"/></label>}
+        {error&&<Notice tone="error">{error}</Notice>}
+        <div className="dialog-actions withdrawal-actions">
+          <button className="button secondary" type="button" onClick={close} disabled={pending}>취소</button>
+          <button className={`button ${social&&!verified?'primary':'danger'}`} type="submit" disabled={pending||(!social&&!password)}>{pending?<><LoaderCircle size={17} className="spin"/>{start.isPending||redirecting?'본인 확인으로 이동 중':'탈퇴 처리 중'}</>:social&&!verified?`${provider}로 확인하고 탈퇴`:'탈퇴하기'}</button>
+        </div>
+      </form>
+    </Dialog>}
   </div>;
 }
 
