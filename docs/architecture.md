@@ -11,6 +11,7 @@ flowchart LR
     BE --> HIRA[HIRA 병원·진료과 API]
     BE --> AI[OpenAI]
     BE --> OAuth[Google / Kakao]
+    FE --> Maps[Kakao 지도 SDK / 외부 길찾기]
 ```
 
 - `frontend/`: React·TypeScript·Vite·TanStack Query. 상담·검색·예약·가입·마이페이지·관리자 UI와 서버 상태 관리.
@@ -23,6 +24,8 @@ flowchart LR
 Backend 패키지는 `auth`, `member`, `integration`, `booking`, `common`, `config`입니다. 기능별 controller가 service를 호출하고 service는 MongoTemplate·외부 API client를 사용합니다. HTTP 공개 필드와 저장 문서를 구분하며 비밀번호·소셜 식별번호·인증 토큰은 회원 목록 응답에 포함하지 않습니다.
 
 Frontend는 `App.tsx`의 페이지 흐름, 소셜 가입 전용 컴포넌트, `ScrollStory.tsx`, 공통 요청 `api.ts`로 구성합니다. 기획 단계의 repository/DTO 및 features/pages 세분화는 현재 구현과 동일하지 않으며, 기존 기능을 유지한 채 필요한 범위에서 조정합니다.
+
+병원 상세 지도는 브라우저의 카카오 Web SDK로 표시합니다. 서버가 제공한 병원 좌표를 우선 사용하며 주소 변환도 SDK의 `services` 라이브러리로 처리합니다. 외부 길찾기는 카카오맵으로 연결하고 현재 위치를 수집하지 않습니다. 공개 JavaScript 키만 frontend 빌드 변수에 두며 서버의 카카오 REST API 키·Client Secret은 기존 인증 설정에 유지합니다.
 
 ## 인증과 데이터
 
