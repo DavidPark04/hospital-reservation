@@ -13,6 +13,10 @@
 | 제공자 콜백 | GET `/login/oauth2/code/{google\|kakao}` | OAuth state 검증 |
 | 소셜 결과 교환 | POST `/api/auth/social/exchange` | 같은 origin·일회용 HttpOnly 교환 쿠키 |
 | 소셜 가입 완료 | POST `/api/auth/social/profile` | 유효한 가입 임시 토큰 |
+| 일반 회원 탈퇴 | DELETE `/api/members/me` | LOCAL USER, 현재 비밀번호 확인 |
+| 소셜 탈퇴 인증 시작 | POST `/api/auth/social/withdrawal/start` | 가입 완료 GOOGLE/KAKAO USER |
+| 소셜 탈퇴 확정 | POST `/api/auth/social/withdrawal/confirm` | 시작한 회원의 JWT·재확인 증명 쿠키 |
+| 소셜 탈퇴 취소 | POST `/api/auth/social/withdrawal/cancel` | 현재 회원의 JWT |
 | 병원 검색·상세 | GET `/api/hospitals`, `/api/hospitals/{id}` | 전체 |
 | AI 상담 | POST `/api/chat` | 전체, 서버 사용량 제한 적용 |
 | 가상 의료진 | GET `/api/hospitals/{id}/doctors?department=01` | 전체 |
@@ -45,6 +49,14 @@ Google은 `openid`만 요청하고 Kakao는 별도 개인정보 scope를 요청�
 구글은 구글 로그인 안내, 일반 회원은 “이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.”를 표시합니다. `existingAuthProvider`는 `LOCAL`, `GOOGLE`, `KAKAO` 중 하나입니다. 전화번호만 같고 이름은 다르거나 이메일만 같은 경우에는 `{message:"이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요."}`만 반환하며 가입 방식과 해당 로그인 버튼을 표시하지 않습니다. 별도 아이디 중복은 기존 메시지 형태의 409입니다. 전화번호·이메일 입력값의 일치 검사이며 이메일·전화번호 본인 인증 또는 자동 계정 통합이 아닙니다.
 
 회원 로그아웃은 토큰 버전을 폐기하고, 가입 진행 중 로그아웃은 임시 가입 자료를 제거합니다. 프론트는 저장한 JWT를 지웁니다.
+
+## 회원 탈퇴
+
+일반 회원은 DELETE `/api/members/me`에 `{password}`를 전달합니다. 삭제 대상은 요청의 ID가 아니라 현재 JWT 회원으로 정하며 저장된 BCrypt 해시와 현재 비밀번호를 비교합니다. 비밀번호 누락은 400, 불일치는 403이고 실패 시 계정·예약을 유지합니다. 관리자 및 소셜 회원은 이 비밀번호 경로로 탈퇴할 수 없습니다.
+
+소셜 회원은 POST `/api/auth/social/withdrawal/start`로 `{authorizationUrl}`을 받아 기존 OAuth 경로에서 가입한 계정을 다시 확인합니다. 콜백의 제공자 고유번호가 시작한 회원과 일치해야 하며 일반 로그인·가입 처리로 전환하지 않습니다. 인증 결과는 `/mypage?withdrawal=verified`로 돌아오고, 프론트는 결과 쿼리를 지운 뒤 최종 확인 창을 표시합니다. 취소·실패·다른 계정 선택 시 탈퇴하지 않습니다. 최종 POST `/api/auth/social/withdrawal/confirm`은 현재 JWT와 유효한 일회용 HttpOnly 증명 쿠키를 함께 요구합니다. OAuth 콜백 방문만으로 회원을 삭제하지 않습니다.
+
+성공 응답은 `{message,deletedUserId,canceledReservations}`입니다. 회원정보·요청 키·로그인 교환 티켓 삭제와 활성 예약 취소·정원 반환을 한 트랜잭션으로 처리합니다. 실패하면 전체를 되돌리고, 성공하면 기존 회원 JWT가 무효화됩니다. 프론트는 세션과 회원별 캐시를 비우고 홈으로 이동합니다. 예약·이벤트 이력은 UUID로 보존합니다. 탈퇴한 이메일·전화번호는 신규 가입에 다시 사용할 수 있으며, 재가입은 새 회원 ID를 발급합니다. 카카오·구글 자체 계정 삭제나 해당 서비스의 연결 해제를 수행하는 기능은 아닙니다.
 
 ## 병원·상담
 
