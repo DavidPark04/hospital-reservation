@@ -49,8 +49,9 @@ public class MongoAuthorizationRequests implements AuthorizationRequestRepositor
             .append("bindingHash", SocialLoginTickets.hash(binding)).append("provider", provider)
             .append("authorizationUri", authorization.getAuthorizationUri()).append("clientId", authorization.getClientId())
             .append("redirectUri", authorization.getRedirectUri()).append("scopes", List.copyOf(authorization.getScopes()))
-            .append("parameters", strings(authorization.getAdditionalParameters(), List.of("nonce", "code_challenge", "code_challenge_method")))
-            .append("attributes", strings(authorization.getAttributes(), List.of("nonce", "code_verifier")))
+            .append("parameters", strings(authorization.getAdditionalParameters(), List.of("nonce", "code_challenge", "code_challenge_method", "prompt")))
+            .append("attributes", strings(authorization.getAttributes(), List.of("nonce", "code_verifier",
+                "withdrawal_user_id", "withdrawal_identity", "withdrawal_version")))
             .append("expiresAt", Date.from(clock.instant().plusSeconds(300)));
         mongo.insert(stored, COLLECTION);
         response.addHeader(HttpHeaders.SET_COOKIE, cookie(binding, 300).toString());
@@ -65,6 +66,9 @@ public class MongoAuthorizationRequests implements AuthorizationRequestRepositor
     @Override public OAuth2AuthorizationRequest removeAuthorizationRequest(HttpServletRequest request, HttpServletResponse response) {
         Query query = selection(request);
         Document stored = query == null ? null : mongo.findAndRemove(query, Document.class, COLLECTION);
+        if (stored != null && stored.get("attributes", Document.class).containsKey("withdrawal_user_id")) {
+            request.setAttribute(SocialWithdrawalService.REQUEST_ATTRIBUTE, stored.get("attributes", Document.class));
+        }
         response.addHeader(HttpHeaders.SET_COOKIE, cookie("", 0).toString());
         return restore(stored, request.getParameter("state"));
     }

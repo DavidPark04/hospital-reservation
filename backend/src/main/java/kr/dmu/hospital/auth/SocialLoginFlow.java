@@ -17,6 +17,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepo
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.stereotype.Component;
+import kr.dmu.hospital.common.ApiException;
 
 @Component
 public class SocialLoginFlow {
@@ -25,13 +26,23 @@ public class SocialLoginFlow {
     private final SocialMemberService members;
     private final SocialLoginTickets tickets;
     private final MongoAuthorizationRequests authorizationRequests;
+    private final SocialWithdrawalService withdrawal;
     public SocialLoginFlow(SocialLoginSettings settings, SocialMemberService members, SocialLoginTickets tickets,
-            MongoAuthorizationRequests authorizationRequests) {
+            MongoAuthorizationRequests authorizationRequests, SocialWithdrawalService withdrawal) {
         this.settings = settings; this.members = members; this.tickets = tickets; this.authorizationRequests = authorizationRequests;
+        this.withdrawal = withdrawal;
     }
     public void success(HttpServletRequest request, HttpServletResponse response, Authentication authentication) throws IOException {
         try {
             OAuth2AuthenticationToken oauth = (OAuth2AuthenticationToken) authentication;
+            if (withdrawal.isWithdrawal(request)) {
+                String proof = withdrawal.verify(request, oauth.getAuthorizedClientRegistrationId(), oauth.getPrincipal().getAttributes());
+                response.addHeader(HttpHeaders.SET_COOKIE, withdrawal.cookie(proof, 300).toString());
+                response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+                response.setHeader("Referrer-Policy", "no-referrer");
+                response.sendRedirect(settings.getFrontendUrl() + "/mypage?withdrawal=verified");
+                return;
+            }
             Document user = members.signIn(oauth.getAuthorizedClientRegistrationId(), oauth.getPrincipal().getAttributes());
             String ticket = tickets.create(user);
             response.addHeader(HttpHeaders.SET_COOKIE, cookie(ticket, 60).toString());
@@ -39,6 +50,14 @@ public class SocialLoginFlow {
             response.setHeader("Referrer-Policy", "no-referrer");
             response.sendRedirect(settings.getFrontendUrl() + "/auth/social/callback");
         } catch (RuntimeException failed) {
+            if (withdrawal.isWithdrawal(request)) {
+                response.addHeader(HttpHeaders.SET_COOKIE, withdrawal.cookie("", 0).toString());
+                response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+                response.setHeader("Referrer-Policy", "no-referrer");
+                String error = failed instanceof ApiException api && api.getMessage().contains("다른 소셜 계정") ? "mismatch" : "failed";
+                response.sendRedirect(settings.getFrontendUrl() + "/mypage?withdrawal=" + error);
+                return;
+            }
             response.addHeader(HttpHeaders.SET_COOKIE, cookie("", 0).toString());
             response.sendRedirect(settings.getFrontendUrl() + "/login?socialError=failed");
         } finally { clearSession(request); }
@@ -49,6 +68,11 @@ public class SocialLoginFlow {
         response.addHeader(HttpHeaders.SET_COOKIE, cookie("", 0).toString());
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         response.setHeader("Referrer-Policy", "no-referrer");
+        if (withdrawal.isWithdrawal(request)) {
+            response.addHeader(HttpHeaders.SET_COOKIE, withdrawal.cookie("", 0).toString());
+            response.sendRedirect(settings.getFrontendUrl() + "/mypage?withdrawal=" + error);
+            return;
+        }
         response.sendRedirect(settings.getFrontendUrl() + "/login?socialError=" + error);
     }
     public ResponseCookie cookie(String value, long seconds) {
