@@ -15,13 +15,13 @@
 
 | 순서 | 작업 | 완료 증거 |
 | --- | --- | --- |
-| 1 | BE 초기화 | Java·Spring 버전 고정, Gradle Wrapper, 로컬 실행·테스트·CI |
-| 2 | FE 초기화 | React·TypeScript·Vite, lockfile, lint·build·CI |
-| 3 | API·MongoDB 계약 | 요청·응답·오류·권한·인덱스·예약 상태 합의 |
-| 4 | 공공 API 승인·실조회 확인 | 서비스별 승인 상태, 샘플 요청·응답·한계 |
-| 5 | 인증·권한 | 본인 예약·관리자 권한 실패 경로 테스트 |
-| 6 | 예약 정합성 | 동시 요청·중복·취소·변경 실패 테스트 |
-| 7 | 사용자 흐름·AI 통합 | 직접 검색과 상담 경로의 끝까지 진행 |
-| 8 | 배포·제출 | 실제 URL, 환경설정, 시연·보고서, 제출 공지 확인 |
+| [#1](https://github.com/DavidPark04/hospital-reservation/issues/1) | BE 초기화 | Java·Spring 버전 고정, Gradle Wrapper, 로컬 실행·테스트·CI |
+| [#2](https://github.com/DavidPark04/hospital-reservation/issues/2) | FE 초기화 | React·TypeScript·Vite, lockfile, lint·build·CI |
+| [#3](https://github.com/DavidPark04/hospital-reservation/issues/3) | API·MongoDB 계약 | 요청·응답·오류·권한·인덱스·예약 상태 합의 |
+| [#4](https://github.com/DavidPark04/hospital-reservation/issues/4) | 공공 API 승인·실조회 확인 | 서비스별 승인 상태, 샘플 요청·응답·한계 |
+| [#5](https://github.com/DavidPark04/hospital-reservation/issues/5) | 인증·권한 | 본인 예약·관리자 권한 실패 경로 테스트 |
+| [#6](https://github.com/DavidPark04/hospital-reservation/issues/6) | 예약 정합성 | 동시 요청·중복·취소·변경 실패 테스트 |
+| [#7](https://github.com/DavidPark04/hospital-reservation/issues/7) | 사용자 흐름·AI 통합 | 직접 검색과 상담 경로의 끝까지 진행 |
+| [#8](https://github.com/DavidPark04/hospital-reservation/issues/8) | 배포·제출 | 실제 URL, 환경설정, 시연·보고서, 제출 공지 확인 |
 
 현재 기능 구현·앱 빌드·서비스 배포는 미완료입니다. UI 설계안이나 저장소 검사 성공을 실제 기능 구현 완료로 기록하지 않습니다.
