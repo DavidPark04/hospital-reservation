@@ -1,48 +1,78 @@
 # 배포와 운영
 
-## 사전 배포 (2026-11-20)
+기존 [hospital-reservation-tau.vercel.app](https://hospital-reservation-tau.vercel.app)의 임시 안내 화면을 기능 앱으로 교체합니다. 사용자가 선택한 배포 방식은 **기존 팀원 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**하는 것입니다. Oracle이나 별도 개인 Vercel 백엔드로 분리하지 않습니다.
 
-사용자 요청으로 정식 앱 구현 전에 Vercel 배포 주소와 Git 연결을 먼저 준비합니다. 현재 배포 대상은 “서비스 준비 중” 정적 안내 화면입니다. 병원 검색·AI 상담·모의 예약·로그인은 제공하지 않습니다.
+소스·설정 준비와 운영 반영은 별도 단계입니다. 현재 배포 설정 권한은 기존 프로젝트 소유 팀원에게 있으며, 아래 프로젝트 설정·환경변수와 실제 배포 결과 확인이 남아 있습니다. Google/Kakao 운영 주소 등록은 배포 후 사용자가 직접 진행합니다.
 
-| 항목 | 값 |
+## 프로젝트 소유 팀원이 적용할 설정
+
+| 항목 | 적용 값 |
 | --- | --- |
 | Git 저장소 | `DavidPark04/hospital-reservation` |
-| 운영 브랜치 | `main` |
-| Root Directory | `frontend` |
-| Framework Preset | Other |
-| Build / Install Command | 없음 |
-| Output Directory | `public` |
-| 설정 파일 | [frontend/vercel.json](../frontend/vercel.json) |
-| 환경변수 | 현재 필요 없음 |
+| Production Branch | `main` |
+| Root Directory | 기존 `frontend` 대신 저장소 루트: 입력란 비우기 |
+| 프로젝트 Build / Install / Output | 기존 정적 사이트 override를 해제하고 저장소 설정 사용 |
+| 배포 구성 | 저장소 루트 [vercel.json](../vercel.json)의 `services` |
+| frontend service | `frontend/`, Vite, `npm ci`, `npm run build`, `dist` |
+| backend service | `backend/`, Container Runtime, [Dockerfile](../backend/Dockerfile) |
+| 운영 주소 | `https://hospital-reservation-tau.vercel.app` 유지 |
 
-프로젝트의 실제 배포 URL과 Ready 상태는 Vercel 프로젝트의 Production Deployment에서 확인합니다. 배포마다 `/` HTTP 200 및 “서비스 준비 중” 표시를 확인합니다. 정적 파일만 게시하므로 소스 문서·`.env.example`은 공개 출력에 포함되지 않습니다. 현재 SPA가 아니므로 존재하지 않는 경로는 404가 정상입니다.
+`frontend/vercel.json`만 읽는 기존 Root Directory 설정을 유지하면 Java 백엔드가 함께 배포되지 않습니다. 루트 설정은 API·OAuth·OpenAPI 경로를 backend, 나머지 경로를 frontend로 전달합니다. `/auth/social/callback`과 화면 직접 접속·새로고침은 SPA 진입점으로 처리합니다.
 
-로컬 확인:
+Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의 HTTPS 정보를 사용합니다. Vercel도 같은 포트로 전달하도록 프로젝트 환경변수에 `PORT=8080`을 설정합니다. 서비스 구성과 Container Runtime은 Vercel Beta 기능이므로 실제 프로젝트의 배포 로그·지원 상태를 확인합니다. [Vercel Container Runtime](https://vercel.com/docs/functions/runtimes/container), [Vercel Services](https://vercel.com/docs/services)
 
-```bash
-python3 scripts/check_repository.py
-python3 -m http.server 8000 --directory frontend/public
-```
+## Production 환경변수
 
-`http://localhost:8000`에서 화면을 확인합니다. 앱 빌드·기능 테스트 통과를 의미하지 않습니다.
+비밀 값은 기존에 발급한 값을 **Vercel 프로젝트의 서버 환경변수**로 입력합니다. Git·PR·README·프론트 `VITE_` 변수에 복사하지 않습니다. 로컬 `.env`나 `.runtime` 파일을 Git에 올려 전달하지 않습니다.
 
-## React 앱 전환 시
+| 변수 | 값 또는 용도 |
+| --- | --- |
+| `MONGODB_URI` | 기존 Atlas의 `hospital_reservation` DB 연결 URI |
+| `JWT_SECRET` | 모든 backend 인스턴스가 공유하는 고정된 충분히 긴 비밀값 |
+| `APP_FRONTEND_URL` | `https://hospital-reservation-tau.vercel.app` |
+| `APP_BACKEND_URL` | `https://hospital-reservation-tau.vercel.app` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | 기존 Google 웹 OAuth 클라이언트 |
+| `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | 기존 Kakao REST API 키·Client Secret |
+| `OPENAI_API_KEY` | 기존 OpenAI API 키 |
+| `OPENAI_MODEL` | `gpt-6.2-sol` |
+| `HIRA_HOSPITAL_KEY`, `HIRA_DETAIL_KEY` | 승인받은 HIRA 병원정보·상세정보 인증키 |
+| `PORT` | `8080` |
+| `SERVER_ADDRESS` | `0.0.0.0` (컨테이너 기본값) |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | `framework` (배포 프록시용 컨테이너 기본값) |
+| `DEMO_ENABLED` | 샘플 병원 생성 여부. 실제 병원만 시작하려면 `false` |
 
-- FE 초기화 Issue #2에서 React·TypeScript·Vite와 lint/build CI를 준비합니다.
-- `frontend/public/index.html`을 제거하고 Vite 진입점 `frontend/index.html`을 만듭니다.
-- `frontend/vercel.json`을 `framework: "vite"`, `buildCommand: "npm run build"`, `outputDirectory: "dist"`로 바꾸고 설치 명령을 lockfile에 맞춥니다.
-- 클라이언트 라우팅을 도입하면 SPA rewrite를 추가하고 상세 URL 새로고침을 검증합니다.
-- 실제 BE 주소를 `VITE_API_BASE_URL`로 지정합니다. 이 값은 공개되므로 비밀 키를 넣지 않습니다.
-- BE의 CORS에 실제 FE 운영 origin을 등록하고 인증·예약 흐름을 검증합니다.
+`SERVER_PORT`를 따로 설정하면 `PORT`와 동일하게 맞춥니다. `HOSPITAL_API_FILE`은 로컬 보조 입력용이므로 운영에 설정하지 않습니다. DB URI에는 대상 DB명을 지정하고, Atlas 네트워크 허용 설정에서 Vercel 실행 환경이 접속할 수 있는지 확인합니다. 로컬 PC IP만 허용한 상태로는 클라우드 서버 접속이 보장되지 않습니다.
 
-## 백엔드와 데이터베이스
+Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에서 실계정 OAuth를 확인하려면 해당 origin·callback·DB를 별도로 맞춰야 하므로 이번 운영 검증은 확정된 production 주소를 기준으로 합니다.
 
-Spring Boot 서버(Render 후보)·MongoDB Atlas·외부 API는 아직 배포·연결하지 않았습니다. 도입·비용·절전·시작 지연을 확인한 뒤 설정 파일을 추가합니다. DB URI, API 키, JWT 비밀값은 BE 환경변수에만 저장합니다.
+## 배포 후 사용자가 등록할 소셜 주소
 
-## 배포와 되돌리기
+로컬 callback을 유지하면서 아래 운영 callback을 추가합니다.
 
-운영 배포는 `main`만 사용합니다. 작업 PR → `develop` 검증 → `main` 릴리스 PR 순서로 반영합니다. 연결 후 `main` 변경은 Vercel 운영 배포를 트리거합니다. 그 외 브랜치의 Preview는 운영과 구분합니다.
+- Google 승인된 리디렉션 URI: `https://hospital-reservation-tau.vercel.app/login/oauth2/code/google`
+- Kakao Redirect URI: `https://hospital-reservation-tau.vercel.app/login/oauth2/code/kakao`
+- 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://hospital-reservation-tau.vercel.app`을 사용합니다.
 
-문제가 있으면 Vercel Deployments에서 직전 정상 운영 배포를 찾아 Rollback으로 복구하고, 동일 수정의 재배포를 막기 위해 Git에서도 revert PR을 작성합니다. 첫 배포는 이전 배포가 없으므로 수정 PR로 새 정상 배포를 만듭니다.
+기존 동의 범위는 유지합니다. Google은 `openid`, Kakao는 추가 개인정보 scope 없이 계정 식별번호만 사용하고 이름·이메일·전화번호는 앱의 추가 입력 화면에서 받습니다. 앱 비즈니스 전환이나 이메일·SMS 인증은 이번 구성에 포함되지 않습니다.
 
-정식 서비스 배포·통합 검증은 기존 일정(12/5 통합 검증, 12/8 최종 접속 확인)에 따라 별도로 진행합니다. 사전 안내 화면 공개는 Issue #8 전체 완료를 뜻하지 않습니다.
+## 배포 순서와 검증
+
+1. 작업 PR → `develop`은 Squash, `develop` → `main`은 Merge commit으로 병합합니다. 최신 커밋의 Repository checks·Frontend build·Backend tests를 확인합니다.
+2. 프로젝트 소유 팀원이 Root Directory와 Production 환경변수를 적용합니다. 기존 Git 연결의 `main` 배포를 실행하거나 설정 완료 후 최신 `main`을 Redeploy합니다.
+3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
+4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다.
+5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
+6. 사용자가 정한 시험 계정으로 모의 예약 생성·변경·취소, 관리자 정원·휴진을 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
+7. 유휴 상태에서 서버가 다시 시작돼도 기존 회원·예약이 유지되고 로그인·검색이 다시 되는지 확인합니다. 운영 결과와 미완료 항목을 해당 PR 및 [진행 현황](../docs/progress-and-next.md)에 기록합니다.
+
+## 자동 검사와 현재 확인 범위
+
+기능 통합 소스의 로컬 검증은 **JUnit 134개, 실패·오류·생략 0개**, `bootJar` 성공, `npm ci` 및 프론트 TypeScript/Vite 빌드 성공입니다. 실제 외부 API·실계정 OAuth·운영 Vercel 배포 성공을 뜻하지 않습니다.
+
+GitHub Actions는 Node.js 22 프론트 빌드와 Java 21 테스트·JAR 빌드, 임시 MongoDB 8.0.16 replica set, backend Docker image 빌드를 수행합니다. Docker가 없는 로컬 환경에서는 컨테이너 빌드를 실행하지 않았으며 원격 CI 결과로 확인합니다. 외부 API 키 없이 실행하고 통합 테스트가 생략되면 실패 처리합니다.
+
+OAuth 요청은 5분, 교환 티켓은 60초의 MongoDB TTL 저장소에서 인스턴스 간 공유하고 원자적으로 한 번만 사용합니다. 가입 임시 권한은 30분입니다. AI 일일 제한도 공유 MongoDB 카운터를 사용하며 한국 시간 자정을 기준으로 비회원 20회·회원 60회입니다. DB 저장은 PC나 Java 프로세스의 수명과 분리됩니다.
+
+## 되돌리기
+
+문제가 있으면 프로젝트 소유자가 Vercel의 직전 정상 배포로 Rollback하고, Git에도 원인을 설명한 revert PR을 만듭니다. 데이터베이스 회원·예약을 자동 삭제하거나 백업으로 덮어쓰지 않습니다. 코드 롤백과 DB 마이그레이션 검토는 별도로 수행합니다.

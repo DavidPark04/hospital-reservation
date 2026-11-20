@@ -1,6 +1,6 @@
 # 프로젝트 계획서
 
-기준일: 2026-11-20. [노션 서비스 기획과 범위](https://app.notion.com/p/879b8822a70f82f789298129ce73194d)에 첨부된 「AI 기반 병원 예약 지원 서비스 기획서」와 [주차별 계획](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447)을 반영합니다. 아래 일정과 완료 기준은 작업 계획이며 완료 실적이 아닙니다.
+기준일: 2026-11-20. [노션 서비스 기획과 범위](https://app.notion.com/p/879b8822a70f82f789298129ce73194d)에 첨부된 「AI 기반 병원 예약 지원 서비스 기획서」와 [주차별 계획](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447)을 반영합니다. 아래 일정과 완료 기준은 작업 계획이며 완료 실적이 아닙니다. 11/20 로컬 기능 통합과 Vercel 배포 결정 이후의 실제 상태는 [진행 현황](progress-and-next.md)을 따릅니다.
 
 ## 목표와 범위
 
@@ -10,7 +10,7 @@ AI 상담 또는 직접 검색으로 병원을 찾고, 저장된 가상 의료�
 - 핵심 검증: 정원 초과·중복 요청·타인 예약 접근 방지, 취소 정원 복구 1회, 일정 변경 실패 시 롤백.
 - 시험 이후 확장: 병원평가 정보, NMC 진료요일, 동의·보관 기간을 검토한 상담 이력, 이메일 알림, 전체 예약·회원 관리 도구.
 
-영통구를 초기 검증 지역으로 제안하며 최종 범위는 팀에서 확정합니다. React·TypeScript·Vite·TanStack Query, Spring Boot 3·Java 21·Security·Data MongoDB·WebClient, MongoDB Atlas를 기준으로 합니다. FE는 Vercel, BE는 Render를 후보로 검토합니다.
+영통구를 초기 검증 지역으로 제안하며 최종 범위는 팀에서 확정합니다. React·TypeScript·Vite·TanStack Query, Spring Boot 3·Java 21·Security·Data MongoDB·WebClient, MongoDB Atlas를 기준으로 합니다. 초기에는 FE Vercel·BE Render 후보를 검토했으나, 11/20 사용자 결정으로 기존 팀원 Vercel의 FE·Java Container BE 구성으로 변경했습니다.
 
 ## 4주 일정
 
@@ -45,7 +45,7 @@ AI 실패 시 직접 검색으로 이어지고, 병원 API 실패 시 마지막 
 
 ## 확인된 근거와 남은 검증
 
-기준 기획서에는 로컬 MongoDB replica set PoC 10개 시나리오 통과가 기재되어 있습니다. 이 저장소에서 Spring 서비스·Atlas·실제 인증 API 연동이 검증되었다는 뜻은 아닙니다. 해당 검증과 증거 등록은 구현 작업에 포함합니다. 무료 상시 운영, Render 도입·비용·시작 지연도 확인이 필요합니다.
+기준 기획서에는 로컬 MongoDB replica set PoC 10개 시나리오 통과가 기재되어 있습니다. 이 저장소에서 Spring 서비스·Atlas·실제 인증 API 연동이 검증되었다는 뜻은 아닙니다. 해당 검증과 증거 등록은 구현 작업에 포함합니다. Vercel Container/Services의 실제 배포·사용량·유휴 후 시작 지연도 확인이 필요합니다.
 
 팀이 확정한 노션 결정과 기준 기획서를 저장소 문서·코드에 함께 반영합니다. 차이가 생기면 관련 Issue와 PR에 근거를 남깁니다.
 

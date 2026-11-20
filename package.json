@@ -1,0 +1,7 @@
+{
+  "name": "hospital-reservation-local-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {"mongo": "node scripts/mongo.mjs", "start": "node scripts/start.mjs"},
+  "devDependencies": {"mongodb": "^6.20.0", "mongodb-memory-server-core": "^10.3.0"}
+}

@@ -1,25 +1,35 @@
-# 아키텍처 기준
+# 아키텍처
 
-노션 [기준 기획서](https://app.notion.com/p/879b8822a70f82f789298129ce73194d)를 반영한 기획 단계의 구조입니다. 실행되는 시스템이 아직 아닙니다.
+[기준 기획서](https://app.notion.com/p/879b8822a70f82f789298129ce73194d)의 범위를 바탕으로 로컬에서 구현한 앱을 통합했습니다. 현재 구성과 초기 계획을 구분하며, 운영 연결 결과는 [배포 안내](../infra/README.md)에 기록합니다.
 
-- `frontend/`: React·TypeScript·Vite·TanStack Query. 사용자 상담·검색·일정 선택·예약·관리자 화면과 서버 상태 관리.
+```mermaid
+flowchart LR
+    Browser[브라우저] --> Vercel[Vercel 단일 도메인]
+    Vercel --> FE[Vite 정적 화면]
+    Vercel --> BE[Java 21 Spring 컨테이너]
+    BE --> DB[(MongoDB Atlas)]
+    BE --> HIRA[HIRA 병원·진료과 API]
+    BE --> AI[OpenAI]
+    BE --> OAuth[Google / Kakao]
+```
+
+- `frontend/`: React·TypeScript·Vite·TanStack Query. 상담·검색·예약·가입·마이페이지·관리자 UI와 서버 상태 관리.
 - `backend/`: Java 21·Spring Boot 3·Security·Spring Data MongoDB·WebClient. JWT 인증·권한, 외부 API, 예약 정합성.
-- MongoDB Atlas: 외부 병원 식별자·근거, 저장된 가상 의료진·시간표, 회원·예약·요청 키·변경 이벤트. 로컬 replica set 및 Atlas에서 다중 문서 트랜잭션을 검증.
-- 외부 API: OpenAI와 심평원은 백엔드만 호출. 병원 후보는 실제 조회 결과에서 선택하고 출처·확인 시점을 전달.
-- 배포: Vercel FE와 Render BE 후보. 비용·시작 지연을 확인하고 11/30부터 구성. 테스트·접속 검증 후 배포하며 자동화는 선택.
+- MongoDB Atlas: 병원 정보·근거, 저장된 가상 의료진·시간표, 가입 완료 회원, 만료되는 소셜 가입·OAuth 임시 상태, 예약·요청 키·변경 이벤트.
+- Vercel: 같은 프로젝트의 frontend와 backend services로 구성합니다. Java는 Container Runtime을 사용하며 기존 Oracle 배포 계획은 사용하지 않습니다.
 
 ## 코드 경계
 
-Backend 도메인 후보: `auth`, `user`, `hospital`, `consultation`, `doctor`, `schedule`, `reservation`, `admin`, `global`.
-도메인 안에서 controller, service, repository, document, dto를 분리합니다. Spring 기본 패키지명은 초기화 PR에서 고정합니다.
+Backend 패키지는 `auth`, `member`, `integration`, `booking`, `common`, `config`입니다. 기능별 controller가 service를 호출하고 service는 MongoTemplate·외부 API client를 사용합니다. HTTP 공개 필드와 저장 문서를 구분하며 비밀번호·소셜 식별번호·인증 토큰은 회원 목록 응답에 포함하지 않습니다.
 
-Frontend 기능 후보: `auth`, `hospital-search`, `consultation`, `reservation`, `my-reservations`, `admin`.
-라우트는 pages, 재사용 UI는 components, 공통 API·환경 설정은 lib에 둡니다.
+Frontend는 `App.tsx`의 페이지 흐름, 소셜 가입 전용 컴포넌트, `ScrollStory.tsx`, 공통 요청 `api.ts`로 구성합니다. 기획 단계의 repository/DTO 및 features/pages 세분화는 현재 구현과 동일하지 않으며, 기존 기능을 유지한 채 필요한 범위에서 조정합니다.
 
-## 함께 검토할 변경
+## 인증과 데이터
 
-API 필드·오류 코드, 인증·CORS, DB 인덱스·트랜잭션, 예약 상태 전이, 환경변수, CI·배포 설정은 변경 내용과 검증 결과를 PR에 공유합니다. 상대 리뷰는 선택이며 승인을 기다리지 않고 필수 검사 통과 후 병합할 수 있습니다. 공용 파일의 큰 수정 전에 Issue로 영향을 알립니다.
+일반 가입은 아이디·비밀번호·이름·전화번호를 받습니다. 구글·카카오는 고유 식별번호만 이용하며 이름·이메일·전화번호를 추가 입력받습니다. 입력한 이름·전화번호 조합으로 중복 가입을 차단합니다. 이메일·SMS 인증과 계정 자동 연결은 제공하지 않습니다.
 
-증상 원문은 MVP 기본 미저장입니다. AI 입력 최소화·조회 목록 밖 병원 제거를 구현과 테스트에서 확인합니다. AI 실패 시 직접 검색, 병원 API 실패 시 마지막 정상 캐시·확인일 또는 재시도 안내를 제공합니다.
+가입 완료 전 소셜 인증은 만료되는 별도 임시 저장소에서 관리하며 `users` 회원이나 관리자 목록에 넣지 않습니다. 가입 완료 시 정식 회원 생성과 임시 자료 소모를 트랜잭션으로 처리합니다. OAuth 요청과 교환 티켓도 서버 교체·확장에 대비해 공유 저장소에서 유효기간과 일회성을 검사합니다.
 
-공공 API 실제 인증 응답은 11/25, AI 연동 여부는 12/2에 확인합니다. 기획서에 기록된 로컬 MongoDB PoC 결과와 이 저장소의 Spring·Atlas·외부 API 통합 검증은 구분합니다. 상세 기준은 [DB 설계](database.md), 일정은 [프로젝트 계획서](project-plan.md)를 따릅니다.
+예약은 조건부 정원 갱신과 MongoDB 다중 문서 트랜잭션으로 처리합니다. 증상 원문은 저장하지 않습니다. AI는 실제 조회한 병원 후보만 사용하며, 장애 시 직접 검색 또는 명시된 캐시·샘플 상태를 표시합니다. 의료진·시간표는 가상이며 실제 병원 접수를 제공하지 않습니다.
+
+API·인증·DB·배포 설정을 변경하면 같은 PR에 관련 문서와 검증 결과를 기록합니다. [API 계약](api-contract.md), [DB 설계](database.md), [구현 상세](implementation-contract.md), [프로젝트 계획서](project-plan.md)를 함께 참고합니다.
