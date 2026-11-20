@@ -61,4 +61,4 @@ FE 담당은 frontend 브랜치를 선택합니다. 로컬 브랜치가 이미 �
 4. `main` → `develop` 동기화 PR을 **Create a merge commit**으로 병합합니다.
 5. 검증된 `main`에 `v0.1.0` 같은 태그를 붙이고 변경점·알려진 제한을 기록합니다.
 
-현재는 배포 자동화가 없습니다. 배포 연결을 구현한 이후 운영 배포 트리거를 `main`으로 제한합니다.
+`main` 푸시의 `Application checks`가 성공하면 `Vercel production`이 같은 커밋을 운영 배포합니다. 최신 `main`보다 오래된 커밋, PR·`develop` 검사는 배포하지 않습니다. 환경변수·배포 인증 설정과 수동 재배포는 [배포 안내](../infra/README.md)를 따릅니다.
