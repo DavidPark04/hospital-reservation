@@ -15,6 +15,8 @@ import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -23,6 +25,7 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.data.mongodb.core.query.UpdateDefinition;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -101,8 +104,8 @@ class MemberMongoIntegrationTest {
                     .append("capacity", 4).append("reservedCount", 0).append("closed", false), "timeSlots");
         }
         booking = new BookingService(mongo, transactionManager);
-        members = new MemberService(mongo, booking, transactionManager);
-        mvc = MockMvcBuilders.standaloneSetup(new MemberController(members))
+        members = new MemberService(mongo, booking, transactionManager, new BCryptPasswordEncoder());
+        mvc = MockMvcBuilders.standaloneSetup(new MemberController(members), new MyMemberController(members))
                 .setControllerAdvice(new ApiErrorHandler()).build();
     }
 
@@ -123,6 +126,119 @@ class MemberMongoIntegrationTest {
         mvc.perform(get("/api/admin/members")).andExpect(status().isForbidden());
         mvc.perform(delete("/api/admin/members/" + userA)).andExpect(status().isForbidden());
         assertNotNull(mongo.findById(userA, Document.class, "users"));
+    }
+
+    @Test
+    void withdrawalRequiresLoginAndCurrentPasswordWithoutChangingTheAccount() throws Exception {
+        mvc.perform(delete("/api/members/me")).andExpect(status().isUnauthorized());
+        String reservation = booking.create(userA, "wrong-password-reservation", "slot-1").getString("id");
+        signIn(userA);
+        mvc.perform(delete("/api/members/me")).andExpect(status().isBadRequest());
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON).content("{\"password\":123}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"wrong-password\"}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.message").value("현재 비밀번호가 맞지 않습니다."));
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdraw(userA, "x".repeat(73))).getStatus());
+        assertEquals(userA, auth.authenticate(tokenA).getId());
+        assertEquals(3, mongo.getCollection("users").countDocuments());
+        assertEquals("RESERVED", mongo.findById(reservation, Document.class, "reservations").getString("status"));
+        assertEquals(1, count("slot-1"));
+    }
+
+    @Test
+    void withdrawalUsesOnlyTheCurrentUserAndRestoresSlotsBeforeRevokingAllSessions() throws Exception {
+        String secondToken = (String) auth.login(Map.of("loginId", "patient-a", "password", PASSWORD)).get("token");
+        String reservation = booking.create(userA, "withdraw-reservation", "slot-1").getString("id");
+        String otherReservation = booking.create(userB, "other-reservation", "slot-1").getString("id");
+        Document otherBefore = mongo.findById(otherReservation, Document.class, "reservations");
+        mongo.insert(new Document("_id", "own-login-ticket").append("userId", userA), "social_login_tickets");
+        mongo.insert(new Document("_id", "other-login-ticket").append("userId", userB), "social_login_tickets");
+        mongo.insert(new Document("_id", "own-withdrawal-proof").append("userId", userA), "social_withdrawal_proofs");
+        mongo.insert(new Document("_id", "other-withdrawal-proof").append("userId", userB), "social_withdrawal_proofs");
+        signIn(userA);
+        mvc.perform(delete("/api/members/me").param("userId", userB).contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).append("userId", userB).toJson()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("회원 탈퇴가 완료되었습니다."))
+                .andExpect(jsonPath("$.deletedUserId").value(userA)).andExpect(jsonPath("$.canceledReservations").value(1));
+        assertNull(mongo.findById(userA, Document.class, "users"));
+        assertEquals("CANCELED", mongo.findById(reservation, Document.class, "reservations").getString("status"));
+        assertEquals(1, count("slot-1"));
+        assertEquals(otherBefore, mongo.findById(otherReservation, Document.class, "reservations"));
+        assertEquals(0, mongo.getCollection("requests").countDocuments(new Document("userId", userA)));
+        assertEquals(1, mongo.getCollection("requests").countDocuments(new Document("userId", userB)));
+        assertNull(mongo.findById("own-login-ticket", Document.class, "social_login_tickets"));
+        assertNotNull(mongo.findById("other-login-ticket", Document.class, "social_login_tickets"));
+        assertNull(mongo.findById("own-withdrawal-proof", Document.class, "social_withdrawal_proofs"));
+        assertNotNull(mongo.findById("other-withdrawal-proof", Document.class, "social_withdrawal_proofs"));
+        assertEquals(1, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", userA).append("action", "CANCEL")));
+        assertThrows(JwtException.class, () -> auth.authenticate(tokenA));
+        assertThrows(JwtException.class, () -> auth.authenticate(secondToken));
+        assertEquals(userB, auth.authenticate(tokenB).getId());
+        assertEquals(401, assertThrows(ApiException.class, () -> auth.login(Map.of("loginId", "patient-a", "password", PASSWORD))).getStatus());
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isUnauthorized());
+        assertEquals(1, count("slot-1"));
+        assertEquals(401, assertThrows(ApiException.class, () -> booking.create(userA, "late-booking", "slot-2")).getStatus());
+        assertEquals(List.of(userB, ADMIN), members.list(ADMIN).stream().map(user -> user.getString("id")).toList());
+        Map<String, Object> registered = auth.register(Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD,
+                "phone", "010-1234-5678", "email", "PATIENT-A@example.com"));
+        String newId = auth.authenticate((String) registered.get("token")).getId();
+        assertNotEquals(userA, newId);
+        assertTrue(booking.reservations(newId).isEmpty());
+        assertThrows(JwtException.class, () -> auth.authenticate(tokenA));
+    }
+
+    @Test
+    void withdrawalProtectsAdminPendingSignupAndStoredRoleChanges() throws Exception {
+        signIn(ADMIN);
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).toJson()))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.message").value("관리자 계정은 탈퇴할 수 없습니다."));
+        signIn(userA);
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().set("role", "ADMIN"), "users");
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                UserPrincipal.forSignup(new Document("_id", "pending-only").append("authProvider", "GOOGLE")), null, List.of()));
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
+        assertEquals(3, mongo.getCollection("users").countDocuments());
+    }
+
+    @Test
+    void legacyLocalMemberWithoutProviderCanWithdrawWithTheExactPassword() {
+        String password = " password with spaces ";
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().unset("authProvider")
+                .set("passwordHash", new BCryptPasswordEncoder().encode(password)), "users");
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdraw(userA, password.trim())).getStatus());
+        assertEquals(userA, members.withdraw(userA, password).getString("deletedUserId"));
+        assertNull(mongo.findById(userA, Document.class, "users"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"GOOGLE", "KAKAO"})
+    void socialWithdrawalRequiresTheVerifiedIdentityAndReleasesTheAccountContacts(String provider) throws Exception {
+        String subject = "1234567890";
+        String identity = provider + ":" + subject;
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().set("authProvider", provider)
+                .set("socialSubject", subject).set("socialIdentity", identity).set("profileComplete", true).unset("passwordHash"), "users");
+        signIn(userA);
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, provider + ":9999999999", 0)).getStatus());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, null, 0)).getStatus());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userB, identity, 0)).getStatus());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(ADMIN, identity, 0)).getStatus());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, identity, 1)).getStatus());
+        assertEquals(userA, auth.authenticate(tokenA).getId());
+        Document result = members.withdrawSocial(userA, identity, 0);
+        assertEquals(userA, result.getString("deletedUserId"));
+        assertEquals(0, result.getInteger("canceledReservations"));
+        assertNull(mongo.findById(userA, Document.class, "users"));
+        assertThrows(JwtException.class, () -> auth.authenticate(tokenA));
+        Map<String, Object> registered = auth.register(Map.of("loginId", "returned-member", "name", "다시 가입한 회원", "password", PASSWORD,
+                "phone", "010-1234-5678", "email", "patient-a@example.com"));
+        assertNotEquals(userA, auth.authenticate((String) registered.get("token")).getId());
     }
 
     @Test
@@ -259,12 +375,15 @@ class MemberMongoIntegrationTest {
         assertThrows(JwtException.class, () -> auth.authenticate(tokenA));
     }
 
-    @Test
-    void inconsistentSlotCounterRollsBackUserCancellationRequestsAndAudit() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void inconsistentSlotCounterRollsBackUserCancellationRequestsAndAudit(boolean withdrawal) {
         String first = booking.create(userA, "first", "slot-1").getString("id");
         String second = booking.create(userA, "second", "slot-2").getString("id");
         mongo.updateFirst(Query.query(Criteria.where("_id").is("slot-2")), new Update().set("reservedCount", 0), "timeSlots");
-        ApiException failed = assertThrows(ApiException.class, () -> members.delete(ADMIN, userA));
+        mongo.insert(new Document("_id", "rollback-login-ticket").append("userId", userA), "social_login_tickets");
+        mongo.insert(new Document("_id", "rollback-withdrawal-proof").append("userId", userA), "social_withdrawal_proofs");
+        ApiException failed = assertThrows(ApiException.class, () -> deleteOrWithdraw(members, withdrawal));
         assertEquals(409, failed.getStatus());
         assertEquals(userA, auth.authenticate(tokenA).getId());
         assertEquals("RESERVED", mongo.findById(first, Document.class, "reservations").getString("status"));
@@ -272,6 +391,8 @@ class MemberMongoIntegrationTest {
         assertEquals(1, count("slot-1"));
         assertEquals(2, mongo.getCollection("requests").countDocuments(new Document("userId", userA)));
         assertEquals(2, mongo.getCollection("reservationEvents").countDocuments());
+        assertNotNull(mongo.findById("rollback-login-ticket", Document.class, "social_login_tickets"));
+        assertNotNull(mongo.findById("rollback-withdrawal-proof", Document.class, "social_withdrawal_proofs"));
     }
 
     @Test
@@ -283,8 +404,9 @@ class MemberMongoIntegrationTest {
         assertEquals(0, mongo.getCollection("reservations").countDocuments());
     }
 
-    @Test
-    void bookingAlreadyInFlightIsCanceledByConcurrentDeletion() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void bookingAlreadyInFlightIsCanceledByConcurrentDeletion(boolean withdrawal) throws Exception {
         CountDownLatch bookingOwnsUser = new CountDownLatch(1);
         CountDownLatch releaseBooking = new CountDownLatch(1);
         CountDownLatch deletionReachedUser = new CountDownLatch(1);
@@ -308,12 +430,12 @@ class MemberMongoIntegrationTest {
             }
         };
         BookingService concurrentBooking = new BookingService(bookingMongo, transactionManager);
-        MemberService concurrentMembers = new MemberService(deletionMongo, booking, transactionManager);
+        MemberService concurrentMembers = new MemberService(deletionMongo, booking, transactionManager, new BCryptPasswordEncoder());
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             Future<Document> created = executor.submit(() -> concurrentBooking.create(userA, "racing-create", "slot-1"));
             assertTrue(bookingOwnsUser.await(10, TimeUnit.SECONDS));
-            Future<Document> deleted = executor.submit(() -> concurrentMembers.delete(ADMIN, userA));
+            Future<Document> deleted = executor.submit(() -> deleteOrWithdraw(concurrentMembers, withdrawal));
             assertTrue(deletionReachedUser.await(10, TimeUnit.SECONDS));
             releaseBooking.countDown();
             String reservationId = created.get(20, TimeUnit.SECONDS).getString("id");
@@ -329,8 +451,9 @@ class MemberMongoIntegrationTest {
         }
     }
 
-    @Test
-    void deletionAlreadyInFlightPreventsConcurrentBookingFromCommitting() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deletionAlreadyInFlightPreventsConcurrentBookingFromCommitting(boolean withdrawal) throws Exception {
         CountDownLatch deletionOwnsUser = new CountDownLatch(1);
         CountDownLatch releaseDeletion = new CountDownLatch(1);
         CountDownLatch bookingReachedUser = new CountDownLatch(1);
@@ -353,11 +476,11 @@ class MemberMongoIntegrationTest {
                 return super.updateFirst(query, update, collection);
             }
         };
-        MemberService concurrentMembers = new MemberService(deletionMongo, booking, transactionManager);
+        MemberService concurrentMembers = new MemberService(deletionMongo, booking, transactionManager, new BCryptPasswordEncoder());
         BookingService concurrentBooking = new BookingService(bookingMongo, transactionManager);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<Document> deleted = executor.submit(() -> concurrentMembers.delete(ADMIN, userA));
+            Future<Document> deleted = executor.submit(() -> deleteOrWithdraw(concurrentMembers, withdrawal));
             assertTrue(deletionOwnsUser.await(10, TimeUnit.SECONDS));
             Future<Integer> attempted = executor.submit(() -> {
                 try {
@@ -380,6 +503,10 @@ class MemberMongoIntegrationTest {
             executor.shutdownNow();
             assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
         }
+    }
+
+    private Document deleteOrWithdraw(MemberService service, boolean withdrawal) {
+        return withdrawal ? service.withdraw(userA, PASSWORD) : service.delete(ADMIN, userA);
     }
 
     private void signIn(String userId) {
