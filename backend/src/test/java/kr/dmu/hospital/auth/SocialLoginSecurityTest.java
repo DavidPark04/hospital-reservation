@@ -50,8 +50,9 @@ class SocialLoginSecurityTest {
         @Bean SocialMemberService members() { return mock(SocialMemberService.class); }
         @Bean SocialLoginSettings settings() { return new SocialLoginSettings("http://127.0.0.1:5174", "http://127.0.0.1:18081", "test-google-id", "test-google-secret", "test-kakao-id", "test-kakao-secret"); }
         @Bean SocialLoginTickets tickets() { return mock(SocialLoginTickets.class); }
+        @Bean SocialWithdrawalService withdrawal() { return mock(SocialWithdrawalService.class); }
         @Bean MongoAuthorizationRequests requests(SocialLoginSettings settings) { return new MongoAuthorizationRequests(mock(MongoTemplate.class), settings); }
-        @Bean SocialLoginFlow flow(SocialLoginSettings settings, SocialMemberService members, SocialLoginTickets tickets, MongoAuthorizationRequests requests) { return new SocialLoginFlow(settings, members, tickets, requests); }
+        @Bean SocialLoginFlow flow(SocialLoginSettings settings, SocialMemberService members, SocialLoginTickets tickets, MongoAuthorizationRequests requests, SocialWithdrawalService withdrawal) { return new SocialLoginFlow(settings, members, tickets, requests, withdrawal); }
         @Bean SocialLoginController social(SocialLoginSettings settings, SocialLoginTickets tickets, SocialLoginFlow flow, AuthService auth) { return new SocialLoginController(settings, tickets, flow, auth); }
         @Bean AuthController authController(AuthService auth) { return new AuthController(auth); }
         @Bean ApiErrorHandler errors() { return new ApiErrorHandler(); }
