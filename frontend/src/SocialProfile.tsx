@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, LoaderCircle, LogOut } from 'lucide-react';
 import { api, ApiError, normalizePhone, validPhone } from './api';
 import type { AuthProvider, AuthResult, User } from './api';
 import { loginMethod } from './SocialLogin';
+import PhoneInput from './PhoneInput';
 
 export function needsSocialProfile(user:User|null){
   return !!user&&(user.authProvider==='GOOGLE'||user.authProvider==='KAKAO')&&user.profileComplete!==true;
@@ -52,7 +53,7 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
     <form className="auth-form" onSubmit={submit}>
       <label className="field" htmlFor="social-profile-name">이름<input id="social-profile-name" name="name" autoComplete="name" value={name} onChange={event=>setName(event.target.value)} onBlur={()=>setName(name.trim())} required minLength={1} maxLength={40} placeholder="사용할 이름을 입력해 주세요" disabled={busy}/></label>
       <label className="field" htmlFor="social-profile-email">이메일<input id="social-profile-email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={event=>setEmail(event.target.value)} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="social-email-help" disabled={busy}/><small id="social-email-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
-      <label className="field" htmlFor="social-profile-phone">전화번호<input id="social-profile-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={event=>setPhone(event.target.value)} required maxLength={20} placeholder="010-1234-5678" aria-describedby="social-phone-help" disabled={busy}/><small id="social-phone-help" className="muted">휴대전화 또는 지역번호를 포함한 국내 전화번호를 입력해 주세요.</small></label>
+      <label className="field" htmlFor="social-profile-phone">전화번호<PhoneInput id="social-profile-phone" name="phone" value={phone} onValueChange={setPhone} required placeholder="010-1234-5678" aria-describedby="social-phone-help" disabled={busy}/><small id="social-phone-help" className="muted">휴대전화 또는 지역번호를 포함한 국내 전화번호를 입력해 주세요.</small></label>
       {(validationError||mutation.isError)&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{sessionExpired?'가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요.':validationError||mutation.error?.message}</div></div>}
       {existingProvider&&<button type="button" className="button secondary full" onClick={existingLogin} disabled={busy}>{switching?<><LoaderCircle size={18} className="spin"/>로그인 화면으로 이동 중</>:`${loginMethod(existingProvider)}로 로그인하기`}</button>}
       {sessionExpired&&<button type="button" className="button secondary full" onClick={restartLogin} disabled={busy}>{switching?<><LoaderCircle size={18} className="spin"/>로그인 화면으로 이동 중</>:`${loginMethod(user.authProvider)}로 다시 인증하기`}</button>}
