@@ -1,34 +1,43 @@
 # MongoDB 설계
 
-[기준 기획서](https://app.notion.com/p/879b8822a70f82f789298129ce73194d)의 컬렉션·정합성 기준입니다. 이 저장소에는 아직 컬렉션·인덱스 생성 및 Spring 구현이 없습니다. 실제 타입·validator·인덱스 생성 코드와 검증 결과는 Issue #3 및 구현 PR에서 확정합니다.
+현재 Spring 구현 기준입니다. DB명은 `hospital_reservation`이며 MongoDB Atlas 또는 다중 문서 트랜잭션이 가능한 replica set을 사용합니다. 초기 기획의 이메일 unique 기준은 사용자 요청에 따라 아이디 로그인과 이름·연락처 중복 검사로 변경했습니다.
 
-DB명: `hospital_reservation`. 다중 문서 트랜잭션이 가능한 replica set에서 먼저 검증하고 Atlas에 적용합니다.
-
-| 컬렉션 | 주요 필드·역할 | 인덱스 기준 |
+| 컬렉션 | 주요 역할 | 구현 인덱스·조건 |
 | --- | --- | --- |
-| `users` | `emailNormalized`, `passwordHash`, `role`(USER/ADMIN), `createdAt` | `emailNormalized` unique |
-| `hospitals` | `provider`, `externalId`, `name`, `address`, `tel`, `location`, `fetchedAt` | `(provider, externalId)` unique |
-| `hospitalEvidence` | `hospitalId`, `kind`, `value`, `sourceUrl`, `basePeriod`, `fetchedAt` | 실제 조회 조건에 따른 인덱스는 구현 전 확정 |
-| `doctors` | `hospitalId`, `departmentCode`, `sampleCode`, `name`, `isVirtual` | 배정 조합 unique, 정확한 조합은 Issue #3에서 확정 |
-| `timeSlots` | `doctorId`, `startAt`, `capacity`, `reservedCount`, `closed` | `(doctorId, startAt)` unique |
-| `reservations` | `userId`, `slotId`, `startAt`, `status`, `snapshot`, `createdAt` | 활성 예약의 `(userId, startAt)` partial unique |
-| `requests` | `userId`, `key`, `requestHash`, `responseSnapshot` | `(userId, key)` unique |
-| `reservationEvents` | `reservationId`, `actorId`, `action`, `before`, `after`, `createdAt` | 조회·보관 기준을 구현 전 확정 |
+| `users` | 가입 완료 회원, 아이디·BCrypt 비밀번호(LOCAL), 가입 방식, 직접 입력한 정보 | `loginId` unique; 문자열 `socialIdentity` partial unique; 유효한 이름·전화번호를 가진 회원의 `(nameNormalized,phone)` partial unique |
+| `social_signups` | 가입 완료 전 제공자 식별번호와 임시 권한 | `socialIdentity` unique; `expiresAt` TTL 0초, 생성 후 30분 만료 |
+| `oauth_authorization_requests` | OAuth state·브라우저 바인딩 해시와 복원에 필요한 프로토콜 필드 | `expiresAt` TTL 0초, 유효 5분, 원자적 일회용 소모 |
+| `social_login_tickets` | 인증 결과를 앱 JWT로 교환하는 임시 티켓 | `expiresAt` TTL 0초, 유효 60초, 원자적 일회용 소모 |
+| `chat_usage` | 한국 시간 날짜·호출자 HMAC 키와 상담 횟수 | `_id` unique, 다음 한국 시간 자정 `expiresAt` TTL |
+| `hospitals` | 실제·캐시·샘플 병원, 진료과, 출처·조회 시각 | `(provider,externalId)` unique |
+| `hospitalEvidence` | 병원별 근거·출처·기준 기간·조회 시점 | 병원 정보와 연결해 저장 |
+| `doctors` | 병원·진료과에 배정한 가상 의료진 | `(hospitalId,departmentCode,sampleCode)` unique |
+| `timeSlots` | 가상 진료 일정·정원·예약 수·휴진 | `(doctorId,startAt)` unique; 0 ≤ reservedCount ≤ capacity validator |
+| `reservations` | 회원·일정·상태·조회용 스냅샷 | `status=RESERVED`인 `(userId,startAt)` partial unique |
+| `requests` | 회원별 요청 키·요청 해시·응답 스냅샷 | `(userId,key)` unique |
+| `reservationEvents` | 예약 생성·변경·취소의 actor·before·after·시각 | `(reservationId,createdAt)` 조회 인덱스 |
 
-가상 의료진은 병원에 배정한 뒤 저장해 재방문 시 동일하게 조회합니다. 모든 참조 ID는 서버에서 검증하며 시간은 UTC로 저장하고 한국 시간으로 표시합니다. 증상 원문은 기본 저장하지 않습니다. 상담 이력은 시험 이후 동의·보관 기간을 검토하는 확장 기능입니다.
+OAuth state·브라우저 바인딩은 SHA-256 해시로 저장합니다. OAuth 요청에는 제공자·client ID·redirect URI·scope와 필요한 nonce/PKCE 필드만 보관하며 사용자 프로필·제공자 access/refresh token을 저장하지 않습니다. 만료 조건과 `findAndRemove`를 함께 적용해 두 인스턴스가 동시에 교환해도 한 번만 성공합니다. 상담 카운터 키는 JWT_SECRET 기반 HMAC-SHA256이며 증상·원본 IP·회원 ID를 보관하지 않습니다. 비회원 20회·회원 60회 제한과 다음 한국 시간 자정 만료를 조건부 갱신으로 처리합니다.
 
-## 예약 상태와 요청 키
+## 회원과 가입 진행 상태
 
-- 예약 상태는 `RESERVED`, `CANCELED`입니다. 변경을 뜻하는 `CHANGED`를 예약 상태로 추가하지 않습니다. 변경 이력은 `reservationEvents.action`의 `CREATE` / `CHANGE` / `CANCEL`로 구분합니다.
-- 활성 예약은 `status = RESERVED`인 문서입니다. `(userId, startAt)` partial unique로 같은 시작 시각의 활성 예약을 막고, 취소된 이력이 재예약을 막지 않게 합니다.
-- 같은 사용자·요청 키·본문이면 저장한 기존 응답을 반환합니다. 같은 키에 다른 본문이면 `409`로 거부합니다. `requestHash`의 본문 정규화·작업 구분과 요청 키 보관 정책은 API 계약에서 확정합니다.
+정식 회원 ID와 임시 가입 ID를 구분합니다. 소셜 인증 성공만으로 `users`에 넣지 않으며 `social_signups`에는 제공자 종류·식별번호·임시 ID·생성 시각·만료 시각·토큰 버전만 저장합니다. 이름·이메일·전화번호는 가입 완료 요청이 성공할 때 정식 회원에 저장합니다.
 
-## 트랜잭션 경계
+이름은 NFC, 앞뒤 공백 제거, 연속 내부 공백 하나로 축소, Locale.ROOT 소문자로 정규화합니다. 연락처는 공백·하이픈을 제거합니다. 유효한 조합에 `memberIdentityClaimed:true`를 표시하고 `user_name_phone_v1` unique 인덱스로 동시 가입까지 막습니다. 전화번호 없는 기존 관리자 등은 이 인덱스 대상에서 제외합니다.
 
-1. 생성: 요청 키·본문을 확인하고 `closed = false`, `reservedCount < capacity` 조건으로 정원을 1 증가시킵니다. 예약·요청 응답·이벤트 저장까지 하나의 트랜잭션으로 커밋합니다.
-2. 변경: 본인 예약과 대상 일정을 확인하고 새 자리 확보, 이전 자리 반환, 예약·이벤트 갱신을 함께 처리합니다. 실패하면 전체를 롤백합니다.
-3. 취소: 본인 활성 예약만 취소 상태로 전환하고 정원을 한 번 반환합니다. 반복 취소·재시도에도 정원이 두 번 반환되지 않게 합니다.
+TTL 삭제는 즉시 실행된다고 가정하지 않습니다. 임시 토큰을 사용할 때마다 만료 시각과 버전을 직접 확인합니다. 재인증하면 버전이 증가하며 이전 임시 토큰은 다시 유효해지지 않습니다. 가입 완료는 새 회원 ID 생성과 임시 자료 소모를 같은 트랜잭션으로 수행합니다. 관리자 목록은 가입 완료 회원만 조회합니다.
 
-관리자 정원 변경·휴진이 기존 예약과 충돌할 때의 정책, 트랜잭션 재시도·실패 응답은 구현 전 합의합니다. 구현 PR에는 마지막 한 자리 동시 요청, 동일 키 재시도, 다른 본문 충돌, 활성 중복, 취소 후 재예약, 변경 실패 롤백, 타인 예약 접근의 검증 증거를 남깁니다.
+기존 `users`의 미완료 소셜 USER 자료는 시작 시 임시 저장소로 이전합니다. 예약·요청·예약 이벤트 참조가 있거나 이미 완료된 회원 간 이름·전화번호가 중복되면 시작을 중단하고 자료를 보존합니다. 자동으로 기존 회원을 삭제·병합하지 않습니다. 마이그레이션 전 백업과 운영 데이터 확인이 필요합니다.
 
-기준 기획서의 로컬 MongoDB PoC 10개 시나리오 기록은 참고 근거입니다. Spring·Atlas 연동 테스트는 별도로 수행해야 하며 현재 저장소 검사 CI는 정합성을 검증하지 않습니다.
+## 예약 트랜잭션
+
+1. 생성: 요청 키를 확인하고 `closed=false`, `reservedCount<capacity` 조건으로 자리를 확보합니다. 예약·요청 응답·CREATE 이벤트까지 함께 커밋합니다.
+2. 변경: 본인 예약과 새 일정을 검증한 뒤 새 자리 확보·기존 자리 반환·예약·CHANGE 이벤트·요청 응답을 함께 처리합니다. 실패하면 전체 롤백합니다.
+3. 취소: 본인 활성 예약을 `CANCELED`로 바꾸고 자리를 한 번 반환합니다. CANCEL 이벤트·요청 응답을 함께 저장합니다.
+4. 관리자 회원 삭제: USER만 삭제하며 활성 예약 취소·정원 반환·요청 키 제거를 함께 처리합니다. ADMIN 계정과 과거 예약·이벤트 기록을 보존합니다.
+
+예약 상태는 `RESERVED`, `CANCELED`만 허용합니다. 가상 의료진은 배정 후 저장해 재방문 시 유지합니다. 날짜는 MongoDB Date로 UTC 저장하고 화면에서 한국 시간으로 표시합니다. 증상 원문과 상담 이력은 기본 저장하지 않습니다.
+
+## 검증
+
+GitHub Actions와 로컬 테스트는 실제 로컬 MongoDB replica set의 고유 테스트 DB를 사용합니다. 동시 예약, 동일 키 재시도·충돌, 변경 실패 롤백, 반복 취소, 소유권·관리자 권한, 가입 방식 간 중복, 가입 임시 권한의 만료·재사용을 검증합니다. 운영 Atlas 데이터와 실제 OAuth 계정 검증은 자동 테스트와 구분합니다.
