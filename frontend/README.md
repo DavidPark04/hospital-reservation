@@ -1,6 +1,6 @@
 # Frontend
 
-React 19 · TypeScript · Vite · TanStack Query 앱입니다. 스크롤 애니메이션을 포함한 소개 화면, 상담·병원 검색·상세·예약, 일반/소셜 로그인, 추가 가입 정보, 마이페이지, 관리자 화면을 제공합니다.
+React 19 · TypeScript · Vite · TanStack Query 앱입니다. 스크롤 애니메이션을 포함한 소개 화면, 상담·병원 검색·상세·지도·예약, 일반/소셜 로그인, 추가 가입 정보, 마이페이지, 관리자 화면을 제공합니다.
 
 ## 실행과 빌드
 
@@ -18,14 +18,22 @@ npm run dev
 npm run build
 ```
 
-이 명령은 TypeScript 검사와 Vite production 빌드를 수행하고 `dist/`를 만듭니다. 현재 별도 lint·브라우저 자동 테스트 명령은 제공하지 않습니다. 빌드 성공을 실제 소셜 계정 로그인이나 예약 시연 성공으로 간주하지 않습니다.
+이 명령은 TypeScript 검사와 Vite production 빌드를 수행하고 `dist/`를 만듭니다. `npm test`는 지도 좌표·주소 결과·외부 링크와 SDK 로딩·재시도를 검사합니다. 현재 별도 lint·브라우저 자동 테스트 명령은 제공하지 않습니다. 빌드 성공을 실제 지도 표시·소셜 계정 로그인이나 예약 시연 성공으로 간주하지 않습니다.
 
 ## API와 화면 상태
 
-`src/api.ts`에서 동일 출처의 `/api`를 호출합니다. 배포 환경에서는 Vite 개발 프록시 대신 Vercel 라우팅이 Spring API로 전달합니다. API 키·MongoDB URI·JWT 비밀값을 `VITE_` 변수나 브라우저 번들에 넣지 않습니다.
+`src/api.ts`에서 동일 출처의 `/api`를 호출합니다. 배포 환경에서는 Vite 개발 프록시 대신 Vercel 라우팅이 Spring API로 전달합니다. 서버 API 키·MongoDB URI·JWT 비밀값을 `VITE_` 변수나 브라우저 번들에 넣지 않습니다. 지도용 `VITE_KAKAO_MAP_JS_KEY`는 브라우저 사용을 위한 공개 JavaScript 키이며 등록된 SDK 도메인으로 제한합니다.
 
 소셜 인증 후 추가 입력을 완료하기 전에는 가입 안내 화면만 표시하고 마이페이지·예약·관리자 기능에 접근하지 못합니다. 이름·이메일·전화번호는 직접 입력하며, 중복 가입이면 기존 일반/카카오/구글 가입 방식으로 로그인하도록 안내합니다. 관리자 회원 목록에는 가입 완료 회원만 표시합니다.
 
 화면은 `src/App.tsx`, 소셜 가입은 `SocialLogin.tsx`·`SocialProfile.tsx`, 스크롤 소개는 `ScrollStory.tsx`, 공통 요청은 `api.ts`에 있습니다. 초기 기획의 features/pages/components 분리는 현재 전체 적용된 상태가 아니며, 기능 수정 범위에 맞춰 진행합니다.
 
 배포 경로와 새로고침 검증은 [배포 안내](../infra/README.md), HTTP 응답은 [API 계약](../docs/api-contract.md)를 참고합니다.
+
+## 병원 지도
+
+단독 Vite 실행은 [`.env.example`](.env.example)을 참고해 Git에서 제외되는 `frontend/.env.local`에 `VITE_KAKAO_MAP_JS_KEY`를 설정합니다. 루트 `start.cmd`를 사용할 때는 루트 로컬 환경변수에서 전달합니다. 환경변수를 변경하면 개발 서버를 다시 시작하거나 production 빌드를 다시 수행합니다. 카카오맵 활성화·SDK 도메인 등록은 [배포 안내](../infra/README.md#카카오-지도-설정)를 따릅니다.
+
+병원 상세에서 유효한 HIRA 위도·경도를 우선 표시하고, 좌표가 없는 실제 병원은 SDK 주소 변환으로 전체 주소를 확인합니다. 정확 검색에서 건물·지번 주소가 한 건일 때만 위치로 사용합니다. 결과가 모호하거나 조회에 실패하면 임의 마커 대신 병원명·주소 검색 링크를 표시합니다. 유효 좌표가 있으면 지도 로딩 실패 시에도 외부 길찾기를 사용할 수 있습니다. `SAMPLE` 병원에는 지도·길찾기·검색 링크를 제공하지 않습니다. 브라우저 현재 위치 권한을 요청하거나 사용자 위치를 저장하지 않습니다.
+
+지도는 카카오 Web SDK와 `services` 라이브러리를 사용하고 길찾기 버튼은 카카오맵으로 이동합니다. OAuth 로그인과 별개이므로 카카오 계정 로그인 없이 병원 지도를 볼 수 있습니다. REST API 키·Client Secret·Admin 키를 프런트 설정에 넣지 않습니다.
