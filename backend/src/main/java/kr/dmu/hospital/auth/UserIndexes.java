@@ -33,6 +33,7 @@ public class UserIndexes implements ApplicationRunner {
     }
 
     @Override public void run(ApplicationArguments args) {
+        List<Document> contacts = memberContacts();
         mongo.getCollection(MongoAuthorizationRequests.COLLECTION).createIndex(new Document("expiresAt", 1),
             new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("oauth_authorization_expiry_v1"));
         mongo.getCollection(SocialLoginTickets.COLLECTION).createIndex(new Document("expiresAt", 1),
@@ -47,36 +48,67 @@ public class UserIndexes implements ApplicationRunner {
                 new IndexOptions().unique(true).name("user_social_identity_v1")
                     .partialFilterExpression(new Document("socialIdentity", new Document("$type", "string"))));
         migrateLegacySocialSignups();
-        backfillMemberIdentities();
+        backfillMemberContacts(contacts);
         try {
-            mongo.getCollection("users").createIndex(new Document("nameNormalized", 1).append("phone", 1),
-                new IndexOptions().unique(true).name("user_name_phone_v1").partialFilterExpression(
-                    new Document("memberIdentityClaimed", true).append("nameNormalized", new Document("$type", "string"))
-                        .append("phone", new Document("$type", "string"))));
+            mongo.getCollection("users").createIndex(new Document("phone", 1),
+                new IndexOptions().unique(true).name("user_phone_v1").partialFilterExpression(
+                    new Document("memberIdentityClaimed", true).append("phone", new Document("$type", "string").append("$gt", ""))));
+            mongo.getCollection("users").createIndex(new Document("emailNormalized", 1),
+                new IndexOptions().unique(true).name("user_email_v1").partialFilterExpression(
+                    new Document("memberIdentityClaimed", true).append("emailNormalized", new Document("$type", "string").append("$gt", ""))));
         } catch (MongoException conflict) {
             if (conflict.getCode() == 11000) throw duplicateExistingMembers();
             throw conflict;
+        }
+        // Keep the old protection until both new unique indexes are ready.
+        for (Document index : mongo.getCollection("users").listIndexes()) {
+            if ("user_name_phone_v1".equals(index.getString("name"))) {
+                try { mongo.getCollection("users").dropIndex("user_name_phone_v1"); }
+                catch (MongoException error) { if (error.getCode() != 27) throw error; }
+                break;
+            }
         }
     }
     private void migrateLegacySocialSignups() {
         List<Document> unfinished = mongo.find(legacyPending(null), Document.class, "users");
         for (Document user : unfinished) requireNoSignupReferences(user.getString("_id"));
         for (Document original : unfinished) {
-            transaction.executeWithoutResult(status -> {
-                Query selection = legacyPending(original.getString("_id"));
-                Document user = mongo.findOne(selection, Document.class, "users");
-                if (user == null) return;
-                requireNoSignupReferences(user.getString("_id"));
-                String provider = user.getString("authProvider"); String subject = user.getString("socialSubject");
-                if (subject == null || subject.isBlank() || !(provider + ":" + subject).equals(user.getString("socialIdentity"))) {
-                    throw new IllegalStateException("An unfinished social signup has an invalid provider identity; migration stopped without removing it.");
+            for (int attempt = 0; attempt < 8; attempt++) {
+                try {
+                    transaction.executeWithoutResult(status -> {
+                        Query selection = legacyPending(original.getString("_id"));
+                        Document user = mongo.findOne(selection, Document.class, "users");
+                        if (user == null) return;
+                        requireNoSignupReferences(user.getString("_id"));
+                        String provider = user.getString("authProvider"); String subject = user.getString("socialSubject");
+                        if (subject == null || subject.isBlank() || !(provider + ":" + subject).equals(user.getString("socialIdentity"))) {
+                            throw new IllegalStateException("An unfinished social signup has an invalid provider identity; migration stopped without removing it.");
+                        }
+                        SocialSignups.begin(mongo, provider, subject);
+                        if (mongo.remove(selection, "users").getDeletedCount() != 1) {
+                            throw new IllegalStateException("Unfinished social signup changed during migration; no account was removed.");
+                        }
+                    });
+                    break;
+                } catch (RuntimeException error) {
+                    if (!retryableMigration(error)) throw error;
+                    if (attempt == 7) throw new IllegalStateException("Concurrent social signup migration did not finish. Retry startup; member data was preserved.");
+                    try { Thread.sleep(15L * (attempt + 1)); }
+                    catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Social signup migration was interrupted. Retry startup; member data was preserved.");
+                    }
                 }
-                SocialSignups.begin(mongo, provider, subject);
-                if (mongo.remove(selection, "users").getDeletedCount() != 1) {
-                    throw new IllegalStateException("Unfinished social signup changed during migration; no account was removed.");
-                }
-            });
+            }
         }
+    }
+    private boolean retryableMigration(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof DuplicateKeyException) return true;
+            if (cause instanceof MongoException mongoError && (mongoError.hasErrorLabel("TransientTransactionError")
+                    || mongoError.getCode() == 112 || mongoError.getCode() == 251)) return true;
+        }
+        return false;
     }
     private Query legacyPending(String id) {
         Criteria criteria = Criteria.where("role").is("USER").and("authProvider").in("GOOGLE", "KAKAO").and("profileComplete").ne(true);
@@ -90,34 +122,62 @@ public class UserIndexes implements ApplicationRunner {
                 Criteria.where("before.userId").is(id), Criteria.where("after.userId").is(id))), "reservationEvents");
         if (linked) throw new IllegalStateException("An unfinished social signup has reservation or audit references; migration stopped without removing it.");
     }
-    private void backfillMemberIdentities() {
-        List<Document> identities = new ArrayList<>();
-        List<String> unclaimed = new ArrayList<>();
-        Set<String> used = new HashSet<>();
+    private List<Document> memberContacts() {
+        List<Document> contacts = new ArrayList<>();
+        Set<String> phones = new HashSet<>();
+        Set<String> emails = new HashSet<>();
         for (Document user : mongo.find(new Query(), Document.class, "users")) {
-            String id = user.getString("_id");
-            if (!MemberIdentity.complete(user) || !(user.get("phone") instanceof String rawPhone) || rawPhone.isBlank()) {
-                unclaimed.add(id); continue;
+            Document contact = new Document("_id", user.getString("_id"));
+            if (MemberIdentity.complete(user)) {
+                Object rawPhone = user.get("phone");
+                if (rawPhone != null && !(rawPhone instanceof String)) throw invalidExistingContact();
+                if (rawPhone instanceof String value && value.isBlank()) contact.append("clearBlankPhone", true);
+                if (rawPhone instanceof String value && !value.isBlank()) {
+                    String phone = MemberIdentity.normalizedPhone(value);
+                    if (!phone.matches("0[0-9]{8,10}")) throw invalidExistingContact();
+                    if (!phones.add(phone)) throw duplicateExistingMembers();
+                    contact.append("phone", phone);
+                }
+                Object rawEmail = user.get("email");
+                if (rawEmail != null && !(rawEmail instanceof String)) throw invalidExistingContact();
+                if (rawEmail instanceof String value && !value.isBlank()) {
+                    String email = value.trim();
+                    if (!MemberIdentity.validEmail(email)) throw invalidExistingContact();
+                    String normalizedEmail = MemberIdentity.normalizedEmail(email);
+                    if (!emails.add(normalizedEmail)) throw duplicateExistingMembers();
+                    contact.append("emailNormalized", normalizedEmail);
+                }
+                if (user.get("name") instanceof String name && !name.isBlank()) {
+                    contact.append("nameNormalized", MemberIdentity.normalizedName(name));
+                }
             }
-            String phone = MemberIdentity.normalizedPhone(rawPhone);
-            String name = user.get("name") instanceof String value ? MemberIdentity.normalizedName(value) : "";
-            if (!phone.matches("0[0-9]{8,10}") || name.isBlank()) {
-                throw new IllegalStateException("A completed member has invalid identity fields. Review existing member data before startup.");
-            }
-            if (!used.add(name + "\u0000" + phone)) throw duplicateExistingMembers();
-            identities.add(new Document("_id", id).append("nameNormalized", name).append("phone", phone));
+            contacts.add(contact);
         }
-        // Check every existing member first. A conflict never triggers automatic deletion or account merging.
+        return contacts;
+    }
+    private void backfillMemberContacts(List<Document> contacts) {
+        // The read-only preflight runs before any migration or index changes.
+        // Missing legacy contact details stay missing; they are never fabricated.
         try {
-            for (String id : unclaimed) mongo.updateFirst(Query.query(Criteria.where("_id").is(id)),
-                new Update().unset("nameNormalized").unset("memberIdentityClaimed"), "users");
-            for (Document identity : identities) mongo.updateFirst(Query.query(Criteria.where("_id").is(identity.getString("_id"))),
-                new Update().set("nameNormalized", identity.getString("nameNormalized")).set("phone", identity.getString("phone"))
-                    .set("memberIdentityClaimed", true), "users");
+            for (Document contact : contacts) {
+                Update update = new Update();
+                if (contact.containsKey("phone")) update.set("phone", contact.getString("phone"));
+                else if (Boolean.TRUE.equals(contact.getBoolean("clearBlankPhone"))) update.unset("phone");
+                if (contact.containsKey("emailNormalized")) update.set("emailNormalized", contact.getString("emailNormalized"));
+                else update.unset("emailNormalized");
+                if (contact.containsKey("nameNormalized")) update.set("nameNormalized", contact.getString("nameNormalized"));
+                else update.unset("nameNormalized");
+                if (contact.containsKey("phone") || contact.containsKey("emailNormalized")) update.set("memberIdentityClaimed", true);
+                else update.unset("memberIdentityClaimed");
+                mongo.updateFirst(Query.query(Criteria.where("_id").is(contact.getString("_id"))), update, "users");
+            }
         } catch (DuplicateKeyException conflict) { throw duplicateExistingMembers(); }
     }
+    private static IllegalStateException invalidExistingContact() {
+        return new IllegalStateException("A completed member has an invalid phone or email. Review existing member data before startup.");
+    }
     private static IllegalStateException duplicateExistingMembers() {
-        // Do not include names, phone numbers, or the MongoDB duplicate-key error in logs.
-        return new IllegalStateException("Existing completed members share a normalized name and phone. Resolve duplicate records before startup; no accounts were deleted or merged.");
+        // Do not include phone numbers, emails, or the MongoDB duplicate-key error in logs.
+        return new IllegalStateException("Existing completed members share a phone or email. Resolve duplicate records before startup; no accounts were deleted or merged.");
     }
 }

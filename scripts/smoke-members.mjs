@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { MongoClient } from 'mongodb';
 
@@ -60,10 +60,12 @@ function publicProfile(profile, user, role = 'USER') {
     'Public account identity or role differs from the expected account');
   const fields = ['id', 'name', 'loginId', 'role', 'authProvider', 'profileComplete', 'emailVerified'];
   if (profile.phone !== undefined) fields.push('phone');
+  if (profile.email !== undefined) fields.push('email');
   check(profile.authProvider === 'LOCAL' && profile.profileComplete === true && profile.emailVerified === false
     && Object.keys(profile).sort().join(',') === fields.sort().join(',')
     && (profile.phone === undefined || typeof profile.phone === 'string' && /^0[0-9]{8,10}$/.test(profile.phone))
-    && (user.phone === undefined || profile.phone === user.phone),
+    && (user.phone === undefined || profile.phone === user.phone)
+    && (user.email === undefined || profile.email === user.email),
     'Local public account must expose its login method and only public profile fields');
 }
 
@@ -72,12 +74,13 @@ async function signup(label) {
     name: `Members smoke ${label}`,
     loginId: `members_${randomUUID().replaceAll('-', '').slice(0, 22)}`,
     password: `Members-${randomUUID()}!`,
-    phone: '01012345678',
+    phone: `010${String(randomInt(100_000_000)).padStart(8, '0')}`,
+    email: `members-${randomUUID()}@example.test`,
   };
   // Register the unique fixture first so cleanup can recover an interrupted response.
   users.push(user);
   const result = await request('/api/auth/register', {
-    method: 'POST', body: { name: user.name, loginId: user.loginId, password: user.password, phone: '010-1234-5678' },
+    method: 'POST', body: { name: user.name, loginId: user.loginId, password: user.password, phone: user.phone, email: user.email },
   });
   user.id = result?.user?.id;
   user.token = result?.token;
@@ -108,7 +111,7 @@ function memberRows(result) {
       && ['USER', 'ADMIN'].includes(member.role) && ['LOCAL', 'GOOGLE', 'KAKAO'].includes(member.authProvider)
       && member.profileComplete === true
       && Number.isFinite(Date.parse(member.createdAt))
-      && (member.email === undefined || member.authProvider !== 'LOCAL' && member.profileComplete && typeof member.email === 'string' && member.email.length > 0)
+      && (member.email === undefined || member.profileComplete && typeof member.email === 'string' && member.email.length > 0)
       && (member.phone === undefined || member.profileComplete && typeof member.phone === 'string' && /^0[0-9]{8,10}$/.test(member.phone)),
     'Member listing contains an invalid public field');
   }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { MongoClient } from 'mongodb';
 
@@ -38,8 +38,8 @@ function assertPublicUser(profile, expected) {
   assert.equal(profile?.role, 'USER');
   assert.equal(profile?.authProvider, 'LOCAL');
   assert.equal(profile?.profileComplete, true);
-  assert.equal(profile?.phone, '01012345678');
-  assert.equal(profile?.email, undefined);
+  assert.equal(profile?.phone, expected.phone);
+  assert.equal(profile?.email, expected.email);
   assert.ok(!Object.keys(profile).some(key => /password|hash|salt|secret|credential|token/i.test(key)),
     'Public user profile must not contain credential fields');
   assert.ok(!JSON.stringify(profile).includes(expected.password),
@@ -49,12 +49,14 @@ function assertPublicUser(profile, expected) {
 async function signup(label, extraBody = {}) {
   const loginId = `smoke_${randomUUID().replaceAll('-', '').slice(0, 24)}`;
   const password = `Smoke-${randomUUID()}!`;
+  const phone = `010${String(randomInt(100_000_000)).padStart(8, '0')}`;
+  const email = `${loginId}@example.test`;
   const value = await request('/api/auth/register', {
-    method: 'POST', body: { ...extraBody, name: `Smoke ${label}`, loginId, password, phone: '010-1234-5678' },
+    method: 'POST', body: { ...extraBody, name: `Smoke ${label}`, loginId, password, phone, email },
   });
   assert.ok(typeof value?.user?.id === 'string');
   assert.ok(typeof value?.token === 'string');
-  const user = { id: value.user.id, loginId, password, token: value.token };
+  const user = { id: value.user.id, loginId, password, phone, email, token: value.token };
   users.push(user);
   assertPublicUser(value.user, user);
   return user;
@@ -109,7 +111,7 @@ try {
   pass('signup creates USER account');
   const invalidLoginId = `smoke-${randomUUID().slice(0, 8)}@id.test`;
   await request('/api/auth/register', {
-    method: 'POST', body: { name: 'Invalid Smoke ID', loginId: invalidLoginId, password: first.password, phone: '010-1234-5678' }, expected: 400,
+    method: 'POST', body: { name: 'Invalid Smoke ID', loginId: invalidLoginId, password: first.password, phone: first.phone, email: first.email }, expected: 400,
   });
   await request('/api/auth/login', {
     method: 'POST', body: { loginId: invalidLoginId, password: first.password }, expected: 400,
@@ -120,22 +122,36 @@ try {
   });
   pass('email-only login request no longer authenticates');
   await request('/api/auth/register', {
-    method: 'POST', body: { name: 'Duplicate Smoke ID', loginId: `  ${first.loginId.toUpperCase()}  `, password: first.password, phone: '010-1234-5678' }, expected: 409,
+    method: 'POST', body: { name: 'Duplicate Smoke ID', loginId: `  ${first.loginId.toUpperCase()}  `, password: first.password, phone: first.phone, email: first.email }, expected: 409,
   });
   pass('duplicate normalized login ID rejected with 409');
   for (const phone of [undefined, 'not-a-phone']) {
-    await request('/api/auth/register', {method:'POST', body:{name:'Phone validation', loginId:`phone_${randomUUID().replaceAll('-', '').slice(0,20)}`,password:first.password,...(phone===undefined?{}:{phone})},expected:400});
+    await request('/api/auth/register', {method:'POST', body:{name:'Phone validation', loginId:`phone_${randomUUID().replaceAll('-', '').slice(0,20)}`,password:first.password,email:first.email,...(phone===undefined?{}:{phone})},expected:400});
   }
   pass('signup requires a valid phone number');
   const repeatedMember = await request('/api/auth/register', {
-    method: 'POST', body: { name: '  SMOKE   A  ', loginId: `dup_${randomUUID().replaceAll('-', '').slice(0,20)}`, password: first.password, phone: '010 1234 5678' }, expected: 409,
+    method: 'POST', body: { name: 'Different member name', loginId: `dup_${randomUUID().replaceAll('-', '').slice(0,20)}`, password: first.password, phone: `${first.phone.slice(0,3)}-${first.phone.slice(3,7)}-${first.phone.slice(7)}`, email: `other-${randomUUID()}@example.test` }, expected: 409,
   });
-  assert.equal(repeatedMember.code, 'MEMBER_ALREADY_EXISTS');
-  assert.equal(repeatedMember.existingAuthProvider, 'LOCAL');
-  assert.ok(repeatedMember.message.includes('아이디로 로그인'));
+  assert.equal(repeatedMember.code, undefined);
+  assert.equal(repeatedMember.existingAuthProvider, undefined);
+  assert.equal(repeatedMember.message, '이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.');
   assert.ok(!/이름|연락처/.test(repeatedMember.message));
   assert.ok(!('token' in repeatedMember) && !('user' in repeatedMember));
-  pass('duplicate name and phone rejected with existing login method only');
+  pass('duplicate phone rejected regardless of name and email');
+  const repeatedEmail = await request('/api/auth/register', {
+    method: 'POST', body: { name: 'Another name', loginId: `mail_${randomUUID().replaceAll('-', '').slice(0,20)}`, password: first.password, phone: '021234567', email: `  ${first.email.toUpperCase()}  ` }, expected: 409,
+  });
+  assert.equal(repeatedEmail.code, undefined);
+  assert.equal(repeatedEmail.existingAuthProvider, undefined);
+  assert.equal(repeatedEmail.message, repeatedMember.message);
+  pass('duplicate normalized email rejected with a different phone');
+  const matchingMember = await request('/api/auth/register', {
+    method: 'POST', body: { name: '  SMOKE  A  ', loginId: `match_${randomUUID().replaceAll('-', '').slice(0,20)}`, password: first.password, phone: first.phone, email: `match-${randomUUID()}@example.test` }, expected: 409,
+  });
+  assert.equal(matchingMember.code, 'MEMBER_ALREADY_EXISTS');
+  assert.equal(matchingMember.existingAuthProvider, 'LOCAL');
+  assert.ok(matchingMember.message.includes('아이디로 로그인'));
+  pass('matching normalized name and phone reveals the existing login method');
   await request('/api/auth/login', {
     method: 'POST', body: { loginId: first.loginId, password: 'DefinitelyWrongPassword!' }, expected: 401,
   });
