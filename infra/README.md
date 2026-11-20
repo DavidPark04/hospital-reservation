@@ -1,25 +1,44 @@
 # 배포와 운영
 
-기존 [hospital-reservation-tau.vercel.app](https://hospital-reservation-tau.vercel.app)의 임시 안내 화면을 기능 앱으로 교체합니다. 사용자가 선택한 배포 방식은 **기존 팀원 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**하는 것입니다. Oracle이나 별도 개인 Vercel 백엔드로 분리하지 않습니다.
+GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 새 운영 대상은 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다.
 
-소스·설정 준비와 운영 반영은 별도 단계입니다. 현재 배포 설정 권한은 기존 프로젝트 소유 팀원에게 있으며, 아래 프로젝트 설정·환경변수와 실제 배포 결과 확인이 남아 있습니다. Google/Kakao 운영 주소 등록은 배포 후 사용자가 직접 진행합니다.
+소스·설정 준비와 운영 반영은 별도 단계입니다. 프로젝트 소유자가 아래 Production 환경변수와 배포 인증을 설정한 뒤 실제 배포 결과를 확인합니다. Google/Kakao 운영 주소 등록은 배포 후 사용자가 직접 진행합니다.
 
-## 프로젝트 소유 팀원이 적용할 설정
+## Vercel 프로젝트 설정
 
 | 항목 | 적용 값 |
 | --- | --- |
-| Git 저장소 | `DavidPark04/hospital-reservation` |
-| Production Branch | `main` |
+| 소유 scope / 프로젝트 | `0381kdh-8885` / `hospital-reservation-app` |
+| 소스 저장소 | `DavidPark04/hospital-reservation` |
+| 운영 브랜치·배포 방식 | `main`, GitHub Actions에서 Vercel CLI 소스 배포 |
 | Root Directory | 기존 `frontend` 대신 저장소 루트: 입력란 비우기 |
 | 프로젝트 Build / Install / Output | 기존 정적 사이트 override를 해제하고 저장소 설정 사용 |
 | 배포 구성 | 저장소 루트 [vercel.json](../vercel.json)의 `services` |
 | frontend service | `frontend/`, Vite, `npm ci`, `npm run build`, `dist` |
 | backend service | `backend/`, Container Runtime, [Dockerfile](../backend/Dockerfile) |
-| 운영 주소 | `https://hospital-reservation-tau.vercel.app` 유지 |
+| 운영 주소 | `https://hospital-reservation-app.vercel.app` |
 
 `frontend/vercel.json`만 읽는 기존 Root Directory 설정을 유지하면 Java 백엔드가 함께 배포되지 않습니다. 루트 설정은 API·OAuth·OpenAPI 경로를 backend, 나머지 경로를 frontend로 전달합니다. `/auth/social/callback`과 화면 직접 접속·새로고침은 SPA 진입점으로 처리합니다.
 
 Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의 HTTPS 정보를 사용합니다. Vercel도 같은 포트로 전달하도록 프로젝트 환경변수에 `PORT=8080`을 설정합니다. 서비스 구성과 Container Runtime은 Vercel Beta 기능이므로 실제 프로젝트의 배포 로그·지원 상태를 확인합니다. [Vercel Container Runtime](https://vercel.com/docs/functions/runtimes/container), [Vercel Services](https://vercel.com/docs/services)
+
+## GitHub 자동 배포 설정
+
+개인 소유 GitHub 저장소의 공동 작업자는 Vercel의 기본 Git 연결을 직접 만들 수 없으므로 [공식 외부 CI 방식](https://vercel.com/docs/git/external-pipelines)을 사용합니다. 저장소 Settings → Secrets and variables → Actions에 아래 **Repository secrets**를 등록합니다.
+
+| Secret | 값 |
+| --- | --- |
+| `VERCEL_TOKEN` | 새 Vercel 프로젝트에 배포할 수 있는 소유자의 토큰. 가능하면 해당 프로젝트로 범위를 제한 |
+| `VERCEL_ORG_ID` | `0381kdh-8885` scope의 실제 ID (`team_...`), 표시 이름이 아님 |
+| `VERCEL_PROJECT_ID` | `hospital-reservation-app`의 프로젝트 ID |
+
+DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등록하며 Actions에 복사할 필요가 없습니다. CLI는 저장소 루트의 소스를 업로드하고 Vercel이 두 서비스를 빌드합니다. 로컬 `.runtime`, `.env`, 의존성·빌드 결과는 [.vercelignore](../.vercelignore)로 업로드에서 제외합니다.
+
+[Vercel production](../.github/workflows/vercel-production.yml)은 `main` 푸시의 `Application checks` 성공 후 **검사를 통과한 동일 SHA**를 배포합니다. PR·`develop`·fork 실행은 배포하지 않으며, 배포 직전에 최신 `main`과 SHA를 비교해 과거 검사 재실행으로 운영 버전이 되돌아가지 않게 합니다. 동시 배포는 한 번에 하나씩 진행합니다.
+
+루트 `vercel.json`의 `git.deploymentEnabled=false`는 기존 팀원 프로젝트를 포함한 Vercel 기본 Git 자동 배포를 중지합니다. 기존 배포 사이트는 삭제하지 않으며, 새 운영 배포는 위 Actions의 CLI 명령으로만 실행합니다. 이 설정은 CLI 배포를 막지 않습니다. [Vercel Git 설정](https://vercel.com/docs/project-configuration/git-configuration#turning-off-all-automatic-deployments)
+
+환경변수만 변경한 뒤에는 Actions → Vercel production → Run workflow에서 `main`을 선택합니다. 수동 실행도 그 커밋의 앱 검사 성공을 요구합니다. 워크플로 파일이 `main`에 병합되고 위 secrets가 설정되어야 자동 배포가 시작됩니다.
 
 ## Production 환경변수
 
@@ -29,8 +48,8 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 | --- | --- |
 | `MONGODB_URI` | 기존 Atlas의 `hospital_reservation` DB 연결 URI |
 | `JWT_SECRET` | 모든 backend 인스턴스가 공유하는 고정된 충분히 긴 비밀값 |
-| `APP_FRONTEND_URL` | `https://hospital-reservation-tau.vercel.app` |
-| `APP_BACKEND_URL` | `https://hospital-reservation-tau.vercel.app` |
+| `APP_FRONTEND_URL` | `https://hospital-reservation-app.vercel.app` |
+| `APP_BACKEND_URL` | `https://hospital-reservation-app.vercel.app` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | 기존 Google 웹 OAuth 클라이언트 |
 | `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | 기존 Kakao REST API 키·Client Secret |
 | `OPENAI_API_KEY` | 기존 OpenAI API 키 |
@@ -49,16 +68,16 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 
 로컬 callback을 유지하면서 아래 운영 callback을 추가합니다.
 
-- Google 승인된 리디렉션 URI: `https://hospital-reservation-tau.vercel.app/login/oauth2/code/google`
-- Kakao Redirect URI: `https://hospital-reservation-tau.vercel.app/login/oauth2/code/kakao`
-- 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://hospital-reservation-tau.vercel.app`을 사용합니다.
+- Google 승인된 리디렉션 URI: `https://hospital-reservation-app.vercel.app/login/oauth2/code/google`
+- Kakao Redirect URI: `https://hospital-reservation-app.vercel.app/login/oauth2/code/kakao`
+- 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://hospital-reservation-app.vercel.app`을 사용합니다.
 
 기존 동의 범위는 유지합니다. Google은 `openid`, Kakao는 추가 개인정보 scope 없이 계정 식별번호만 사용하고 이름·이메일·전화번호는 앱의 추가 입력 화면에서 받습니다. 앱 비즈니스 전환이나 이메일·SMS 인증은 이번 구성에 포함되지 않습니다.
 
 ## 배포 순서와 검증
 
 1. 작업 PR → `develop`은 Squash, `develop` → `main`은 Merge commit으로 병합합니다. 최신 커밋의 Repository checks·Frontend build·Backend tests를 확인합니다.
-2. 프로젝트 소유 팀원이 Root Directory와 Production 환경변수를 적용합니다. 기존 Git 연결의 `main` 배포를 실행하거나 설정 완료 후 최신 `main`을 Redeploy합니다.
+2. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. `main` 병합 후 Application checks → Vercel production 결과를 확인합니다. 설정을 나중에 마쳤다면 위 수동 재배포를 실행합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
 4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
