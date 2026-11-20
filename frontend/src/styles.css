@@ -23,6 +23,21 @@
 .profile-details dd{margin:0;font-weight:600;overflow-wrap:anywhere}
 .profile-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:27px}
 .profile-withdrawal{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid var(--line);margin-top:30px;padding-top:20px}
+.hospital-location{padding:26px;margin-bottom:24px;min-width:0}
+.hospital-location h2{display:flex;align-items:center;gap:9px;font-size:1.12rem}
+.map-provider-label{font-size:.6875rem;color:var(--muted);white-space:nowrap}
+.hospital-map-frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#f3f8f9;margin-top:18px}
+.hospital-map-canvas{width:100%;height:310px}
+.hospital-map-status{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;background:#f3f8f9;padding:25px;text-align:center;color:var(--muted);font-size:.8125rem;line-height:1.8}
+.hospital-map-status>svg{color:var(--teal)}
+.hospital-location-details{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:18px;margin-top:18px}
+.hospital-location-details>div:first-child{min-width:0;flex:1 1 210px}
+.hospital-location-details strong{display:block;font-size:.9375rem;color:var(--ink)}
+.hospital-location-details p{font-size:.8125rem;line-height:1.8;color:var(--muted);overflow-wrap:anywhere;margin-top:4px}
+.hospital-map-actions{display:flex;gap:8px;flex-wrap:wrap}
+.hospital-map-help{color:var(--muted);font-size:.6875rem;line-height:1.8;margin-top:15px}
+.map-unavailable{display:flex;align-items:center;gap:15px;background:var(--pale);border-radius:10px;padding:20px;margin-top:18px;color:var(--muted);font-size:.8125rem;line-height:1.8}
+@media(max-width:600px){.hospital-location{padding:20px}.hospital-location h2{font-size:.9375rem}.hospital-map-canvas{height:260px}.hospital-map-actions{width:100%}.hospital-map-actions>.button{flex:1}.hospital-map-status{padding:19px}.hospital-location-details{gap:12px}.hospital-location-details>div:first-child{flex-basis:100%}}
 .profile-withdrawal>p,.withdrawal-help{font-size:.75rem;line-height:1.8;color:var(--muted)}
 .withdrawal-link{color:#a5575d;font-size:.8125rem;white-space:nowrap}
 .withdrawal-actions{margin-top:5px;flex-wrap:wrap}

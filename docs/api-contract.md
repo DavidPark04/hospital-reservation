@@ -62,6 +62,8 @@ Google은 `openid`만 요청하고 Kakao는 별도 개인정보 scope를 요청�
 
 검색 파라미터는 `query`, `region`, `department`입니다. 응답은 `{items,source,message?,fetchedAt?}`이며 `source`는 `LIVE`, `CACHE`, `SAMPLE`입니다. 병원 상세에는 실제 조회한 진료과 목록과 `evidence`의 출처·조회 시점이 포함됩니다. 의료진은 `isVirtual:true`인 저장된 가상 자료입니다.
 
+병원 정보의 선택 필드 `latitude`, `longitude`는 HIRA가 제공한 유효 좌표입니다. 프런트 지도는 이 좌표를 우선 사용하고, 없는 경우 카카오 지도 SDK로 병원 주소를 변환합니다. 주소가 모호하거나 위치를 확인하지 못하면 좌표를 추정해 표시하지 않습니다. `SAMPLE` 병원은 실제 위치 안내에서 제외합니다. 지도·외부 길찾기 연결을 위한 새 서버 API나 사용자 현재 위치 수집은 추가하지 않습니다.
+
 상담 요청은 `{messages:[{role,content}],region?}`, 응답은 `reply,hospitals,departmentCode?,departmentName?,needsMoreInfo,emergency,mode,source?,notice?`입니다. `mode`는 `AI` 또는 `FALLBACK`입니다. 실제 조회 병원 밖의 후보를 생성하지 않으며 증상 원문은 DB에 저장하지 않습니다. AI나 공공 API 장애를 성공 응답으로 숨기지 않습니다.
 
 ## 예약 정합성
