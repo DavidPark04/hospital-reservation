@@ -54,6 +54,7 @@ DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등�
 | `APP_BACKEND_URL` | `https://hospital-reservation-app.vercel.app` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | 기존 Google 웹 OAuth 클라이언트 |
 | `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | 기존 Kakao REST API 키·Client Secret |
+| `VITE_KAKAO_MAP_JS_KEY` | 지도용 공개 JavaScript 키. frontend 빌드에 반영하며 서버 비밀값과 구분 |
 | `OPENAI_API_KEY` | 기존 OpenAI API 키 |
 | `OPENAI_MODEL` | `gpt-6.2-sol` |
 | `HIRA_HOSPITAL_KEY`, `HIRA_DETAIL_KEY` | 승인받은 HIRA 병원정보·상세정보 인증키 |
@@ -65,6 +66,19 @@ DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등�
 `SERVER_PORT`를 따로 설정하면 `PORT`와 동일하게 맞춥니다. `HOSPITAL_API_FILE`은 로컬 보조 입력용이므로 운영에 설정하지 않습니다. DB URI에는 대상 DB명을 지정하고, Atlas 네트워크 허용 설정에서 Vercel 실행 환경이 접속할 수 있는지 확인합니다. 로컬 PC IP만 허용한 상태로는 클라우드 서버 접속이 보장되지 않습니다.
 
 Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에서 실계정 OAuth를 확인하려면 해당 origin·callback·DB를 별도로 맞춰야 하므로 이번 운영 검증은 확정된 production 주소를 기준으로 합니다.
+
+## 카카오 지도 설정
+
+1. 기존 카카오 개발자 앱의 **카카오맵 → 사용 설정**을 확인하고 해당 앱에서 지도 API를 사용할 수 있게 설정합니다.
+2. **앱 → 플랫폼 키 → JavaScript 키**의 JavaScript SDK 도메인에 `https://hospital-reservation-app.vercel.app`, `http://127.0.0.1:5174`, `http://localhost:5174`를 등록합니다. 다른 개발 포트를 사용하면 그 origin도 별도로 등록합니다.
+3. 해당 JavaScript 키를 Vercel **Production**의 `VITE_KAKAO_MAP_JS_KEY`에 입력합니다. 이는 브라우저에 공개되는 지도 전용 설정이며 `KAKAO_CLIENT_ID`의 REST API 키나 Client Secret으로 대체하지 않습니다.
+4. 환경변수를 저장한 뒤 frontend를 다시 빌드·배포하고 실제 병원 상세에서 지도 마커와 길찾기 목적지를 확인합니다. 미등록 Preview 도메인에서는 지도가 표시되지 않을 수 있습니다.
+
+카카오맵 활성화와 JavaScript SDK 도메인 등록은 소셜 로그인 Redirect URI 설정과 별개입니다. 지도 추가가 사용자가 추후 처리할 OAuth callback 등록을 대신하지 않습니다. [Kakao 지도 Web API 가이드](https://apis.map.kakao.com/web/guide/)
+
+2026년 7월 21일부터 카카오맵 무료 쿼터는 개발자 계정에서 첫 번째로 활성화한 앱에 적용됩니다. 다른 앱 또는 초과 사용에 필요한 유료 API·비즈월렛 설정은 별도로 결정합니다. [카카오맵 사용 방법·쿼터](https://developers.kakao.com/docs/ko/kakaomap/common)
+
+2026-11-21 기존 앱의 카카오맵 활성화·무료 쿼터 적용, 위 세 SDK 도메인 저장과 Vercel Production의 공개 JavaScript 키 설정을 확인했습니다. 운영 지도 표시와 길찾기 검증은 해당 기능의 PR·배포 결과로 확인합니다.
 
 ## 배포 후 사용자가 등록할 소셜 주소
 
@@ -81,7 +95,7 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 1. 작업 PR → `develop`은 Squash, `develop` → `main`은 Merge commit으로 병합합니다. 최신 커밋의 Repository checks·Frontend build·Backend tests를 확인합니다.
 2. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. `main` 병합 후 Application checks → Vercel production 결과를 확인합니다. 설정을 나중에 마쳤다면 위 수동 재배포를 실행합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
-4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다.
+4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크, 샘플 병원 지도 제외도 확인합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
 6. 사용자가 정한 시험 계정으로 모의 예약 생성·변경·취소, 관리자 정원·휴진을 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
 7. 유휴 상태에서 서버가 다시 시작돼도 기존 회원·예약이 유지되고 로그인·검색이 다시 되는지 확인합니다. 운영 결과와 미완료 항목을 해당 PR 및 [진행 현황](../docs/progress-and-next.md)에 기록합니다.
@@ -92,7 +106,7 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 
 새 주소의 첫 운영 배포에서는 화면·자원·병원 검색·DB 상태·비로그인 권한 차단·소셜 인증 시작 callback 등 **HTTP 검사 10개**를 통과했습니다. 이는 Google/Kakao 콘솔 등록 후의 실계정 로그인 완료나 실제 사용자 예약 검증을 뜻하지 않습니다.
 
-GitHub Actions는 Node.js 22 프론트 빌드와 Java 21 테스트·JAR 빌드, 임시 MongoDB 8.0.16 replica set, backend Docker image 빌드를 수행합니다. Docker가 없는 로컬 환경에서는 컨테이너 빌드를 실행하지 않았으며 원격 CI 결과로 확인합니다. 외부 API 키 없이 실행하고 통합 테스트가 생략되면 실패 처리합니다.
+GitHub Actions는 Node.js 22 프론트 지도 테스트·빌드와 Java 21 테스트·JAR 빌드, 임시 MongoDB 8.0.16 replica set, backend Docker image 빌드를 수행합니다. Docker가 없는 로컬 환경에서는 컨테이너 빌드를 실행하지 않았으며 원격 CI 결과로 확인합니다. 외부 API 키 없이 실행하고 통합 테스트가 생략되면 실패 처리합니다.
 
 OAuth 요청은 5분, 교환 티켓은 60초의 MongoDB TTL 저장소에서 인스턴스 간 공유하고 원자적으로 한 번만 사용합니다. 가입 임시 권한은 30분입니다. AI 일일 제한도 공유 MongoDB 카운터를 사용하며 한국 시간 자정을 기준으로 비회원 20회·회원 60회입니다. DB 저장은 PC나 Java 프로세스의 수명과 분리됩니다.
 
