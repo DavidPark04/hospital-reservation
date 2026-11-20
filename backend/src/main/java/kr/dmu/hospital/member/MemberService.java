@@ -52,7 +52,7 @@ public class MemberService {
                     .append("authProvider", provider).append("profileComplete", complete)
                     .append("createdAt", createdAt == null ? null : createdAt.toInstant().toString());
             String email = user.getString("email");
-            if (complete && !"LOCAL".equals(provider) && email != null && !email.isBlank()) member.append("email", email);
+            if (complete && email != null && !email.isBlank()) member.append("email", email);
             String phone = user.getString("phone");
             if (complete && phone != null && !phone.isBlank()) member.append("phone", phone);
             result.add(member);

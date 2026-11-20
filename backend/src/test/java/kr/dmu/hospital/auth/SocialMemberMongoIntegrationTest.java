@@ -60,7 +60,7 @@ class SocialMemberMongoIntegrationTest {
         assertFalse(user.containsKey("email"));
     }
     @Test void uncompletedSocialSignupDoesNotAppearAsMemberEvenWhenProfileIsDuplicate() {
-        auth.register(Map.of("name", "직접 이름", "loginId", "alreadyjoined", "password", "TestPassword2026!", "phone", "01012345678"));
+        auth.register(Map.of("name", "직접 이름", "loginId", "alreadyjoined", "password", "TestPassword2026!", "phone", "01012345678", "email", "alreadyjoined@example.com"));
         Document pending = members.signIn("google", google("not-yet-joined")); setCurrent(pending);
         assertThrows(MemberIdentityConflict.class, () -> auth.completeSocialProfile(profile()));
         assertEquals(1, mongo.getCollection("users").countDocuments(), "OAuth authentication and rejected profile must not create a formal member.");
@@ -92,8 +92,16 @@ class SocialMemberMongoIntegrationTest {
     }
     @Test void emailNeverLinksAccountsAndRequestCannotChooseIdentityOrAdmin() {
         mongo.insert(new Document("_id", "existing-admin").append("loginId", "admin").append("name", "관리자").append("role", "ADMIN").append("email", "personal@example.com"), "users");
+        new UserIndexes(mongo).run(new DefaultApplicationArguments(new String[0]));
+        Document originalAdmin = mongo.findById("existing-admin", Document.class, "users");
         Document google = members.signIn("google", google("subject")); setCurrent(google);
-        auth.completeSocialProfile(Map.of("name", "회원", "email", "personal@example.com", "phone", "021234567", "role", "ADMIN", "id", "existing-admin", "emailVerified", true));
+        ApiException duplicate = assertThrows(ApiException.class, () -> auth.completeSocialProfile(Map.of("name", "회원", "email", " PERSONAL@example.com ", "phone", "021234567", "role", "ADMIN", "id", "existing-admin", "emailVerified", true)));
+        assertEquals(ApiException.class, duplicate.getClass()); assertEquals(409, duplicate.getStatus());
+        assertEquals("이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.", duplicate.getMessage());
+        assertEquals(originalAdmin, mongo.findById("existing-admin", Document.class, "users"));
+        assertEquals(1, mongo.getCollection("users").countDocuments());
+        assertNotNull(mongo.findById(google.getString("_id"), Document.class, "social_signups"));
+        auth.completeSocialProfile(Map.of("name", "회원", "email", "different@example.com", "phone", "021234567", "role", "ADMIN", "id", "existing-admin", "emailVerified", true));
         Document kakao = members.signIn("kakao", Map.of("id", 999L));
         assertNotEquals(google.getString("_id"), kakao.getString("_id"));
         Document saved = mongo.getCollection("users").find(new Document("socialIdentity", "GOOGLE:subject")).first();
@@ -160,7 +168,7 @@ class SocialMemberMongoIntegrationTest {
         assertEquals("manual@example.com", saved.getString("email")); assertEquals("01012345678", saved.getString("phone"));
     }
     @Test void legacyPendingMemberMovesToMinimalTemporarySignupWithoutChangingCompletedMembers() {
-        Map<String, Object> completed = auth.register(Map.of("name", "기존 회원", "loginId", "existing1", "password", "TestPassword2026!", "phone", "01087654321"));
+        Map<String, Object> completed = auth.register(Map.of("name", "기존 회원", "loginId", "existing1", "password", "TestPassword2026!", "phone", "01087654321", "email", "existing@example.com"));
         String completedId = ((Map<?, ?>) completed.get("user")).get("id").toString();
         Document before = mongo.findById(completedId, Document.class, "users");
         mongo.insert(new Document("_id", "legacy").append("loginId", "legacy_google").append("role", "USER")

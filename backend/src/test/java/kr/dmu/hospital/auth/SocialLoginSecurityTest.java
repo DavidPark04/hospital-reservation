@@ -200,4 +200,20 @@ class SocialLoginSecurityTest {
         mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist());
     }
+
+    @Test void unmatchedContactConflictDoesNotExposeProviderForEitherSignupEndpoint() throws Exception {
+        String message = "이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.";
+        when(auth.register(anyMap())).thenThrow(new kr.dmu.hospital.common.ApiException(409, message));
+        mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(message))
+            .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
+        UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("role", "USER").append("authProvider", "GOOGLE"));
+        when(auth.authenticate("pending-token")).thenReturn(pending);
+        when(auth.completeSocialProfile(anyMap())).thenThrow(new kr.dmu.hospital.common.ApiException(409, message));
+        mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(message))
+            .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
+    }
 }

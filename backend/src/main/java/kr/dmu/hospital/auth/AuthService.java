@@ -16,7 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -49,19 +48,21 @@ public class AuthService {
         decoder = decoderValue;
     }
     public Map<String, Object> register(Map<String, Object> body) {
-        String name = text(body, "name"); String loginId = loginId(body); String password = password(body); String phone = phone(body);
+        String name = text(body, "name"); String loginId = loginId(body); String password = password(body); String phone = phone(body); String email = email(body);
         if (name.isBlank() || name.length() > 40) throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
         String normalizedName = MemberIdentity.normalizedName(name);
         if (normalizedName.isBlank()) throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
         if (mongo.exists(Query.query(Criteria.where("loginId").is(loginId)), "users")) throw loginIdConflict();
-        requireAvailableIdentity(normalizedName, phone, null);
+        String normalizedEmail = MemberIdentity.normalizedEmail(email);
+        requireAvailableContacts(normalizedName, phone, normalizedEmail);
         Document user = new Document("_id", UUID.randomUUID().toString()).append("name", name).append("loginId", loginId)
             .append("passwordHash", passwords.encode(password)).append("phone", phone).append("nameNormalized", normalizedName).append("memberIdentityClaimed", true)
+            .append("email", email).append("emailNormalized", normalizedEmail).append("emailSource", "USER").append("emailVerified", false)
             .append("role", "USER").append("authProvider", "LOCAL").append("tokenVersion", 0).append("createdAt", new Date());
         try { mongo.insert(user, "users"); }
         catch (DuplicateKeyException error) {
             if (mongo.exists(Query.query(Criteria.where("loginId").is(loginId)), "users")) throw loginIdConflict();
-            requireAvailableIdentity(normalizedName, phone, null);
+            requireAvailableContacts(normalizedName, phone, normalizedEmail);
             throw new ApiException(409, "이미 등록된 회원 정보입니다. 다시 확인해 주세요.");
         }
         return issue(user);
@@ -93,18 +94,15 @@ public class AuthService {
         Document activeSignup = mongo.findById(current.getId(), Document.class, SocialSignups.COLLECTION);
         if (!SocialSignups.live(activeSignup) || activeSignup.getInteger("tokenVersion", 0) != current.getTokenVersion()) throw signupExpired();
         String name = text(body, "name");
-        String email = text(body, "email");
+        String email = email(body);
         String phone = phone(body);
         if (name.isBlank() || name.length() > 40 || name.codePoints().anyMatch(Character::isISOControl)) {
             throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
         }
-        if (email.length() > 254 || !email.matches("[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+")
-                || email.indexOf('@') > 64 || email.startsWith(".") || email.contains("..") || email.contains(".@")) {
-            throw new ApiException(400, "올바른 이메일 주소를 입력해 주세요.");
-        }
         String normalizedName = MemberIdentity.normalizedName(name);
         if (normalizedName.isBlank()) throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
-        requireAvailableIdentity(normalizedName, phone, null);
+        String normalizedEmail = MemberIdentity.normalizedEmail(email);
+        requireAvailableContacts(normalizedName, phone, normalizedEmail);
         for (int attempt = 0; attempt < 8; attempt++) {
             try {
                 Document member = transaction.execute(status -> {
@@ -113,12 +111,12 @@ public class AuthService {
                     Document signup = mongo.findOne(pending, Document.class, SocialSignups.COLLECTION);
                     if (!SocialSignups.live(signup)) throw signupExpired();
                     if (mongo.exists(Query.query(Criteria.where("socialIdentity").is(signup.getString("socialIdentity"))), "users")) throw signupExpired();
-                    requireAvailableIdentity(normalizedName, phone, null);
+                    requireAvailableContacts(normalizedName, phone, normalizedEmail);
                     String provider = signup.getString("authProvider");
                     Document user = new Document("_id", UUID.randomUUID().toString())
                         .append("loginId", provider.toLowerCase(Locale.ROOT) + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 22))
                         .append("authProvider", provider).append("socialSubject", signup.getString("socialSubject")).append("socialIdentity", signup.getString("socialIdentity"))
-                        .append("name", name).append("email", email).append("phone", phone).append("emailSource", "USER").append("emailVerified", false)
+                        .append("name", name).append("email", email).append("emailNormalized", normalizedEmail).append("phone", phone).append("emailSource", "USER").append("emailVerified", false)
                         .append("nameNormalized", normalizedName).append("memberIdentityClaimed", true).append("profileComplete", true)
                         .append("profileCompletedAt", new Date()).append("createdAt", new Date()).append("role", "USER").append("tokenVersion", 0);
                     mongo.insert(user, "users");
@@ -127,7 +125,7 @@ public class AuthService {
                 });
                 return issue(member);
             } catch (DuplicateKeyException error) {
-                requireAvailableIdentity(normalizedName, phone, null);
+                requireAvailableContacts(normalizedName, phone, normalizedEmail);
                 if (attempt == 7) throw signupExpired();
             } catch (RuntimeException error) {
                 if (error instanceof ApiException || !retryable(error) || attempt == 7) throw error;
@@ -178,6 +176,11 @@ public class AuthService {
         if (!phone.matches("0[0-9]{8,10}")) throw new ApiException(400, "전화번호는 0으로 시작하는 9~11자리 숫자로 입력해 주세요.");
         return phone;
     }
+    private static String email(Map<String, Object> body) {
+        String email = text(body, "email");
+        if (!MemberIdentity.validEmail(email)) throw new ApiException(400, "올바른 이메일 주소를 입력해 주세요.");
+        return email;
+    }
     private static ApiException loginIdConflict() { return new ApiException(409, "이미 사용 중인 아이디입니다."); }
     private static ApiException signupExpired() { return new ApiException(401, "가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요."); }
     private static boolean retryable(Throwable error) {
@@ -186,11 +189,19 @@ public class AuthService {
         }
         return false;
     }
-    private void requireAvailableIdentity(String normalizedName, String phone, String excludedUserId) {
-        Criteria identity = Criteria.where("memberIdentityClaimed").is(true).and("nameNormalized").is(normalizedName).and("phone").is(phone);
-        if (excludedUserId != null) identity.and("_id").ne(excludedUserId);
-        Document existing = mongo.findOne(Query.query(identity), Document.class, "users");
-        if (existing != null) throw new MemberIdentityConflict(existing.getString("authProvider"));
+    private void requireAvailableContacts(String normalizedName, String phone, String normalizedEmail) {
+        Document existing = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("phone").is(phone)), Document.class, "users");
+        if (existing != null) throw contactConflict(existing, normalizedName, phone);
+        existing = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("emailNormalized").is(normalizedEmail)), Document.class, "users");
+        if (existing != null) throw contactConflict(existing, normalizedName, phone);
+    }
+    private static ApiException contactConflict(Document existing, String normalizedName, String phone) {
+        String existingName = existing.get("name") instanceof String name ? MemberIdentity.normalizedName(name) : "";
+        String existingPhone = existing.get("phone") instanceof String value ? MemberIdentity.normalizedPhone(value) : "";
+        if (normalizedName.equals(existingName) && phone.equals(existingPhone)) {
+            return new MemberIdentityConflict(existing.getString("authProvider"));
+        }
+        return new ApiException(409, "이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.");
     }
     private static String text(Map<String, Object> body, String key) {
         Object value = body.get(key);
