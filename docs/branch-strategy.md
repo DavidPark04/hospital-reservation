@@ -4,13 +4,15 @@
 
 ```mermaid
 flowchart LR
-    Task[작업 브랜치: FE / BE / 공통 / 문서] -->|PR · 상대 승인 · Squash| Develop[develop: 통합]
+    Task[작업 브랜치: FE / BE / 공통 / 문서] -->|PR · 검사 통과 · Squash| Develop[develop: 통합]
     Develop -->|릴리스 PR · Merge commit| Main[main: 제출 / 배포]
     Main -->|릴리스 후 동기화 PR · Merge commit| Develop
     Hotfix[hotfix: main에서 생성] -->|긴급 수정 PR · Squash| Main
 ```
 
 두 영구 브랜치 `main`, `develop`을 유지합니다. FE·BE별로 영구 통합 브랜치를 추가하지 않고, 작업별 브랜치 이름과 폴더로 구분합니다. 모든 일반 작업은 최신 `develop`에서 시작합니다.
+
+두 브랜치 모두 PR은 필수이며 상대 승인은 선택입니다. 최신 대상 브랜치를 반영하고 필수 검사 통과·리뷰 대화 해결 후 작성자가 병합할 수 있습니다.
 
 ## 이름
 
@@ -55,7 +57,7 @@ FE 담당은 frontend 브랜치를 선택합니다. 로컬 브랜치가 이미 �
 
 1. `develop`의 앱 테스트·빌드·시연 결과를 확인합니다.
 2. `develop` → `main` PR을 만들고 `chore: v0.1.0 릴리스`처럼 제목을 붙입니다.
-3. 상대 승인 후 **Create a merge commit**으로 병합합니다. 릴리스를 Squash하지 않습니다.
+3. 필수 검사 통과·리뷰 대화 해결 후 **Create a merge commit**으로 병합합니다. 상대 승인은 필수가 아니며 릴리스를 Squash하지 않습니다.
 4. `main` → `develop` 동기화 PR을 **Create a merge commit**으로 병합합니다.
 5. 검증된 `main`에 `v0.1.0` 같은 태그를 붙이고 변경점·알려진 제한을 기록합니다.
 

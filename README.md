@@ -87,7 +87,7 @@ flowchart LR
 | 박다윗 | [DavidPark04](https://github.com/DavidPark04) | 상세 역할 미정, Issue 담당자로 작업 단위 배정 |
 | 김도형 | [kdh0381](https://github.com/kdh0381) | 상세 역할 미정, Issue 담당자로 작업 단위 배정 |
 
-두 사람이 상대의 PR을 검토합니다. FE/BE 주 담당이 정해져도 API 계약·DB 구조·배포 설정 변경은 함께 확인합니다.
+필요한 PR에 상대의 검토를 요청할 수 있습니다. FE/BE 주 담당이 정해져도 API 계약·DB 구조·배포 설정 변경은 문서와 PR에 공유합니다. 상대 승인은 병합 필수 조건이 아닙니다.
 
 ## 8. 배포 URL
 
@@ -121,7 +121,7 @@ python3 scripts/check_repository.py
 
 - `main`: 제출·배포 기준. `develop`: 개발 통합. 두 브랜치에 직접 push하지 않습니다.
 - 작업마다 `develop`에서 브랜치를 만들고, FE·BE·공통 작업을 이름으로 구분합니다.
-- 상대 팀원 1명 승인, 검사 통과, 리뷰 의견 해결 후 병합합니다.
+- 상대 승인 없이 검사 통과·리뷰 대화 해결 후 작성자가 병합할 수 있습니다.
 - 작업 PR → `develop`은 **Squash and merge**, `develop` → `main`은 **Create a merge commit**입니다.
 - 커밋·PR 제목은 `feat: 모의 예약 생성`처럼 `종류: 한국어 설명`으로 씁니다.
 - 비밀 키·DB URI·실제 사용자 데이터는 커밋하지 않습니다.

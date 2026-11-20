@@ -5,7 +5,7 @@
 ## 1. 작업 시작
 
 1. Issue에 목적, 완료 기준, 영향 영역, 선행 작업을 적습니다.
-2. 담당자는 한 명으로 정하고 상대에게 리뷰를 요청합니다. 공동 작업이면 본문에 역할을 나눕니다.
+2. 담당자는 한 명으로 정하고 필요하면 상대에게 리뷰를 요청합니다. 공동 작업이면 본문에 역할을 나눕니다.
 3. 최신 `develop`에서 작업 브랜치를 만듭니다.
 
 ```bash
@@ -27,7 +27,7 @@ git push -u origin feat/backend/12-create-reservation
 | 작업 브랜치 → `develop` | Squash and merge | 한 Issue 또는 작은 완료 단위 |
 | `develop` → `main` | Create a merge commit | 팀이 시연·제출 가능한 버전을 확인 |
 | `main` → `develop` | Create a merge commit | 릴리스·긴급 수정 이력을 통합 브랜치에 반영 |
-| `hotfix/영역/번호-내용` → `main` | Squash and merge | 배포·제출 버전의 긴급 오류, 상대 승인 필수 |
+| `hotfix/영역/번호-내용` → `main` | Squash and merge | 배포·제출 버전의 긴급 오류, 필수 검사 통과 |
 
 `main`, `develop`에는 직접 push·force push하지 않고 삭제하지 않습니다. 사람별 영구 브랜치는 만들지 않습니다. 각자 작업 브랜치를 소유하고 다른 사람 브랜치에 임의로 push하지 않습니다. 긴급 수정 후에는 `main` → `develop` PR을 반드시 만듭니다.
 
@@ -38,8 +38,8 @@ git push -u origin feat/backend/12-create-reservation
 - 기본 대상은 `develop`입니다. `main` 대상은 릴리스·긴급 수정만 허용합니다.
 - 제목에 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `build:`, `style:`, `revert:` 중 하나를 사용합니다.
 - 변경 이유, 변경 동작, 검증 명령·결과, 관련 Issue를 작성합니다. 미실행 검사를 통과했다고 쓰지 않습니다.
-- 상대 팀원 1명 Approve, CI 성공, 리뷰 대화 해결 후 작성자가 병합합니다. 새 변경을 push하면 다시 검토받습니다.
-- 가능하면 하루 안에 리뷰합니다. 바쁘면 가능한 시간을 남기고, 응답이 없다는 이유만으로 승인한 것으로 처리하지 않습니다.
+- 필수 승인 수는 0명입니다. CI 성공·리뷰 대화 해결 후 작성자가 상대 승인 없이 병합할 수 있습니다. 새 변경을 push하면 해당 커밋의 검사를 확인합니다.
+- 상대 리뷰는 선택입니다. 검토를 요청받으면 가능하면 하루 안에 의견을 남기되, 미응답을 승인으로 기록하지 않습니다. 리뷰 응답을 기다리는 것은 기본 병합 조건이 아닙니다.
 - API 요청·응답, 인증, 컬렉션·인덱스, 공통 설정을 바꾸면 관련 문서도 같은 PR에서 수정합니다.
 
 기본 브랜치는 `main`입니다. 작업 PR에는 `Refs #번호`를 적고, `develop` 통합·검증 후 Issue를 수동 완료 처리합니다. `Closes #번호` 자동 종료는 기본 브랜치를 대상으로 하는 PR에서만 동작하므로, `develop` PR에서 자동 종료를 기대하지 않습니다. [GitHub 공식 설명](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
