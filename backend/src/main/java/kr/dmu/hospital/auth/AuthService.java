@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -74,6 +75,38 @@ public class AuthService {
         if (user == null || user.getString("passwordHash") == null || !passwords.matches(password, user.getString("passwordHash"))) throw new ApiException(401, "아이디 또는 비밀번호가 맞지 않습니다.");
         mongo.updateFirst(Query.query(Criteria.where("_id").is(user.getString("_id"))), new Update().set("lastLoginAt", new Date()), "users");
         return issue(user);
+    }
+    public Map<String, Object> changePassword(Map<String, Object> body) {
+        UserPrincipal current = CurrentUser.require();
+        if (current.isSignupPending() || !current.isProfileComplete() || !"LOCAL".equals(current.getAuthProvider())) {
+            throw new ApiException(403, "소셜 로그인 계정은 가입한 서비스에서 비밀번호를 변경해 주세요.");
+        }
+        if (body == null || !(body.get("currentPassword") instanceof String currentPassword)
+                || !(body.get("newPassword") instanceof String newPassword)) {
+            throw new ApiException(400, "현재 비밀번호와 새 비밀번호를 입력해 주세요.");
+        }
+        requireValidPassword(newPassword);
+        Document user = mongo.findById(current.getId(), Document.class, "users");
+        if (user == null || user.getInteger("tokenVersion", 0) != current.getTokenVersion()) throw passwordSessionExpired();
+        String provider = user.getString("authProvider");
+        if (provider != null && !"LOCAL".equals(provider)) {
+            throw new ApiException(403, "소셜 로그인 계정은 가입한 서비스에서 비밀번호를 변경해 주세요.");
+        }
+        String hash = user.getString("passwordHash");
+        if (currentPassword.isEmpty() || currentPassword.getBytes(StandardCharsets.UTF_8).length > 72
+                || hash == null || !passwords.matches(currentPassword, hash)) {
+            throw new ApiException(400, "현재 비밀번호가 맞지 않습니다.");
+        }
+        if (currentPassword.equals(newPassword)) throw new ApiException(400, "새 비밀번호는 현재 비밀번호와 다르게 입력해 주세요.");
+        Criteria version = current.getTokenVersion() == 0
+            ? new Criteria().orOperator(Criteria.where("tokenVersion").is(0), Criteria.where("tokenVersion").exists(false))
+            : Criteria.where("tokenVersion").is(current.getTokenVersion());
+        Query query = Query.query(new Criteria().andOperator(Criteria.where("_id").is(current.getId()),
+            Criteria.where("passwordHash").is(hash), Criteria.where("authProvider").is(provider), version));
+        Update update = new Update().set("passwordHash", passwords.encode(newPassword)).inc("tokenVersion", 1);
+        Document updated = mongo.findAndModify(query, update, FindAndModifyOptions.options().returnNew(true), Document.class, "users");
+        if (updated == null) throw passwordSessionExpired();
+        return issue(updated);
     }
     Map<String, Object> issueSocialSession(String userId, int tokenVersion) {
         return issueSocialSession(userId, tokenVersion, false);
@@ -168,9 +201,13 @@ public class AuthService {
     }
     private static String password(Map<String, Object> body) {
         String password = text(body, "password");
-        if (password.length() < 8 || password.getBytes(StandardCharsets.UTF_8).length > 72) throw new ApiException(400, "비밀번호는 8자 이상, 72바이트 이하로 입력해 주세요.");
+        requireValidPassword(password);
         return password;
     }
+    private static void requireValidPassword(String password) {
+        if (password.length() < 8 || password.getBytes(StandardCharsets.UTF_8).length > 72) throw new ApiException(400, "비밀번호는 8자 이상, 72바이트 이하로 입력해 주세요.");
+    }
+    private static ApiException passwordSessionExpired() { return new ApiException(401, "로그인 정보가 변경됐어요. 다시 로그인해 주세요."); }
     private static String phone(Map<String, Object> body) {
         String phone = MemberIdentity.normalizedPhone(text(body, "phone"));
         if (!phone.matches("0[0-9]{8,10}")) throw new ApiException(400, "전화번호는 0으로 시작하는 9~11자리 숫자로 입력해 주세요.");

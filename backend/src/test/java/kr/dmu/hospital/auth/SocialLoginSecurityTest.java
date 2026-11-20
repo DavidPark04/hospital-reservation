@@ -74,6 +74,35 @@ class SocialLoginSecurityTest {
     }
     @AfterEach void tearDown() { SecurityContextHolder.clearContext(); }
 
+    @Test void passwordChangeRequiresCompletedMemberTokenAndPreservesRawFields() throws Exception {
+        String body = "{\"currentPassword\":\" CurrentPassword! \",\"newPassword\":\" ChangedPassword! \"}";
+        mvc.perform(patch("/api/auth/password").contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        when(auth.authenticate("pending-token")).thenReturn(UserPrincipal.forSignup(new Document("_id", "pending")
+            .append("role", "USER").append("authProvider", "GOOGLE")));
+        mvc.perform(patch("/api/auth/password").header("Authorization", "Bearer pending-token")
+            .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        verify(auth, never()).changePassword(anyMap());
+        UserPrincipal member = new UserPrincipal(new Document("_id", "member").append("loginId", "member1")
+            .append("role", "USER").append("authProvider", "LOCAL"));
+        when(auth.authenticate("member-token")).thenReturn(member);
+        Map<String, Object> fields = Map.of("currentPassword", " CurrentPassword! ", "newPassword", " ChangedPassword! ");
+        when(auth.changePassword(fields)).thenReturn(Map.of("token", "refreshed-token", "user", member.toPublic()));
+        mvc.perform(patch("/api/auth/password").header("Authorization", "Bearer member-token")
+            .contentType("application/json").content(body)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.token").value("refreshed-token")).andExpect(jsonPath("$.user.id").value("member"));
+        verify(auth).changePassword(fields);
+    }
+
+    @Test void passwordChangeReturnsServiceValidationErrorsAndAllowsLocalAdmin() throws Exception {
+        UserPrincipal admin = new UserPrincipal(new Document("_id", "admin").append("loginId", "admin").append("role", "ADMIN"));
+        when(auth.authenticate("admin-token")).thenReturn(admin);
+        when(auth.changePassword(anyMap())).thenThrow(new kr.dmu.hospital.common.ApiException(400, "현재 비밀번호가 맞지 않습니다."));
+        mvc.perform(patch("/api/auth/password").header("Authorization", "Bearer admin-token")
+            .contentType("application/json").content("{\"currentPassword\":\"wrong\",\"newPassword\":\"ChangedPassword!\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("현재 비밀번호가 맞지 않습니다."));
+        verify(auth).changePassword(anyMap());
+    }
+
     @Test void providerListExposesOnlyPublicConfiguration() throws Exception {
         String json = mvc.perform(get("/api/auth/social/providers")).andExpect(status().isOk())
             .andExpect(jsonPath("$.providers[0].id").value("google"))
