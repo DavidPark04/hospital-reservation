@@ -2,7 +2,6 @@ package kr.dmu.hospital.integration;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -30,14 +29,12 @@ import kr.dmu.hospital.common.ApiException;
 
 @Service
 public class HospitalService {
-    private static final String BASIC_SOURCE = "https://www.data.go.kr/data/15001698/openapi.do";
     private static final String DETAIL_SOURCE = "https://www.data.go.kr/data/15001699/openapi.do";
-    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
-    private static final String CACHE_MESSAGE = "최근 조회해 저장한 병원 중 검색 조건에 맞는 결과입니다. 전체 검색 결과와 다를 수 있습니다.";
     private final MongoTemplate mongo;
     private final HiraClient hira;
     private final TransactionTemplate transaction;
-    private final Map<String, SearchCache> searchCache = new LinkedHashMap<>();
+    @org.springframework.beans.factory.annotation.Value("${app.demo-enabled:false}")
+    private boolean demoEnabled;
 
     public HospitalService(MongoTemplate mongo, HiraClient hira, MongoTransactionManager transactionManager) {
         this.mongo = mongo;
@@ -51,60 +48,54 @@ public class HospitalService {
         region = clean(region, 80);
         department = clean(department, 2);
         if (!department.isBlank() && !Departments.contains(department)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
-        Instant lookupTime = Instant.now();
-        String cacheKey = query + "|" + region + "|" + department + "|" + lookupTime.atZone(SEOUL).toLocalDate();
-        Date freshSince = recentCacheCutoff(lookupTime);
-        SearchCache cached;
-        synchronized (searchCache) { cached = searchCache.get(cacheKey); }
-        if (cached != null && cached.createdAt().isAfter(freshSince.toInstant())) {
-            List<Map<String, Object>> items = new ArrayList<>();
-            for (String id : cached.ids()) {
-                Document row = mongo.findById(id, Document.class, "hospitals");
-                if (row != null && row.get("basicFetchedAt") instanceof Date basicTime && !basicTime.before(freshSince)) {
-                    items.add(publicHospital(row, "CACHE"));
-                }
-            }
-            if (!items.isEmpty() || cached.ids().isEmpty()) return result(items, "CACHE", CACHE_MESSAGE);
+        List<Criteria> filters = searchFilters(query, region);
+        filters.add(Criteria.where("provider").is("HIRA"));
+        filters.add(Criteria.where("active").is(true));
+        if (!department.isBlank()) filters.add(Criteria.where("departmentCodes").is(department));
+        Query selection = Query.query(new Criteria().andOperator(filters.toArray(Criteria[]::new)))
+                .with(Sort.by("name", "_id")).limit(30);
+        List<Document> rows = mongo.find(HospitalCatalog.publicFields(selection), Document.class, HospitalCatalog.COLLECTION);
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Document row : rows) items.add(publicHospital(HospitalCatalog.combine(row, null), "CACHE"));
+        if (items.isEmpty() && demoEnabled && !mongo.exists(new Query(), HospitalCatalog.COLLECTION)) {
+            List<Criteria> sampleFilters = searchFilters(query, region);
+            sampleFilters.add(Criteria.where("source").is("SAMPLE"));
+            if (!department.isBlank()) sampleFilters.add(Criteria.where("departments.code").is(department));
+            List<Document> samples = mongo.find(Query.query(new Criteria().andOperator(sampleFilters.toArray(Criteria[]::new)))
+                    .with(Sort.by("name", "_id")).limit(30), Document.class, "hospitals");
+            for (Document sample : samples) items.add(publicHospital(sample, "SAMPLE"));
+            if (!items.isEmpty()) return result(items, "SAMPLE", "전국 병원 정보가 아직 준비되지 않아 예약 체험용 샘플을 표시합니다.");
         }
-        List<Document> recent = findCached(query, region, department, false, freshSince);
-        if (!recent.isEmpty()) {
-            List<Map<String, Object>> items = new ArrayList<>();
-            for (Document row : recent) items.add(publicHospital(row, "CACHE"));
-            return result(items, "CACHE", CACHE_MESSAGE);
+        return result(items, "CACHE", items.isEmpty() ? "저장된 병원 목록에서 검색 결과를 찾지 못했어요. 지역이나 병원명을 바꿔 보세요."
+                : "매일 갱신해 저장한 병원 기본 정보입니다.");
+    }
+
+    private List<Criteria> searchFilters(String name, String region) {
+        List<Criteria> filters = new ArrayList<>();
+        if (!name.isBlank()) filters.add(Criteria.where("name").regex(Pattern.quote(name), "i"));
+        if (!region.isBlank()) {
+            for (String token : region.split("\\s+")) filters.add(Criteria.where("address").regex(regionPattern(token), "i"));
         }
-        try {
-            List<Map<String, String>> rows = hira.search(query, region, department);
-            List<Map<String, Object>> hospitals = new ArrayList<>();
-            List<String> ids = new ArrayList<>();
-            for (Map<String, String> row : rows) {
-                if (row.getOrDefault("ykiho", "").isBlank() || row.getOrDefault("yadmNm", "").isBlank()) continue;
-                Document saved = saveBasic(row, department);
-                hospitals.add(publicHospital(saved, "LIVE"));
-                ids.add(saved.getString("_id"));
-            }
-            synchronized (searchCache) {
-                if (searchCache.size() >= 200) searchCache.remove(searchCache.keySet().iterator().next());
-                searchCache.put(cacheKey, new SearchCache(ids, Instant.now()));
-            }
-            return result(hospitals, "LIVE", hospitals.isEmpty() ? "검색 결과가 없습니다. 지역이나 병원명을 바꿔 보세요." : "건강보험심사평가원에서 조회한 병원 정보입니다.");
-        } catch (HiraClient.UpstreamUnavailable unavailable) {
-            List<Document> rows = findCached(query, region, department, false, null);
-            String source = "CACHE";
-            String message = "공공 API 연결이 원활하지 않아 마지막으로 확인한 병원 정보를 표시합니다. 조회 시점을 확인해 주세요.";
-            if (rows.isEmpty()) {
-                rows = findCached(query, region, department, true, null);
-                source = "SAMPLE";
-                message = "공공 API에 연결하지 못했습니다. 아래는 예약 흐름 체험용 샘플 병원이며 실제 병원 추천이 아닙니다.";
-            }
-            List<Map<String, Object>> hospitals = new ArrayList<>();
-            for (Document row : rows) hospitals.add(publicHospital(row, source));
-            return result(hospitals, source, message);
-        }
+        return filters;
+    }
+
+    private String regionPattern(String token) {
+        List<String> alternatives = switch (token) {
+            case "충북", "충청북도" -> List.of("충북", "충청북도");
+            case "충남", "충청남도" -> List.of("충남", "충청남도");
+            case "전북", "전라북도", "전북특별자치도" -> List.of("전북", "전라북도");
+            case "전남", "전라남도" -> List.of("전남", "전라남도");
+            case "경북", "경상북도" -> List.of("경북", "경상북도");
+            case "경남", "경상남도" -> List.of("경남", "경상남도");
+            case "강원", "강원도", "강원특별자치도" -> List.of("강원");
+            case "제주", "제주도", "제주특별자치도" -> List.of("제주");
+            default -> List.of(token);
+        };
+        return String.join("|", alternatives.stream().map(Pattern::quote).toList());
     }
 
     public Map<String, Object> detail(String id) {
-        Document hospital = mongo.findById(id, Document.class, "hospitals");
-        if (hospital == null) throw new ApiException(404, "병원 정보를 찾을 수 없습니다. 다시 검색해 주세요.");
+        Document hospital = materialize(id);
         if ("SAMPLE".equals(hospital.getString("source"))) return publicHospital(hospital, "SAMPLE");
         Object detailTime = hospital.get("detailFetchedAt");
         if (hospital.getBoolean("detailComplete", true) && detailTime instanceof Date date
@@ -143,11 +134,11 @@ public class HospitalService {
             Document saved = saveDetails(id, departments, evidence, refreshedKinds,
                     special.successful() && designation.successful(), now);
             boolean complete = saved.getBoolean("detailComplete", true);
-            Map<String, Object> result = publicHospital(saved, complete ? "LIVE" : "CACHE");
+            Map<String, Object> result = publicHospital(HospitalCatalog.require(mongo, id), complete ? "LIVE" : "CACHE");
             if (!complete) result.put("notice", "일부 상세정보를 새로 확인하지 못해 해당 항목은 이전 근거를 유지했습니다. 각 근거의 조회 시각을 확인해 주세요.");
             return result;
         } catch (HiraClient.UpstreamUnavailable | CompletionException unavailable) {
-            Map<String, Object> result = publicHospital(hospital, "CACHE");
+            Map<String, Object> result = publicHospital(HospitalCatalog.require(mongo, id), "CACHE");
             result.put("notice", "상세정보를 새로 확인하지 못했습니다. 마지막 조회 정보만 표시합니다.");
             return result;
         }
@@ -169,32 +160,21 @@ public class HospitalService {
         }
     }
 
-    private Document saveBasic(Map<String, String> row, String department) {
-        String externalId = row.get("ykiho");
-        String id = UUID.nameUUIDFromBytes(("HIRA:" + externalId).getBytes(StandardCharsets.UTF_8)).toString();
-        Date now = new Date();
+    private Document materialize(String id) {
+        Document hospital = HospitalCatalog.require(mongo, id);
+        if ("SAMPLE".equals(hospital.getString("source"))) return hospital;
+        if (mongo.exists(Query.query(Criteria.where("_id").is(id)), "hospitals")) return hospital;
         return writeTogether(() -> {
-            Document current = mongo.findById(id, Document.class, "hospitals");
-            if (current != null && current.get("basicFetchedAt") instanceof Date previous && previous.after(now)) return current;
-            Document baseEvidence = evidence(id, "BASIC", "공공 병원 정보", "병원명·주소·연락처", BASIC_SOURCE, now);
-            Double longitude = coordinate(row.get("XPos"), 180);
-            Double latitude = coordinate(row.get("YPos"), 90);
-            Document location = longitude != null && latitude != null
-                    ? new Document("latitude", latitude).append("longitude", longitude) : null;
-            Update update = new Update().set("provider", "HIRA").set("externalId", externalId)
-                    .set("name", row.get("yadmNm")).set("address", row.getOrDefault("addr", ""))
-                    .set("tel", row.getOrDefault("telno", "")).set("source", "LIVE")
-                    .set("basicFetchedAt", now).set("fetchedAt", latestFetchedAt(current, now)).set("location", location)
-                    .set("evidence", mergeEvidence(current, List.of(baseEvidence), Set.of("BASIC")));
-            if (location != null) update.set("longitude", longitude).set("latitude", latitude);
-            else update.unset("longitude").unset("latitude");
-            if (!department.isBlank()) {
-                update.set("departmentCode", department).set("departmentName", Departments.name(department));
-                update.addToSet("departments", new Document("code", department).append("name", Departments.name(department)));
+            Document current = HospitalCatalog.require(mongo, id);
+            Update insert = new Update();
+            for (Map.Entry<String, Object> entry : current.entrySet()) {
+                if (!"_id".equals(entry.getKey())) insert.setOnInsert(entry.getKey(), entry.getValue());
             }
-            mongo.upsert(Query.query(Criteria.where("_id").is(id)), update, "hospitals");
-            mongo.save(baseEvidence, "hospitalEvidence");
-            return mongo.findById(id, Document.class, "hospitals");
+            boolean created = mongo.upsert(Query.query(Criteria.where("_id").is(id)), insert, "hospitals").getUpsertedId() != null;
+            if (created && current.get("evidence") instanceof List<?> facts) {
+                for (Object value : facts) if (value instanceof Document fact && "BASIC".equals(fact.getString("kind"))) mongo.save(fact, "hospitalEvidence");
+            }
+            return HospitalCatalog.require(mongo, id);
         });
     }
 
@@ -239,29 +219,6 @@ public class HospitalService {
         return current != null && current.get("fetchedAt") instanceof Date previous && previous.after(now) ? previous : now;
     }
 
-    static Date recentCacheCutoff(Instant now) {
-        Instant startOfDay = now.atZone(SEOUL).toLocalDate().atStartOfDay(SEOUL).toInstant();
-        Instant fiveMinutesAgo = now.minusSeconds(300);
-        return Date.from(startOfDay.isAfter(fiveMinutesAgo) ? startOfDay : fiveMinutesAgo);
-    }
-
-    private List<Document> findCached(String name, String region, String department, boolean sample, Date freshSince) {
-        List<Criteria> filters = new ArrayList<>();
-        filters.add(sample ? Criteria.where("source").is("SAMPLE") : Criteria.where("source").ne("SAMPLE"));
-        if (freshSince != null) {
-            filters.add(Criteria.where("provider").is("HIRA"));
-            filters.add(Criteria.where("basicFetchedAt").gte(freshSince));
-        }
-        if (!name.isBlank()) filters.add(Criteria.where("name").regex(Pattern.quote(name), "i"));
-        if (!region.isBlank()) {
-            String[] tokens = region.trim().split("\\s+");
-            for (String token : tokens) filters.add(Criteria.where("address").regex(Pattern.quote(token), "i"));
-        }
-        if (!department.isBlank()) filters.add(new Criteria().orOperator(Criteria.where("departmentCode").is(department), Criteria.where("departments.code").is(department)));
-        Query query = Query.query(new Criteria().andOperator(filters.toArray(Criteria[]::new)));
-        return mongo.find(query.with(Sort.by(Sort.Direction.DESC, freshSince == null ? "fetchedAt" : "basicFetchedAt")).limit(30), Document.class, "hospitals");
-    }
-
     public static Map<String, Object> publicHospital(Document row, String source) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", row.getString("_id"));
@@ -301,16 +258,6 @@ public class HospitalService {
         return new Document("_id", evidenceId).append("hospitalId", id).append("kind", kind).append("label", label)
                 .append("value", value).append("sourceUrl", source).append("basePeriod", null).append("fetchedAt", now);
     }
-    private static Double coordinate(String raw, double limit) {
-        try {
-            if (raw != null && !raw.isBlank()) {
-                double value = Double.parseDouble(raw);
-                if (Double.isFinite(value) && Math.abs(value) <= limit) return value;
-            }
-        } catch (NumberFormatException ignored) { }
-        return null;
-    }
-
     private <T> T writeTogether(Supplier<T> operation) {
         for (int attempt = 0; attempt < 8; attempt++) {
             try {
@@ -338,6 +285,5 @@ public class HospitalService {
         if (value.length() > max) throw new ApiException(400, "검색 조건이 너무 깁니다.");
         return value.trim();
     }
-    private record SearchCache(List<String> ids, Instant createdAt) { }
     private record DetailResult(List<Map<String, String>> rows, boolean successful) { }
 }
