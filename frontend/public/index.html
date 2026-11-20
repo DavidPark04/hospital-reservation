@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="AI 기반 병원 예약 지원 서비스의 사전 안내 페이지입니다. 현재 서비스를 준비하고 있습니다." />
+    <meta name="theme-color" content="#f0fafb" />
+    <link rel="icon" href="data:," />
+    <title>서비스 준비 중 | 병원 예약 지원</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #f0fafb;
+        --surface: #ffffff;
+        --ink: #164e63;
+        --muted: #475569;
+        --accent: #0e7490;
+        --line: #c9e6eb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100svh;
+        background: var(--background);
+        color: var(--ink);
+        font-family: "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+        line-height: 1.65;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
+      }
+      .page {
+        max-width: 1040px;
+        min-height: 100vh;
+        min-height: 100svh;
+        margin: 0 auto;
+        padding: 36px clamp(24px, 5vw, 64px) 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      header { font-size: 18px; font-weight: 700; }
+      main { flex: 1; display: grid; align-content: center; padding: 64px 0; }
+      .status { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--accent); }
+      .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+      h1 { max-width: 15ch; margin: 20px 0 24px; font-size: clamp(36px, 6vw, 60px); line-height: 1.22; letter-spacing: -.045em; }
+      .intro { max-width: 36em; margin: 0; color: var(--muted); font-size: 18px; }
+      .notice { max-width: 650px; margin-top: 40px; padding: 24px 28px; background: var(--surface); border-left: 4px solid var(--accent); border-radius: 0 12px 12px 0; }
+      .notice h2 { margin: 0 0 8px; font-size: 18px; }
+      .notice p { margin: 0; color: var(--muted); }
+      footer { border-top: 1px solid var(--line); padding-top: 20px; color: var(--muted); font-size: 14px; }
+      @media (max-width: 480px) {
+        .page { padding-top: 24px; }
+        main { padding: 48px 0; }
+        .notice { padding: 20px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>병원 예약 지원</header>
+      <main>
+        <div class="status">서비스 준비 중</div>
+        <h1>병원 찾기부터<br />예약 확인까지.</h1>
+        <p class="intro">증상과 희망 지역으로 병원 정보를 찾고,<br />모의 예약을 경험할 수 있는 서비스를 준비하고 있습니다.</p>
+        <section class="notice" aria-labelledby="notice-title">
+          <h2 id="notice-title">지금은 사전 안내 페이지입니다</h2>
+          <p>병원 검색, AI 상담, 모의 예약 기능은 개발 예정입니다. 실제 진료 예약이나 병원 접수는 제공하지 않습니다.</p>
+        </section>
+      </main>
+      <footer>AI 기반 병원 예약 지원 서비스 · 학습용 프로젝트</footer>
+    </div>
+  </body>
+</html>
