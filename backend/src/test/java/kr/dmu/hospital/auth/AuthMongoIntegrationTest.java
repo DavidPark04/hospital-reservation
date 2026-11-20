@@ -67,17 +67,19 @@ class AuthMongoIntegrationTest {
         assertEquals("시험 회원", user.get("name"));
         assertEquals("USER", user.get("role"));
         assertNotEquals("patient_01-a", id);
-        assertEquals(8, user.size());
+        assertEquals(9, user.size());
         assertEquals("LOCAL", user.get("authProvider"));
         assertEquals(true, user.get("profileComplete"));
         assertEquals(false, user.get("emailVerified"));
         assertEquals("01012345678", user.get("phone"));
-        assertFalse(user.containsKey("email"));
+        assertEquals("Patient@Example.com", user.get("email"));
         assertFalse(user.containsKey("passwordHash"));
         Document stored = mongo.findById(id, Document.class, "users");
         assertNotNull(stored);
         assertEquals("patient_01-a", stored.getString("loginId"));
-        assertFalse(stored.containsKey("emailNormalized"));
+        assertEquals("patient@example.com", stored.getString("emailNormalized"));
+        assertEquals("USER", stored.getString("emailSource"));
+        assertEquals(false, stored.getBoolean("emailVerified"));
         assertNotEquals(PASSWORD, stored.getString("passwordHash"));
         assertTrue(passwords.matches(PASSWORD, stored.getString("passwordHash")));
 
@@ -141,7 +143,7 @@ class AuthMongoIntegrationTest {
     @Test
     void signupCannotChooseAdminRoleOrInternalIdentity() {
         Map<String, Object> response = auth.register(Map.of("name", "시험 회원", "loginId", "patient1",
-                "password", PASSWORD, "phone", "01012345678", "role", "ADMIN", "id", "admin-user", "tokenVersion", 99));
+                "password", PASSWORD, "phone", "01012345678", "email", "patient@example.com", "role", "ADMIN", "id", "admin-user", "tokenVersion", 99));
         UserPrincipal user = auth.authenticate((String) response.get("token"));
         assertEquals("USER", user.getRole());
         assertNotEquals("admin-user", user.getId());
@@ -214,12 +216,12 @@ class AuthMongoIntegrationTest {
     }
 
     private Map<String, Object> registration(String loginId) {
-        return Map.of("name", "시험 회원", "loginId", loginId, "password", PASSWORD, "phone", "01012345678");
+        return Map.of("name", "시험 회원", "loginId", loginId, "password", PASSWORD, "phone", "01012345678", "email", " Patient@Example.com ");
     }
 
     @Test void registrationRequiresPhoneAndStoresNormalizedDomesticNumber() {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD))).getStatus());
-        Map<String, Object> response = auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", " 010-1234-5678 "));
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "email", "patient@example.com"))).getStatus());
+        Map<String, Object> response = auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", " 010-1234-5678 ", "email", "patient@example.com"));
         assertEquals("01012345678", ((Map<?, ?>) response.get("user")).get("phone"));
         String id = auth.authenticate((String) response.get("token")).getId();
         assertEquals("01012345678", mongo.findById(id, Document.class, "users").getString("phone"));
@@ -227,7 +229,20 @@ class AuthMongoIntegrationTest {
 
     @ParameterizedTest @ValueSource(strings = {"", "1234567890", "0101234", "010123456789", "010-ABCD-5678", "+821012345678"})
     void registrationRejectsInvalidPhone(String phone) {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", phone))).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", phone, "email", "patient@example.com"))).getStatus());
+        assertEquals(0, mongo.getCollection("users").countDocuments());
+    }
+
+    @Test void registrationRequiresEmail() {
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser",
+            "password", PASSWORD, "phone", "01012345678"))).getStatus());
+        assertEquals(0, mongo.getCollection("users").countDocuments());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"", "not-an-email", ".bad@example.com", "bad..name@example.com", "bad.@example.com", "bad name@example.com"})
+    void registrationRejectsInvalidEmail(String email) {
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser",
+            "password", PASSWORD, "phone", "01012345678", "email", email))).getStatus());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }
 

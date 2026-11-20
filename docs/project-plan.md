@@ -10,7 +10,7 @@ AI 상담 또는 직접 검색으로 병원을 찾고, 저장된 가상 의료�
 - 핵심 검증: 정원 초과·중복 요청·타인 예약 접근 방지, 취소 정원 복구 1회, 일정 변경 실패 시 롤백.
 - 시험 이후 확장: 병원평가 정보, NMC 진료요일, 동의·보관 기간을 검토한 상담 이력, 이메일 알림, 전체 예약·회원 관리 도구.
 
-영통구를 초기 검증 지역으로 제안하며 최종 범위는 팀에서 확정합니다. React·TypeScript·Vite·TanStack Query, Spring Boot 3·Java 21·Security·Data MongoDB·WebClient, MongoDB Atlas를 기준으로 합니다. 초기에는 FE Vercel·BE Render 후보를 검토했으나, 11/20 사용자 결정으로 기존 팀원 Vercel의 FE·Java Container BE 구성으로 변경했습니다.
+영통구를 초기 검증 지역으로 제안하며 최종 범위는 팀에서 확정합니다. React·TypeScript·Vite·TanStack Query, Spring Boot 3·Java 21·Security·Data MongoDB·WebClient, MongoDB Atlas를 기준으로 합니다. 초기에는 FE Vercel·BE Render 후보를 검토했으나, 11/20 사용자 결정으로 Vercel의 FE·Java Container BE 구성으로 변경했습니다. 11/21에는 김도형 소유의 Vercel 프로젝트와 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)으로 운영 대상을 옮기고, 기존 GitHub 저장소의 `main` 검사 성공 후 자동 배포하도록 구성했습니다.
 
 ## 4주 일정
 
