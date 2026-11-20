@@ -32,7 +32,7 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 | `VERCEL_ORG_ID` | `0381kdh-8885` scope의 실제 ID (`team_...`), 표시 이름이 아님 |
 | `VERCEL_PROJECT_ID` | `hospital-reservation-app`의 프로젝트 ID |
 
-DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등록하며 Actions에 복사할 필요가 없습니다. CLI는 저장소 루트의 소스를 업로드하고 Vercel이 두 서비스를 빌드합니다. 로컬 `.runtime`, `.env`, 의존성·빌드 결과는 [.vercelignore](../.vercelignore)로 업로드에서 제외합니다.
+배포 CLI는 저장소 루트의 소스를 업로드하고 Vercel이 두 서비스를 빌드하므로 배포 작업에 DB·OAuth·OpenAI 키를 전달하지 않습니다. 별도의 병원 기본 목록 동기화에는 Actions의 `MONGODB_URI`, `HIRA_HOSPITAL_KEY`가 필요합니다. 나머지 서버 비밀값은 아래 Vercel Production 환경변수에서 관리합니다. 로컬 `.runtime`, `.env`, 의존성·빌드 결과는 [.vercelignore](../.vercelignore)로 업로드에서 제외합니다.
 
 [Vercel production](../.github/workflows/vercel-production.yml)은 `main` 푸시의 `Application checks` 성공 후 **검사를 통과한 동일 SHA**를 배포합니다. PR·`develop`·fork 실행은 배포하지 않으며, 배포 직전에 최신 `main`과 SHA를 비교해 과거 검사 재실행으로 운영 버전이 되돌아가지 않게 합니다. 동시 배포는 한 번에 하나씩 진행합니다.
 
@@ -41,6 +41,16 @@ DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등�
 환경변수만 변경한 뒤에는 Actions → Vercel production → Run workflow에서 `main`을 선택합니다. 수동 실행도 그 커밋의 앱 검사 성공을 요구합니다. 워크플로 파일이 `main`에 병합되고 위 secrets가 설정되어야 자동 배포가 시작됩니다.
 
 자동 배포 토큰이 만료되면 기존 사이트는 유지되지만 새 배포 인증이 실패합니다. Vercel에서 같은 프로젝트 범위의 토큰을 다시 발급해 GitHub의 `VERCEL_TOKEN`만 교체한 뒤 `main` 재배포를 실행합니다.
+
+## 병원 기본 목록 일일 갱신
+
+[Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 매일 `15:00 UTC`, 한국 시간 `00:00`에 실행하도록 예약합니다. 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 `hospitalBasicCatalog`에서 추가·변경·비활성화할 문서만 적용합니다. 상세 3종은 이 작업에서 수집하지 않으며 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
+
+Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API를 호출하거나 매일 재배포하지 않습니다. 일반 검색·AI 후보 조회는 기본 카탈로그를 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다.
+
+GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각 완료를 보장하지 않습니다. 공개 저장소가 60일간 비활성 상태면 스케줄이 중지될 수 있습니다. Actions에서 다시 활성화하거나 **Run workflow → main**으로 실행하고 실제 완료 건수를 확인합니다. [GitHub 예약 실행 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+
+처음 배포하기 전에 기본 카탈로그 적재를 완료하고, 일일 워크플로의 성공 결과를 별도로 확인합니다. 수동 수집·계획 확인·적용 명령과 실패 복구는 [병원 목록 운영 안내](../docs/hospital-catalog.md)를 따릅니다. 아직 실행되지 않은 워크플로나 문서 추가를 운영 갱신 완료로 기록하지 않습니다.
 
 ## Production 환경변수
 
@@ -57,7 +67,8 @@ DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등�
 | `VITE_KAKAO_MAP_JS_KEY` | 지도용 공개 JavaScript 키. frontend 빌드에 반영하며 서버 비밀값과 구분 |
 | `OPENAI_API_KEY` | 기존 OpenAI API 키 |
 | `OPENAI_MODEL` | `gpt-6.2-sol` |
-| `HIRA_HOSPITAL_KEY`, `HIRA_DETAIL_KEY` | 승인받은 HIRA 병원정보·상세정보 인증키 |
+| `HIRA_HOSPITAL_KEY` | 병원정보서비스 인증키. 기본 수집은 Actions에서 수행하며 웹 요청에는 사용하지 않음 |
+| `HIRA_DETAIL_KEY` | 선택한 병원의 상세 3종 조회용 인증키 |
 | `PORT` | `8080` |
 | `SERVER_ADDRESS` | `0.0.0.0` (컨테이너 기본값) |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `framework` (배포 프록시용 컨테이너 기본값) |
@@ -95,7 +106,7 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 1. 작업 PR → `develop`은 Squash, `develop` → `main`은 Merge commit으로 병합합니다. 최신 커밋의 Repository checks·Frontend build·Backend tests를 확인합니다.
 2. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. `main` 병합 후 Application checks → Vercel production 결과를 확인합니다. 설정을 나중에 마쳤다면 위 수동 재배포를 실행합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
-4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크, 샘플 병원 지도 제외도 확인합니다.
+4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 기본 검색은 적재된 MongoDB 카탈로그에서 `CACHE`로 반환하고 기본 API를 호출하지 않아야 합니다. 일일 동기화 완료 건수와 이름·지역·진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크, 샘플 병원 지도 제외도 확인합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
 6. 사용자가 정한 시험 계정으로 모의 예약 생성·변경·취소, 관리자 정원·휴진을 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
 7. 유휴 상태에서 서버가 다시 시작돼도 기존 회원·예약이 유지되고 로그인·검색이 다시 되는지 확인합니다. 운영 결과와 미완료 항목을 해당 PR 및 [진행 현황](../docs/progress-and-next.md)에 기록합니다.

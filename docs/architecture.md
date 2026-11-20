@@ -8,7 +8,9 @@ flowchart LR
     Vercel --> FE[Vite 정적 화면]
     Vercel --> BE[Java 21 Spring 컨테이너]
     BE --> DB[(MongoDB Atlas)]
-    BE --> HIRA[HIRA 병원·진료과 API]
+    BE --> Detail[HIRA 상세 3종 / 필요 시]
+    Sync[GitHub Actions / 매일 00시 KST 예정] --> Basic[HIRA 병원 기본 API]
+    Sync --> DB
     BE --> AI[OpenAI]
     BE --> OAuth[Google / Kakao]
     FE --> Maps[Kakao 지도 SDK / 외부 길찾기]
@@ -16,8 +18,9 @@ flowchart LR
 
 - `frontend/`: React·TypeScript·Vite·TanStack Query. 상담·검색·예약·가입·마이페이지·관리자 UI와 서버 상태 관리.
 - `backend/`: Java 21·Spring Boot 3·Security·Spring Data MongoDB·WebClient. JWT 인증·권한, 외부 API, 예약 정합성.
-- MongoDB Atlas: 병원 정보·근거, 저장된 가상 의료진·시간표, 가입 완료 회원, 만료되는 소셜 가입·OAuth 임시 상태, 예약·요청 키·변경 이벤트.
+- MongoDB Atlas: 전국 병원 기본 카탈로그, 선택 병원의 상세 캐시·근거, 저장된 가상 의료진·시간표, 가입 완료 회원, 만료되는 소셜 가입·OAuth 임시 상태, 예약·요청 키·변경 이벤트.
 - Vercel: 같은 프로젝트의 frontend와 backend services로 구성합니다. Java는 Container Runtime을 사용하며 기존 Oracle 배포 계획은 사용하지 않습니다.
+- GitHub Actions: 기본 병원 목록의 초기 적재·일일 동기화. 기본 API 전체 목록과 서비스에서 지원하는 진료과 필터 목록을 수집·검증한 뒤 MongoDB 변경분을 적용합니다. Vercel 운영 API를 경유하거나 매일 재배포하지 않습니다.
 
 ## 코드 경계
 
@@ -26,6 +29,14 @@ Backend 패키지는 `auth`, `member`, `integration`, `booking`, `common`, `conf
 Frontend는 `App.tsx`의 페이지 흐름, 소셜 가입 전용 컴포넌트, `ScrollStory.tsx`, 공통 요청 `api.ts`로 구성합니다. 기획 단계의 repository/DTO 및 features/pages 세분화는 현재 구현과 동일하지 않으며, 기존 기능을 유지한 채 필요한 범위에서 조정합니다.
 
 병원 상세 지도는 브라우저의 카카오 Web SDK로 표시합니다. 서버가 제공한 병원 좌표를 우선 사용하며 주소 변환도 SDK의 `services` 라이브러리로 처리합니다. 외부 길찾기는 카카오맵으로 연결하고 현재 위치를 수집하지 않습니다. 공개 JavaScript 키만 frontend 빌드 변수에 두며 서버의 카카오 REST API 키·Client Secret은 기존 인증 설정에 유지합니다.
+
+## 병원 목록과 상세 정보
+
+검색·홈·AI 추천의 병원 후보는 `hospitalBasicCatalog`에서 조회합니다. 방문자가 검색할 때 기본 API를 호출하지 않습니다. 일일 수집은 기본 목록의 `dgsbjtCd` 조건으로 진료과별 소속 병원도 확인하므로, 전국 병원의 상세 3종을 일괄 호출하지 않고 진료과 검색을 준비할 수 있습니다.
+
+병원 상세를 열면 기본 카탈로그와 기존 상세 캐시를 합칩니다. 필요한 병원만 `hospitals`에 저장해 예약·가상 의료진의 참조를 유지하며, HIRA 상세 3종의 1시간 캐시 정책은 유지합니다. `hospitalBasicCatalog` 전체를 서버 시작 때 병원별로 정리하거나 `hospitalEvidence`에 복제하지 않습니다.
+
+일일 동기화는 매일 한국 시간 00시로 예약하며, 실제 실행은 GitHub 스케줄 상황에 따라 늦어질 수 있습니다. 수집·검증 후 변경된 기본 문서만 수정하고, 전체 수집이 정상 완료된 경우에만 누락 자료를 비활성화합니다. 회원·예약은 이 일일 수집 대상이 아닙니다. 상세 흐름과 실패 복구는 [병원 목록 운영 안내](hospital-catalog.md)를 참고합니다.
 
 ## 인증과 데이터
 

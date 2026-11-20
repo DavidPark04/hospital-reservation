@@ -3,6 +3,7 @@ package kr.dmu.hospital.booking;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import kr.dmu.hospital.common.ApiException;
+import kr.dmu.hospital.integration.HospitalCatalog;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -224,6 +225,54 @@ class BookingMongoIntegrationTest {
         assertTrue(persisted.getBoolean("closed"));
         assertThrows(ApiException.class, () -> booking.create("user-a", "closed", slot));
         assertEquals(0, count(slot));
+    }
+
+    @Test
+    void catalogOnlyHospitalCanAssignDoctorsBeforeDetailIsOpened() {
+        mongo.insert(catalogHospital("catalog-only"), HospitalCatalog.COLLECTION);
+        List<Document> assigned = booking.doctors("catalog-only", "01");
+        assertEquals(3, assigned.size());
+        assertEquals(assigned, booking.doctors("catalog-only", "01"));
+        assertNull(mongo.findById("catalog-only", Document.class, "hospitals"));
+    }
+
+    @Test
+    void reservationUsesCurrentCatalogBasicFactsInsteadOfOldDetailCache() {
+        String slot = slot(0, 0);
+        mongo.insert(catalogHospital("test-hospital"), HospitalCatalog.COLLECTION);
+        Document reservation = booking.create("user-a", "catalog-current", slot);
+        assertEquals("갱신된 병원", reservation.getString("hospitalName"));
+        Document saved = mongo.findById(reservation.getString("id"), Document.class, "reservations");
+        assertEquals("서울 갱신 주소", saved.get("snapshot", Document.class).getString("address"));
+        assertEquals("시험용 가상 병원", mongo.findById("test-hospital", Document.class, "hospitals").getString("name"));
+    }
+
+    @Test
+    void retirementBlocksNewBookingButPreservesExistingHistoryAndCancellation() {
+        mongo.insert(catalogHospital("test-hospital"), HospitalCatalog.COLLECTION);
+        String first = slot(0, 0);
+        String next = slot(0, 1);
+        Document reservation = booking.create("user-a", "before-retirement", first);
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("test-hospital")),
+                new org.springframework.data.mongodb.core.query.Update().set("active", false), HospitalCatalog.COLLECTION);
+        assertEquals(410, assertThrows(ApiException.class, () -> booking.doctors("test-hospital", "01")).getStatus());
+        assertEquals(410, assertThrows(ApiException.class, () -> booking.slots(doctors.getFirst().getString("id"), date, false)).getStatus());
+        assertEquals(410, assertThrows(ApiException.class, () -> booking.create("user-b", "after-retirement", next)).getStatus());
+        assertEquals(410, assertThrows(ApiException.class, () -> booking.change("user-a", reservation.getString("id"), "change-retired", next)).getStatus());
+        assertEquals(1, count(first));
+        assertEquals(0, count(next));
+        assertEquals(1, booking.reservations("user-a").size());
+        assertEquals(1, mongo.getCollection("requests").countDocuments());
+        Document canceled = booking.cancel("user-a", reservation.getString("id"), "cancel-retired");
+        assertEquals("CANCELED", canceled.getString("status"));
+        assertEquals(0, count(first));
+    }
+
+    private Document catalogHospital(String id) {
+        return new Document("_id", id).append("provider", "HIRA").append("externalId", id)
+                .append("name", "갱신된 병원").append("address", "서울 갱신 주소").append("tel", "02-123-4567")
+                .append("active", true).append("basicFetchedAt", new Date()).append("departmentCodes", List.of("01"))
+                .append("departments", List.of(new Document("code", "01").append("name", "내과")));
     }
 
     private String slot(int doctor, int number) {

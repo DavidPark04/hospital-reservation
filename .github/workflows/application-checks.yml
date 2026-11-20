@@ -71,6 +71,16 @@ jobs:
       - name: Run unit and MongoDB integration tests and build
         working-directory: backend
         run: bash ./gradlew --no-daemon test bootJar
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Test daily hospital catalog collection and MongoDB updates
+        run: |
+          npm ci --ignore-scripts
+          python3 -m unittest discover -s scripts/tests -p 'test_hospital_catalog.py'
+          node --test scripts/tests/hospital-catalog.test.mjs
       - name: Require all tests to execute
         shell: bash
         run: |
