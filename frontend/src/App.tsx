@@ -5,6 +5,9 @@ import { Activity, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
 import { api, ApiError, clearToken, dateLabel, DEPARTMENTS, departmentName, fetchedLabel, getToken, normalizePhone, queryString, setToken, timeLabel, today, validPhone } from './api';
 import ScrollStory from './ScrollStory';
 import HospitalLocation from './HospitalLocation';
+import PhoneInput from './PhoneInput';
+import PasswordChange from './PasswordChange';
+import {formatPhone} from './phoneFormatting';
 import { loginMethod, SocialLoginButtons, SocialLoginCallback, socialErrorMessage } from './SocialLogin';
 import SocialProfile, { needsSocialProfile } from './SocialProfile';
 import type { AuthProvider, AuthResult, ChatResult, DeleteMemberResult, Doctor, Hospital, HospitalResult, Member, Message, Meta, Reservation, Slot, User } from './api';
@@ -101,6 +104,10 @@ export default function App(){
   function completeSocialLogin(result:AuthResult){
     const saved=readSocialReturn();setBooking(saved.booking);completeLogin(result,saved.route);
   }
+  function completePasswordChange(result:AuthResult,previousToken:string){
+    if(getToken()!==previousToken)return;
+    setToken(result.token);setUser(result.user);
+  }
   function completeWithdrawal(result:DeleteMemberResult){
     clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);
     setAuthMode(null);setPreferredLogin(undefined);setSocialError('');setWithdrawalReturn('');
@@ -132,7 +139,7 @@ export default function App(){
       {route.startsWith('/chat')&&<ChatPage route={route} onBooking={startBooking}/>}
       {route==='/booking'&&(booking?<BookingPage selection={booking} user={user} login={()=>setAuthMode('login')} onDone={()=>{setToast(booking.reservation?'예약 일정을 변경했어요.':'모의 예약이 완료되었어요.');queryClient.invalidateQueries({queryKey:['reservations']});go('/reservations');}}/>:<EmptyPage icon={<CalendarDays/>} title="예약할 병원을 먼저 선택해 주세요" body="병원을 검색하거나 AI 상담에서 안내받은 병원의 예약을 시작할 수 있어요." action="병원 찾기" onAction={()=>go('/search')}/>)}
       {route==='/reservations'&&<ReservationsPage user={user} ready={authReady} login={()=>setAuthMode('login')} onBooking={startBooking} notify={setToast}/>}
-      {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')} withdrawalReturn={withdrawalReturn} onWithdrawalReturnHandled={()=>setWithdrawalReturn('')} onWithdrawn={completeWithdrawal}/>}
+      {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')} withdrawalReturn={withdrawalReturn} onWithdrawalReturnHandled={()=>setWithdrawalReturn('')} onWithdrawn={completeWithdrawal} onPasswordChanged={completePasswordChange}/>}
       {route==='/admin'&&<AdminPage user={user} login={()=>setAuthMode('login')} notify={setToast}/>}
       {route==='/admin/members'&&<AdminMembersPage user={user} ready={authReady} login={()=>setAuthMode('login')} notify={setToast}/>}
       {route==='/auth/social/callback'&&<SocialLoginCallback onSuccess={completeSocialLogin} onRetry={()=>{go('/login');setAuthMode('login');}}/>}
@@ -226,7 +233,7 @@ function ReservationsPage({user,ready,login,onBooking,notify}:{user:User|null;re
   return <div className="page-wrap reservations-page"><div className="page-heading"><span className="eyebrow">MY APPOINTMENTS</span><h1>{user.name}님의 예약</h1><p>예약한 일정을 확인하고, 필요한 경우 변경하거나 취소하세요.</p></div><div className="reservation-overview"><span className="overview-icon"><CalendarCheck2 size={30}/></span><div><span>나의 모의 예약</span><h2>예약 중인 일정 <strong>{upcoming}건</strong></h2></div><button className="button secondary" onClick={()=>go('/search')}><Plus size={17}/>새 예약</button></div><div className="tabs" role="tablist" aria-label="예약 상태"><button role="tab" aria-selected={tab==='RESERVED'} className={tab==='RESERVED'?'selected':''} onClick={()=>setTab('RESERVED')}>예약 중 <span>{upcoming}</span></button><button role="tab" aria-selected={tab==='CANCELED'} className={tab==='CANCELED'?'selected':''} onClick={()=>setTab('CANCELED')}>취소 내역 <span>{reservations.data?.items.filter(r=>r.status==='CANCELED').length||0}</span></button></div>{changeError&&<Notice tone="error">{changeError}</Notice>}{reservations.isLoading?<Loading text="예약 내역을 불러오고 있어요"/>:reservations.isError?<ErrorState error={reservations.error} retry={()=>reservations.refetch()}/>:items.length?<div className="reservation-list">{items.map(r=><article className="reservation-card panel" key={r.id}><div className="reservation-date"><span>{new Date(r.startAt).toLocaleDateString('ko-KR',{month:'short',timeZone:'Asia/Seoul'})}</span><strong>{new Date(r.startAt).toLocaleDateString('ko-KR',{day:'numeric',timeZone:'Asia/Seoul'}).replace('일','')}</strong><small>{new Date(r.startAt).toLocaleDateString('ko-KR',{weekday:'long',timeZone:'Asia/Seoul'})}</small></div><div className="reservation-detail"><span className={`status-badge ${r.status==='CANCELED'?'canceled':''}`}>{r.status==='CANCELED'?'취소 완료':'예약 완료'} · 모의 예약</span><h2>{r.hospitalName}</h2><p>{r.departmentName} · {r.doctorName} (가상 의료진)</p><p className="icon-text"><Clock3 size={15}/>{dateLabel(r.startAt)} {timeLabel(r.startAt)}</p><small className="reservation-number">예약 번호 {r.id.slice(0,8).toUpperCase()}</small></div>{r.status==='RESERVED'&&<div className="reservation-actions"><button className="button outline small" onClick={()=>change(r)} disabled={!!changing}>{changing===r.id?<LoaderCircle className="spin" size={16}/>:<CalendarDays size={16}/>}일정 변경</button><button className="button quiet small" onClick={()=>{cancel.reset();setCancelTarget(r);}}>예약 취소</button></div>}</article>)}</div>:<div className="empty-inline reservation-empty"><CalendarDays size={39}/><h3>{tab==='RESERVED'?'아직 예약한 일정이 없어요':'취소한 예약이 없어요'}</h3><p>{tab==='RESERVED'?'원하는 병원과 시간을 선택해 첫 모의 예약을 해보세요.':'취소한 예약은 여기에 표시됩니다.'}</p>{tab==='RESERVED'&&<button className="button primary" onClick={()=>go('/search')}>병원 찾기</button>}</div>}<Notice>모든 예약은 학습용 모의 예약이에요. 실제 진료가 필요하면 병원에 직접 예약해 주세요.</Notice>{cancelTarget&&<Dialog title="예약을 취소할까요?" close={()=>{if(!cancel.isPending)setCancelTarget(null);}}><p className="dialog-copy">{cancelTarget.hospitalName}<br/>{dateLabel(cancelTarget.startAt)} {timeLabel(cancelTarget.startAt)}</p><p className="muted">취소한 예약은 다시 예약해야 이용할 수 있어요.</p>{cancel.isError&&<Notice tone="error">{cancel.error.message}</Notice>}<div className="dialog-actions"><button className="button secondary" onClick={()=>setCancelTarget(null)} disabled={cancel.isPending}>유지하기</button><button className="button danger" onClick={()=>cancel.mutate(cancelTarget)} disabled={cancel.isPending}>{cancel.isPending?'취소 중':'예약 취소'}</button></div></Dialog>}</div>;
 }
 
-function MyPage({user,ready,login,withdrawalReturn,onWithdrawalReturnHandled,onWithdrawn}:{user:User|null;ready:boolean;login:()=>void;withdrawalReturn:string;onWithdrawalReturnHandled:()=>void;onWithdrawn:(result:DeleteMemberResult)=>void}){
+function MyPage({user,ready,login,withdrawalReturn,onWithdrawalReturnHandled,onWithdrawn,onPasswordChanged}:{user:User|null;ready:boolean;login:()=>void;withdrawalReturn:string;onWithdrawalReturnHandled:()=>void;onWithdrawn:(result:DeleteMemberResult)=>void;onPasswordChanged:(result:AuthResult,previousToken:string)=>void}){
   if(!ready)return <div className="page-wrap"><Loading text="내 정보를 확인하고 있어요"/></div>;
   if(!user)return <EmptyPage icon={<UserRound/>} title="로그인 후 내 정보를 확인해 주세요" body="마이페이지에서 가입한 아이디와 회원 정보를 확인할 수 있어요." action="로그인하기" onAction={login}/>;
   return <div className="page-wrap my-page"><div className="page-heading"><span className="eyebrow">MY ACCOUNT</span><h1>마이페이지</h1><p>{user.name}님의 회원 정보를 확인해 보세요.</p></div>
@@ -237,10 +244,11 @@ function MyPage({user,ready,login,withdrawalReturn,onWithdrawalReturnHandled,onW
         <div><dt>아이디</dt><dd>{user.loginId}</dd></div>
         <div><dt>로그인 방식</dt><dd><span className={`login-method ${(user.authProvider||'LOCAL').toLowerCase()}`}>{loginMethod(user.authProvider)}</span></dd></div>
         <div><dt>이메일</dt><dd>{user.email||<span className="muted">등록하지 않음</span>}</dd></div>
-        <div><dt>전화번호</dt><dd>{user.phone||<span className="muted">미등록</span>}</dd></div>
+        <div><dt>전화번호</dt><dd>{user.phone?formatPhone(user.phone):<span className="muted">미등록</span>}</dd></div>
         <div><dt>회원 구분</dt><dd>{user.role==='ADMIN'?'관리자':'일반 회원'}</dd></div>
       </dl>
       <div className="profile-actions"><a className="button primary" href="#/reservations"><CalendarDays size={18}/>내 예약 보기</a>{user.role==='ADMIN'&&<a className="button secondary" href="#/admin/members">회원목록</a>}</div>
+      <PasswordChange key={user.id} user={user} onChanged={onPasswordChanged}/>
       {user.role==='USER'&&<MembershipWithdrawal key={user.id} user={user} returnCode={withdrawalReturn} onReturnHandled={onWithdrawalReturnHandled} onSuccess={onWithdrawn}/>}
     </section>
   </div>;
@@ -348,7 +356,7 @@ function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolea
         <td data-label="아이디">{member.loginId}</td>
         <td data-label="로그인 방식"><span className={`login-method ${(member.authProvider||'LOCAL').toLowerCase()}`}>{loginMethod(member.authProvider)}</span></td>
         <td data-label="이메일">{member.email||<span className="muted">등록하지 않음</span>}</td>
-        <td data-label="전화번호">{member.phone||<span className="muted">미등록</span>}</td>
+        <td data-label="전화번호">{member.phone?formatPhone(member.phone):<span className="muted">미등록</span>}</td>
         <td data-label="회원 구분">{member.role==='ADMIN'?'관리자':'일반 회원'}</td>
         <td data-label="가입일">{member.createdAt?<time dateTime={member.createdAt}>{fetchedLabel(member.createdAt)}</time>:'확인 불가'}</td>
         <td data-label="관리">{member.role==='USER'&&member.id!==user.id?<button className="button quiet small" aria-label={`${member.name} (${member.loginId}) 회원 삭제`} onClick={()=>{remove.reset();setDeleteTarget(member);}} disabled={remove.isPending}>회원 삭제</button>:<span className="protected-member"><ShieldCheck size={14}/>삭제 불가</span>}</td>
@@ -394,7 +402,7 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
     <form onSubmit={submit} className="auth-form">
       {mode==='register'&&<label className="field">이름<input autoComplete="name" value={name} onChange={e=>setName(e.target.value)} required minLength={1} maxLength={40} placeholder="이름"/></label>}
       {mode==='register'&&<label className="field">이메일<input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>setEmail(e.target.value)} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help"/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>}
-      {mode==='register'&&<label className="field">전화번호<input name="phone" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={e=>setPhone(e.target.value)} required maxLength={20} placeholder="010-1234-5678"/><small className="muted">휴대전화 또는 지역번호를 포함한 국내 전화번호를 입력해 주세요.</small></label>}
+      {mode==='register'&&<label className="field">전화번호<PhoneInput name="phone" value={phone} onValueChange={setPhone} required placeholder="010-1234-5678"/><small className="muted">휴대전화 또는 지역번호를 포함한 국내 전화번호를 입력해 주세요.</small></label>}
       <label className="field">아이디<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId} onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30} pattern={'[A-Za-z0-9_\\-]{4,30}'} title="영문, 숫자, 밑줄(_) 또는 하이픈(-)을 사용한 4~30자 아이디" aria-describedby="login-id-help" placeholder="아이디"/><small id="login-id-help" className="muted">영문, 숫자, _ 또는 -를 사용해 4~30자로 입력해 주세요. 영문 대소문자는 구분하지 않아요.</small></label>
       <label className="field">비밀번호<input type="password" autoComplete={mode==='login'?'current-password':'new-password'} value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} maxLength={100} placeholder={mode==='register'?'8자 이상 입력해 주세요':'비밀번호'}/></label>
       {(validationError||mutation.isError)&&<Notice tone="error">{validationError||mutation.error?.message}</Notice>}
