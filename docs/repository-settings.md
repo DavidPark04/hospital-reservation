@@ -1,6 +1,6 @@
 # 저장소 설정 현황
 
-2026-11-20 설정 기준입니다. 팀원 승인 대기 없이 병합하도록 필수 승인 수를 0명으로 변경했습니다.
+아래 표는 2026-11-20 초기 설정 이력입니다. 팀원 승인 대기 없이 병합하도록 필수 승인 수를 0명으로 변경했습니다. 이후 공개 전환·자동 배포 상태는 마지막 절에 기록합니다.
 
 | 항목 | 설정 |
 | --- | --- |
@@ -33,4 +33,6 @@
 
 기존 `Repository checks` 외에 `Application checks`에서 `Frontend build`, `Backend tests`를 추가했습니다. Java 테스트에는 임시 MongoDB replica set과 생략 검사, backend Docker build가 포함됩니다. 새 CI 정의를 추가했다는 사실과 GitHub 브랜치 보호의 필수 검사 항목을 변경했다는 사실은 구분합니다. 이 문서 갱신으로 서버 보호 설정을 변경하지 않았습니다.
 
-Vercel 프로젝트는 기존 팀원 소유입니다. GitHub 쓰기·PR 병합 권한이 Vercel 환경변수·Root Directory 변경 권한을 뜻하지 않습니다. 해당 일회성 설정은 [배포 안내](../infra/README.md)에 따라 프로젝트 소유자가 적용합니다.
+2026-11-21 현재 저장소는 **공개**이며 `kdh0381` 공동 작업자 권한으로 PR 작성·검사 확인·병합을 진행합니다. GitHub 저장소 소유자는 `DavidPark04`로 유지합니다.
+
+운영 대상은 김도형 소유의 `0381kdh-8885/hospital-reservation-app` Vercel 프로젝트와 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다. `main` 앱 검사 성공 후 GitHub Actions가 해당 프로젝트에 배포하도록 구성했습니다. 저장소 Actions에는 `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, 프로젝트 범위의 60일 `VERCEL_TOKEN`을 암호화해 저장하고, DB·OAuth·외부 API 키는 Vercel Production 환경변수로 관리합니다. 이 문서에는 실제 비밀값을 기록하지 않습니다. 설정과 재배포 방법은 [배포 안내](../infra/README.md)를 따릅니다.
