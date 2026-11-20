@@ -4,7 +4,7 @@
 
 증상과 희망 지역으로 진료과·병원 정보를 확인하고, 샘플 의료진의 일정으로 모의 예약을 진행하는 웹 서비스를 만듭니다.
 
-> 현재 상태: 저장소와 협업 환경 준비 단계입니다. 서비스 구현·실제 배포는 아직 완료되지 않았습니다. 노션 「서비스 기획과 범위」에 첨부된 2026-11-20 작성 기획서를 기준으로 사용합니다.
+> 현재 상태: 사전 안내 화면과 Vercel 배포 구성을 준비했습니다. 병원 검색·AI 상담·예약 기능은 아직 구현되지 않았습니다. 노션 「서비스 기획과 범위」에 첨부된 2026-11-20 작성 기획서를 기준으로 사용합니다.
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 
@@ -91,7 +91,7 @@ flowchart LR
 
 ## 8. 배포 URL
 
-프론트엔드·백엔드·API 문서 주소는 모두 미정입니다. [배포 안내](infra/README.md)에 실제 검증 결과와 함께 등록합니다.
+프론트엔드는 Vercel에 사전 안내 화면을 배포합니다. 설정과 접속 확인 방법은 [배포 안내](infra/README.md)를 확인합니다. 백엔드·API 문서 주소는 아직 미정입니다.
 
 ## 9. 폴더와 시작 방법
 
@@ -115,7 +115,7 @@ git pull --ff-only origin develop
 python3 scripts/check_repository.py
 ```
 
-현재는 저장소 구조만 준비되어 있어 앱 실행 명령은 없습니다. [BE 시작 작업](backend/README.md)과 [FE 시작 작업](frontend/README.md)에서 프로젝트를 초기화한 뒤, 실행·테스트 명령과 환경변수 연결을 같은 PR에 추가합니다.
+사전 안내 화면은 `python3 -m http.server 8000 --directory frontend/public`으로 확인합니다. React·Spring 앱 실행 환경은 아직 준비되지 않았습니다. [BE 시작 작업](backend/README.md)과 [FE 시작 작업](frontend/README.md)에서 프로젝트를 초기화한 뒤, 실행·테스트 명령과 환경변수 연결을 같은 PR에 추가합니다.
 
 ## 10. 협업 규칙
 
