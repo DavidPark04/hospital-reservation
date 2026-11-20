@@ -79,8 +79,8 @@ class MemberMongoIntegrationTest {
         new UserIndexes(mongo).run(args);
         new BookingIndexes(mongo).run(args);
         auth = new AuthService(mongo, new BCryptPasswordEncoder(), "local-member-test-signing-key-at-least-32-characters");
-        tokenA = (String) auth.register(Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD, "phone", "010-1234-5678")).get("token");
-        tokenB = (String) auth.register(Map.of("loginId", "patient-b", "name", "회원 나", "password", PASSWORD, "phone", "010-8765-4321")).get("token");
+        tokenA = (String) auth.register(Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD, "phone", "010-1234-5678", "email", "patient-a@example.com")).get("token");
+        tokenB = (String) auth.register(Map.of("loginId", "patient-b", "name", "회원 나", "password", PASSWORD, "phone", "010-8765-4321", "email", "patient-b@example.com")).get("token");
         userA = auth.authenticate(tokenA).getId();
         userB = auth.authenticate(tokenB).getId();
         mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)),
@@ -141,7 +141,7 @@ class MemberMongoIntegrationTest {
         for (Document user : result) {
             Set<String> expected = ADMIN.equals(user.getString("id"))
                     ? Set.of("id", "name", "loginId", "role", "authProvider", "profileComplete", "createdAt")
-                    : Set.of("id", "name", "loginId", "role", "authProvider", "profileComplete", "phone", "createdAt");
+                    : Set.of("id", "name", "loginId", "role", "authProvider", "profileComplete", "phone", "email", "createdAt");
             assertEquals(expected, user.keySet());
             assertEquals("LOCAL", user.getString("authProvider"));
             assertTrue(user.getBoolean("profileComplete"));
@@ -152,6 +152,7 @@ class MemberMongoIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3))
                 .andExpect(jsonPath("$.items[0].loginId").value("patient-b"))
                 .andExpect(jsonPath("$.items[0].phone").value("01087654321"))
+                .andExpect(jsonPath("$.items[0].email").value("patient-b@example.com"))
                 .andExpect(jsonPath("$.items[2].phone").doesNotExist())
                 .andExpect(jsonPath("$.items[*].passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.items[*].tokenVersion").doesNotExist())
@@ -172,7 +173,7 @@ class MemberMongoIntegrationTest {
                 .append("authProvider", "GOOGLE").append("profileComplete", false).append("role", "USER"), "users");
         mongo.insert(new Document("_id", "invalid-completion").append("loginId", "invalid-completion")
                 .append("authProvider", "KAKAO").append("profileComplete", "true").append("role", "USER"), "users");
-        // An old local email is not part of the ID/password signup profile.
+        // Stored contact email is public profile data for local members too.
         mongo.updateFirst(Query.query(Criteria.where("_id").is(ADMIN)), new Update()
                 .set("email", "old-local@example.test"), "users");
         List<Document> result = members.list(ADMIN);
@@ -183,7 +184,7 @@ class MemberMongoIntegrationTest {
         assertEquals("patient@example.test", google.getString("email"));
         assertEquals("01012345678", google.getString("phone"));
         assertEquals(Set.of("id", "name", "loginId", "role", "authProvider", "profileComplete", "email", "phone", "createdAt"), google.keySet());
-        assertFalse(result.stream().filter(user -> ADMIN.equals(user.getString("id"))).findFirst().orElseThrow().containsKey("email"));
+        assertEquals("old-local@example.test", result.stream().filter(user -> ADMIN.equals(user.getString("id"))).findFirst().orElseThrow().getString("email"));
         signIn(ADMIN);
         mvc.perform(get("/api/admin/members")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(2))
@@ -191,6 +192,7 @@ class MemberMongoIntegrationTest {
                 .andExpect(jsonPath("$.items[0].profileComplete").value(true))
                 .andExpect(jsonPath("$.items[0].email").value("patient@example.test"))
                 .andExpect(jsonPath("$.items[0].phone").value("01012345678"))
+                .andExpect(jsonPath("$.items[1].email").value("old-local@example.test"))
                 .andExpect(jsonPath("$.items[*].socialSubject").doesNotExist())
                 .andExpect(jsonPath("$.items[*].socialIdentity").doesNotExist())
                 .andExpect(jsonPath("$.items[*].accessToken").doesNotExist())
