@@ -4,7 +4,7 @@
 
 증상과 희망 지역으로 진료과·병원 정보를 확인하고, 샘플 의료진의 일정으로 모의 예약을 진행하는 웹 서비스를 만듭니다.
 
-> 현재 상태: 저장소와 협업 환경 준비 단계입니다. 서비스 구현·실제 배포는 아직 완료되지 않았습니다. 노션의 2026-11-20 수정안 v1.1을 기획 기준으로 사용합니다.
+> 현재 상태: 저장소와 협업 환경 준비 단계입니다. 서비스 구현·실제 배포는 아직 완료되지 않았습니다. 노션 「서비스 기획과 범위」에 첨부된 2026-11-20 작성 기획서를 기준으로 사용합니다.
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 
@@ -35,24 +35,24 @@
 
 | 구분 | 내용 |
 | --- | --- |
-| 필수 | 회원가입·로그인, 병원 검색·상세, AI 조건 추출·추가 질문, 정보 출처 표시 |
-| 필수 | 샘플 의료진·일정, 모의 예약·변경·취소, 관리자 일정 관리 |
+| 필수 | 회원가입·로그인·로그아웃, 병원 검색·상세, AI 조건 추출·추가 질문, 정보 출처·조회 시점 표시 |
+| 필수 | 배정 후 저장하는 가상 의료진·일정, 모의 예약·변경·취소, 관리자 일정·정원·휴진 관리 |
 | 핵심 검증 | 동시 예약 정원, 중복 요청, 예약 소유자 확인, 변경·취소 정합성 |
-| 선택 | 병원평가 정보, NMC 진료요일 보완, 상담 이력, 이메일 알림 |
+| 시험 이후 확장 | 병원평가 정보, NMC 진료요일 보완, 동의·보관 기간을 검토한 상담 이력, 이메일 알림, 전체 예약·회원 관리 도구 |
 | 범위 밖 | 실제 병원 접수, 진단·처방, 결제, 실시간 대기열, 지도 경로, 모바일 앱 |
 
 ## 4. 기술 스택과 구조
 
 | 분야 | 현재 기획 기준 |
 | --- | --- |
-| Frontend | React · TypeScript · Vite |
-| Backend | Java 21 · Spring Boot · Spring Security · Spring Data MongoDB |
+| Frontend | React · TypeScript · Vite · TanStack Query |
+| Backend | Java 21 · Spring Boot 3 · Spring Security · Spring Data MongoDB · WebClient |
 | Database | MongoDB Atlas, 트랜잭션 가능한 replica set |
 | AI / 외부 API | OpenAI · 심평원 병원정보/의료기관별상세정보 |
 | 배포 | Vercel(FE), Render(BE 후보, 미확정) |
 | 협업 | GitHub Issues·PR · Notion |
 
-라이브러리 버전은 초기 설정 PR에서 호환성을 확인한 뒤 고정합니다. 이전 기획서의 MySQL·JPA·RDS·Flyway 구성은 현재 기준이 아닙니다.
+세부 라이브러리 버전은 초기 설정 PR에서 호환성을 확인한 뒤 고정합니다. 기획서의 로컬 MongoDB PoC 기록은 Spring·Atlas·실제 외부 API 연동 검증과 구분합니다.
 
 ```mermaid
 flowchart LR
@@ -69,10 +69,12 @@ flowchart LR
 
 | 자료 | 위치 |
 | --- | --- |
-| 원본 기획 | [노션 서비스 기획과 범위 v1.1](https://app.notion.com/p/879b8822a70f82f789298129ce73194d) |
+| 기준 기획서 | [노션 서비스 기획과 범위 및 첨부 PDF](https://app.notion.com/p/879b8822a70f82f789298129ce73194d) |
 | 저장소 계획서 | [docs/project-plan.md](docs/project-plan.md) |
 | 발표자료 | [docs/presentation/](docs/presentation/README.md), 작성 예정 |
 | 제출 점검 | [docs/submission-checklist.md](docs/submission-checklist.md) |
+
+2026년 **11/20~12/9의 4주 계획**으로 진행합니다. 1주차 준비 → 2주차 핵심 구현 → 3주차 통합·배포·검증 → 4주차 보고서·시연 준비 순서입니다. **12/2 기능 동결, 12/5 통합 검증, 12/8 준비 완료, 12/9 기말고사**를 기준으로 하며 과제 제출 시각은 별도 확인합니다. 주차별 산출물은 [프로젝트 계획서](docs/project-plan.md)에 정리합니다.
 
 ## 6. 시연 동영상
 
@@ -85,7 +87,7 @@ flowchart LR
 | 박다윗 | [DavidPark04](https://github.com/DavidPark04) | 상세 역할 미정, Issue 담당자로 작업 단위 배정 |
 | 김도형 | [kdh0381](https://github.com/kdh0381) | 상세 역할 미정, Issue 담당자로 작업 단위 배정 |
 
-두 사람이 상대의 PR을 검토합니다. FE/BE 주 담당이 정해져도 API 계약·DB 구조·배포 설정 변경은 함께 확인합니다.
+필요한 PR에 상대의 검토를 요청할 수 있습니다. FE/BE 주 담당이 정해져도 API 계약·DB 구조·배포 설정 변경은 문서와 PR에 공유합니다. 상대 승인은 병합 필수 조건이 아닙니다.
 
 ## 8. 배포 URL
 
@@ -119,7 +121,7 @@ python3 scripts/check_repository.py
 
 - `main`: 제출·배포 기준. `develop`: 개발 통합. 두 브랜치에 직접 push하지 않습니다.
 - 작업마다 `develop`에서 브랜치를 만들고, FE·BE·공통 작업을 이름으로 구분합니다.
-- 상대 팀원 1명 승인, 검사 통과, 리뷰 의견 해결 후 병합합니다.
+- 상대 승인 없이 검사 통과·리뷰 대화 해결 후 작성자가 병합할 수 있습니다.
 - 작업 PR → `develop`은 **Squash and merge**, `develop` → `main`은 **Create a merge commit**입니다.
 - 커밋·PR 제목은 `feat: 모의 예약 생성`처럼 `종류: 한국어 설명`으로 씁니다.
 - 비밀 키·DB URI·실제 사용자 데이터는 커밋하지 않습니다.
