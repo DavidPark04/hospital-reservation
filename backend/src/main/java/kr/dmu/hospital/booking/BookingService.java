@@ -3,6 +3,7 @@ package kr.dmu.hospital.booking;
 import com.mongodb.MongoException;
 import kr.dmu.hospital.common.ApiException;
 import kr.dmu.hospital.integration.Departments;
+import kr.dmu.hospital.integration.HospitalCatalog;
 import org.bson.Document;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
@@ -40,7 +41,7 @@ public class BookingService {
     }
 
     public List<Document> doctors(String hospitalId, String departmentCode) {
-        Document hospital = requireDocument("hospitals", hospitalId, "병원을 찾을 수 없습니다.");
+        Document hospital = HospitalCatalog.require(mongo, hospitalId);
         validateDepartment(hospital, departmentCode);
         Query selection = Query.query(Criteria.where("hospitalId").is(hospitalId)
                 .and("departmentCode").is(departmentCode));
@@ -75,7 +76,8 @@ public class BookingService {
     }
 
     public List<Document> slots(String doctorId, String dateText, boolean admin) {
-        requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
+        Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
+        if (!admin) HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
         LocalDate date = parseDate(dateText);
         LocalDate today = LocalDate.now(SEOUL);
         if (!date.isBefore(today) && date.isBefore(today.plusDays(14))) {
@@ -109,7 +111,7 @@ public class BookingService {
         return mutate(userId, key, "CREATE\n" + slotId, () -> {
             Document slot = acquireSlot(slotId);
             Document doctor = requireDocument("doctors", slot.getString("doctorId"), "의료진을 찾을 수 없습니다.");
-            Document hospital = requireDocument("hospitals", doctor.getString("hospitalId"), "병원을 찾을 수 없습니다.");
+            Document hospital = HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
             Document reservation = new Document("_id", UUID.randomUUID().toString())
                     .append("userId", userId).append("status", "RESERVED")
                     .append("createdAt", new Date()).append("updatedAt", new Date());
@@ -134,7 +136,7 @@ public class BookingService {
             Document before = reservationView(reservation);
             Document nextSlot = acquireSlot(slotId);
             Document doctor = requireDocument("doctors", nextSlot.getString("doctorId"), "의료진을 찾을 수 없습니다.");
-            Document hospital = requireDocument("hospitals", doctor.getString("hospitalId"), "병원을 찾을 수 없습니다.");
+            Document hospital = HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
             releaseSlot(reservation.getString("slotId"));
             setAppointment(reservation, nextSlot, doctor, hospital);
             reservation.put("updatedAt", new Date());
@@ -188,7 +190,8 @@ public class BookingService {
 
     public List<Document> createSlots(String doctorId, String dateText, String startText, String endText,
                                        int intervalMinutes, int capacity) {
-        requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
+        Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
+        HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
         LocalDate date = parseDate(dateText);
         LocalTime start;
         LocalTime end;

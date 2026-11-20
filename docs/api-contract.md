@@ -69,11 +69,15 @@ PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. �
 
 ## 병원·상담
 
-검색 파라미터는 `query`, `region`, `department`입니다. 응답은 `{items,source,message?,fetchedAt?}`이며 `source`는 `LIVE`, `CACHE`, `SAMPLE`입니다. 병원 상세에는 실제 조회한 진료과 목록과 `evidence`의 출처·조회 시점이 포함됩니다. 의료진은 `isVirtual:true`인 저장된 가상 자료입니다.
+검색 파라미터는 `query`, `region`, `department`입니다. 응답은 `{items,source,message?,fetchedAt?}`이며 병원 기본 목록은 `hospitalBasicCatalog`의 활성 자료를 이름·ID 순서로 최대 30건 반환합니다. `department`는 일일 수집에서 확인한 `departmentCodes` 소속을 검색합니다. 검색 요청은 기본 공공 API를 호출하지 않으며 저장된 자료의 `source`는 `CACHE`입니다. 응답 메시지는 "매일 갱신해 저장한 병원 기본 정보입니다."입니다. 기본 목록이 비어 있고 `DEMO_ENABLED=true`인 경우에만 샘플 검색을 허용하며 `SAMPLE`로 표시합니다.
+
+상세는 현재 기본 카탈로그에 저장된 병원의 최신 기본 필드와 상세 캐시를 합칩니다. 상세 3종(진료과·특수진료·전문병원 지정)은 기존처럼 필요할 때 조회하고 완전한 결과를 1시간 캐시합니다. 이때 성공한 외부 상세 조회는 `LIVE`, 저장된 상세 재사용은 `CACHE`이며, 근거마다 출처·조회 시점을 포함합니다. 기본 카탈로그에 없는 ID는 404, 비활성화된 병원은 410입니다. 명시된 샘플 병원 상세는 `SAMPLE`을 유지합니다. 의료진은 `isVirtual:true`인 저장된 가상 자료입니다.
+
+비활성 병원에는 새 가상 의료진·일정 조회와 예약 생성·변경을 허용하지 않습니다. 이미 저장한 예약 조회·취소와 과거 이력은 보존합니다. 원본 `apiFields`, 암호화된 `externalId`와 내용 비교용 해시는 공개 병원 응답에 포함하지 않습니다.
 
 병원 정보의 선택 필드 `latitude`, `longitude`는 HIRA가 제공한 유효 좌표입니다. 프런트 지도는 이 좌표를 우선 사용하고, 없는 경우 카카오 지도 SDK로 병원 주소를 변환합니다. 주소가 모호하거나 위치를 확인하지 못하면 좌표를 추정해 표시하지 않습니다. `SAMPLE` 병원은 실제 위치 안내에서 제외합니다. 지도·외부 길찾기 연결을 위한 새 서버 API나 사용자 현재 위치 수집은 추가하지 않습니다.
 
-상담 요청은 `{messages:[{role,content}],region?}`, 응답은 `reply,hospitals,departmentCode?,departmentName?,needsMoreInfo,emergency,mode,source?,notice?`입니다. `mode`는 `AI` 또는 `FALLBACK`입니다. 실제 조회 병원 밖의 후보를 생성하지 않으며 증상 원문은 DB에 저장하지 않습니다. AI나 공공 API 장애를 성공 응답으로 숨기지 않습니다.
+상담 요청은 `{messages:[{role,content}],region?}`, 응답은 `reply,hospitals,departmentCode?,departmentName?,needsMoreInfo,emergency,mode,source?,notice?`입니다. `mode`는 `AI` 또는 `FALLBACK`입니다. 병원 후보는 검색과 같은 MongoDB 기본 카탈로그에서 선택하며 상담 때문에 기본 공공 API를 호출하지 않습니다. 실제 조회 병원 밖의 후보를 생성하지 않으며 증상 원문은 DB에 저장하지 않습니다. AI나 상세 공공 API 장애를 성공 응답으로 숨기지 않습니다.
 
 ## 예약 정합성
 
