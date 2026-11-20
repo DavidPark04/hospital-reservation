@@ -4,7 +4,7 @@
 
 증상과 희망 지역으로 진료과·병원 정보를 확인하고, 샘플 의료진의 일정으로 모의 예약을 진행하는 웹 서비스를 만듭니다.
 
-> 현재 상태: 회원가입·일반/소셜 로그인·병원 검색·AI 상담·모의 예약·관리자 기능을 구현했습니다. `main`의 앱 검사가 통과하면 김도형의 Vercel 프로젝트로 자동 배포하도록 구성합니다. 운영 배포 성공과 실제 계정 검증은 빌드·자동 테스트 결과와 구분해 기록합니다.
+> 현재 상태: [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)에서 React 화면과 Spring API를 운영하며 MongoDB 연결을 확인했습니다. `main`의 앱 검사 통과 후 김도형의 Vercel 프로젝트로 자동 배포하도록 구성했습니다. 전화번호·이메일 중복 차단 수정본은 로컬 테스트 155개와 HTTP 검사 26개를 통과했으며, 버전별 운영 반영은 PR·배포 기록에서 확인합니다. 새 주소의 구글·카카오 실계정 로그인은 사용자 콘솔의 callback 등록 후 확인합니다.
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 

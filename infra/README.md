@@ -2,7 +2,7 @@
 
 GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 새 운영 대상은 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다.
 
-소스·설정 준비와 운영 반영은 별도 단계입니다. 프로젝트 소유자가 아래 Production 환경변수와 배포 인증을 설정한 뒤 실제 배포 결과를 확인합니다. Google/Kakao 운영 주소 등록은 배포 후 사용자가 직접 진행합니다.
+2026-11-21 첫 운영 배포에서 화면·병원 검색·MongoDB 연결과 소셜 인증 시작 주소를 확인했습니다. Production 환경변수와 GitHub Actions 비밀값 3개를 등록했습니다. 버전별 운영 반영은 해당 PR·Actions·Vercel 배포 결과로 확인하며, Google/Kakao 운영 callback 등록과 실계정 로그인 검증은 사용자가 직접 진행합니다.
 
 ## Vercel 프로젝트 설정
 
@@ -28,7 +28,7 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 | Secret | 값 |
 | --- | --- |
-| `VERCEL_TOKEN` | 새 Vercel 프로젝트에 배포할 수 있는 소유자의 토큰. 가능하면 해당 프로젝트로 범위를 제한 |
+| `VERCEL_TOKEN` | `hospital-reservation-app` 프로젝트에만 접근하는 배포 토큰. 현재 유효기간 60일 |
 | `VERCEL_ORG_ID` | `0381kdh-8885` scope의 실제 ID (`team_...`), 표시 이름이 아님 |
 | `VERCEL_PROJECT_ID` | `hospital-reservation-app`의 프로젝트 ID |
 
@@ -39,6 +39,8 @@ DB·OAuth·OpenAI·HIRA 키는 아래 Vercel Production 환경변수에만 등�
 루트 `vercel.json`의 `git.deploymentEnabled=false`는 기존 팀원 프로젝트를 포함한 Vercel 기본 Git 자동 배포를 중지합니다. 기존 배포 사이트는 삭제하지 않으며, 새 운영 배포는 위 Actions의 CLI 명령으로만 실행합니다. 이 설정은 CLI 배포를 막지 않습니다. [Vercel Git 설정](https://vercel.com/docs/project-configuration/git-configuration#turning-off-all-automatic-deployments)
 
 환경변수만 변경한 뒤에는 Actions → Vercel production → Run workflow에서 `main`을 선택합니다. 수동 실행도 그 커밋의 앱 검사 성공을 요구합니다. 워크플로 파일이 `main`에 병합되고 위 secrets가 설정되어야 자동 배포가 시작됩니다.
+
+자동 배포 토큰이 만료되면 기존 사이트는 유지되지만 새 배포 인증이 실패합니다. Vercel에서 같은 프로젝트 범위의 토큰을 다시 발급해 GitHub의 `VERCEL_TOKEN`만 교체한 뒤 `main` 재배포를 실행합니다.
 
 ## Production 환경변수
 
@@ -86,7 +88,9 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 
 ## 자동 검사와 현재 확인 범위
 
-기능 통합 소스의 로컬 검증은 **JUnit 134개, 실패·오류·생략 0개**, `bootJar` 성공, `npm ci` 및 프론트 TypeScript/Vite 빌드 성공입니다. 실제 외부 API·실계정 OAuth·운영 Vercel 배포 성공을 뜻하지 않습니다.
+전화번호·이메일 중복 차단 수정본의 로컬 검증은 **JUnit 155개, 실패·오류·생략 0개**, `bootJar` 성공, `npm ci` 및 프론트 TypeScript/Vite 빌드 성공, 격리 DB의 HTTP 검사 **26개 통과**입니다. 수정본의 실제 운영 반영은 해당 배포 기록으로 별도 확인합니다.
+
+새 주소의 첫 운영 배포에서는 화면·자원·병원 검색·DB 상태·비로그인 권한 차단·소셜 인증 시작 callback 등 **HTTP 검사 10개**를 통과했습니다. 이는 Google/Kakao 콘솔 등록 후의 실계정 로그인 완료나 실제 사용자 예약 검증을 뜻하지 않습니다.
 
 GitHub Actions는 Node.js 22 프론트 빌드와 Java 21 테스트·JAR 빌드, 임시 MongoDB 8.0.16 replica set, backend Docker image 빌드를 수행합니다. Docker가 없는 로컬 환경에서는 컨테이너 빌드를 실행하지 않았으며 원격 CI 결과로 확인합니다. 외부 API 키 없이 실행하고 통합 테스트가 생략되면 실패 처리합니다.
 
