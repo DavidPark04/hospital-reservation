@@ -4,7 +4,7 @@
 
 증상과 희망 지역으로 진료과·병원 정보를 확인하고, 샘플 의료진의 일정으로 모의 예약을 진행하는 웹 서비스를 만듭니다.
 
-> 현재 상태: 로컬에서 구현한 회원가입·일반/소셜 로그인·병원 검색·AI 상담·모의 예약·관리자 기능을 저장소에 통합했습니다. 기존 Vercel 사전 안내 화면을 이 앱으로 교체하는 배포 작업을 진행 중입니다. 운영 배포 성공과 실제 계정 검증은 빌드·자동 테스트 결과와 구분해 기록합니다.
+> 현재 상태: 회원가입·일반/소셜 로그인·병원 검색·AI 상담·모의 예약·관리자 기능을 구현했습니다. `main`의 앱 검사가 통과하면 김도형의 Vercel 프로젝트로 자동 배포하도록 구성합니다. 운영 배포 성공과 실제 계정 검증은 빌드·자동 테스트 결과와 구분해 기록합니다.
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 
@@ -54,7 +54,7 @@
 | 배포 | Vercel Services: Vite FE + Java 21 Container BE, MongoDB Atlas |
 | 협업 | GitHub Issues·PR · Notion |
 
-Gradle Wrapper·npm lockfile을 포함합니다. 기획서의 초기 PoC, 이번 코드의 자동 테스트, 실제 외부 API·배포 검증은 별도 증거로 관리합니다. 개발 중 검토했던 Oracle 배포 대신 기존 Vercel 주소를 사용합니다.
+Gradle Wrapper·npm lockfile을 포함합니다. 기획서의 초기 PoC, 이번 코드의 자동 테스트, 실제 외부 API·배포 검증은 별도 증거로 관리합니다. 배포는 Vercel을 사용하며 API 키 등 운영 환경변수는 프로젝트 소유자가 관리합니다.
 
 ```mermaid
 flowchart LR
@@ -93,7 +93,7 @@ flowchart LR
 
 ## 8. 배포 URL
 
-기존 운영 주소는 [hospital-reservation-tau.vercel.app](https://hospital-reservation-tau.vercel.app)입니다. 같은 주소에 React 화면과 Spring API를 연결하도록 구성합니다. 실제 반영 여부와 접속 확인 방법은 [배포 안내](infra/README.md)를 확인합니다.
+새 운영 대상은 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다. GitHub 저장소는 `DavidPark04/hospital-reservation`을 유지하고, 김도형의 Vercel 프로젝트에서 React 화면과 Spring API를 함께 운영합니다. 자동 배포에 필요한 설정과 접속 확인 방법은 [배포 안내](infra/README.md)를 확인합니다.
 
 ## 9. 폴더와 시작 방법
 
