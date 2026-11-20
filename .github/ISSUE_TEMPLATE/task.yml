@@ -1,0 +1,35 @@
+name: 개발 작업
+description: 기능·설계·설정·문서 작업을 나눕니다.
+title: "[작업] "
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: 작업 영역
+      options: [backend, frontend, shared, infra, docs]
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 목적과 범위
+      description: 이 작업에서 완성할 동작과 제외할 범위를 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 기준
+      placeholder: "- [ ] 검증할 동작과 결과"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 선행 작업·관련 문서
+      description: API 계약, Notion 결정, 관련 Issue를 연결합니다.
+  - type: input
+    id: branch
+    attributes:
+      label: 작업 브랜치
+      placeholder: feat/backend/12-create-reservation
