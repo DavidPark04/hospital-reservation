@@ -3,7 +3,8 @@ package kr.dmu.hospital.auth;
 import com.mongodb.ConnectionString;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
-import java.text.Normalizer;
+import com.mongodb.client.model.IndexOptions;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +25,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import static org.junit.jupiter.api.Assertions.*;
 
+/** Contact uniqueness is tested only in a disposable loopback database. */
 @EnabledIfEnvironmentVariable(named = "MONGODB_TEST_URI", matches = ".+")
 class MemberIdentityMongoTest {
     private MongoClient client;
@@ -31,6 +33,7 @@ class MemberIdentityMongoTest {
     private AuthService auth;
     private SocialMemberService social;
     private String database;
+
     @BeforeEach void setUp() {
         String uri = System.getenv("MONGODB_TEST_URI");
         assertTrue(uri.startsWith("mongodb://"));
@@ -47,126 +50,273 @@ class MemberIdentityMongoTest {
         if (mongo != null && database.startsWith("hospital_identity_test_")) mongo.getDb().drop();
         if (client != null) client.close();
     }
+
     @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
-    void completedMemberBlocksNewLocalAndSocialProfileWithProviderSpecificMessage(String existingProvider) {
-        if (existingProvider.equals("LOCAL")) auth.register(registration("original1", "Kim Do Hyeong", "01012345678"));
-        else { Document original = pending(existingProvider, "original"); setCurrent(original); auth.completeSocialProfile(profile("Kim Do Hyeong", "01012345678")); }
-        MemberIdentityConflict local = assertThrows(MemberIdentityConflict.class,
-            () -> auth.register(registration("newuser1", "  KIM   DO HYEONG  ", "010-1234-5678")));
-        assertEquals(409, local.getStatus()); assertEquals(existingProvider, local.toPublic().get("existingAuthProvider"));
-        assertEquals("MEMBER_ALREADY_EXISTS", local.toPublic().get("code")); assertFalse(local.getMessage().contains("같은 이름"));
-        Document newcomer = pending(existingProvider.equals("KAKAO") ? "GOOGLE" : "KAKAO", "newcomer"); setCurrent(newcomer);
-        MemberIdentityConflict other = assertThrows(MemberIdentityConflict.class,
-            () -> auth.completeSocialProfile(profile("kim do hyeong", "010 1234 5678")));
-        assertEquals(existingProvider, other.toPublic().get("existingAuthProvider"));
-        Document unchanged = mongo.findById(newcomer.getString("_id"), Document.class, "social_signups");
-        assertNotNull(unchanged);
-        for (String field : List.of("name", "email", "phone", "memberIdentityClaimed", "nameNormalized", "profileComplete")) assertFalse(unchanged.containsKey(field));
-        assertEquals(newcomer.getInteger("tokenVersion"), unchanged.getInteger("tokenVersion"));
-        assertNull(mongo.findById(newcomer.getString("_id"), Document.class, "users"));
-        assertEquals(1, mongo.getCollection("users").countDocuments());
+    void matchingNormalizedNameAndPhoneRevealsProviderForEverySignupMethod(String existingProvider) {
+        complete(existingProvider, "original1", "Kim Do Hyeong", "01012345678", "original@example.com");
+        for (String provider : List.of("LOCAL", "GOOGLE", "KAKAO")) {
+            String subject = "matched-new-" + provider;
+            Document pending = provider.equals("LOCAL") ? null : pending(provider, subject);
+            if (pending != null) setCurrent(pending);
+            MemberIdentityConflict conflict = assertThrows(MemberIdentityConflict.class,
+                () -> finish(provider, subject, "  KIM   DO  HYEONG  ", "010-1234-5678", provider.toLowerCase(java.util.Locale.ROOT) + "@different.example"));
+            assertConflict(conflict, existingProvider);
+            if (pending != null) assertStillPending(pending);
+        }
+        assertEquals(1, count("users"));
     }
-    @Test void differentNameOrDifferentPhoneIsAllowedAndLoginIdConflictRemainsDistinct() {
-        auth.register(registration("original1", "같은 이름", "01012345678"));
-        auth.register(registration("othername", "다른 이름", "01012345678"));
-        auth.register(registration("otherphone", "같은 이름", "01087654321"));
-        ApiException id = assertThrows(ApiException.class, () -> auth.register(registration("original1", "또 다른 이름", "021234567")));
-        assertFalse(id instanceof MemberIdentityConflict); assertEquals("이미 사용 중인 아이디입니다.", id.getMessage());
-        assertEquals(3, mongo.getCollection("users").countDocuments());
+
+    @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
+    void phoneAloneBlocksEverySignupProviderWithoutDisclosingProvider(String existingProvider) {
+        complete(existingProvider, "original1", "기존 이름", "01012345678", "original@example.com");
+        for (String provider : List.of("LOCAL", "GOOGLE", "KAKAO")) {
+            String subject = "phone-new-" + provider;
+            Document pending = provider.equals("LOCAL") ? null : pending(provider, subject);
+            if (pending != null) setCurrent(pending);
+            ApiException conflict = assertThrows(ApiException.class,
+                () -> finish(provider, subject, "다른 이름", "010-1234-5678", provider.toLowerCase(java.util.Locale.ROOT) + "@different.example"));
+            assertGenericConflict(conflict);
+            if (pending != null) assertStillPending(pending);
+        }
+        assertEquals(1, count("users"));
     }
-    @Test void nfcNormalizationAndWhitespacePolicyAreConsistent() {
-        auth.register(registration("original1", "김도형", "01012345678"));
-        assertThrows(MemberIdentityConflict.class, () -> auth.register(registration("newuser1", Normalizer.normalize("김도형", Normalizer.Form.NFD), "010-1234-5678")));
-        assertEquals("kim do hyeong", MemberIdentity.normalizedName("  KIM\t DO  HYEONG  "));
-        assertNotEquals(MemberIdentity.normalizedName("Kim Do"), MemberIdentity.normalizedName("KimDo"));
+
+    @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
+    void emailAloneBlocksEverySignupProviderWithoutDisclosingProviderEvenIfNameMatches(String existingProvider) {
+        complete(existingProvider, "original1", "기존 이름", "01012345678", "Shared@Example.com");
+        for (String provider : List.of("LOCAL", "GOOGLE", "KAKAO")) {
+            String subject = "email-new-" + provider;
+            Document pending = provider.equals("LOCAL") ? null : pending(provider, subject);
+            if (pending != null) setCurrent(pending);
+            ApiException conflict = assertThrows(ApiException.class,
+                () -> finish(provider, subject, "기존 이름", "01087654321", " shared@EXAMPLE.COM "));
+            assertGenericConflict(conflict);
+            if (pending != null) assertStillPending(pending);
+        }
+        assertEquals(1, count("users"));
     }
+
+    @Test void sameNameWithDifferentContactsIsAllowedAndLoginIdConflictRemainsDistinct() {
+        auth.register(registration("original1", "같은 이름", "01012345678", "first@example.com"));
+        auth.register(registration("otheruser", "같은 이름", "01087654321", "second@example.com"));
+        ApiException id = assertThrows(ApiException.class,
+            () -> auth.register(registration("original1", "다른 이름", "021234567", "third@example.com")));
+        assertFalse(id instanceof MemberIdentityConflict);
+        assertEquals("이미 사용 중인 아이디입니다.", id.getMessage());
+        assertEquals(2, count("users"));
+    }
+
+    @Test void matchingNameAndPhoneHavePriorityWhenEmailBelongsToAnotherMember() {
+        complete("KAKAO", "phone-owner", "전화 회원", "01012345678", "phone@example.com");
+        complete("GOOGLE", "email-owner", "메일 회원", "01087654321", "email@example.com");
+        MemberIdentityConflict conflict = assertThrows(MemberIdentityConflict.class,
+            () -> auth.register(registration("newmember", " 전화 회원 ", "01012345678", "email@example.com")));
+        assertConflict(conflict, "KAKAO");
+        assertEquals(2, count("users"));
+    }
+
     @Test void completedSocialReloginKeepsItsOwnIdentityWithoutConflict() {
         Document first = pending("KAKAO", "same-account"); setCurrent(first);
-        Map<String, Object> completedSession = auth.completeSocialProfile(profile("직접 이름", "01012345678"));
-        String memberId = auth.authenticate((String) completedSession.get("token")).getId();
+        Map<String, Object> session = auth.completeSocialProfile(profile("직접 이름", "01012345678", "manual@example.com"));
+        String memberId = auth.authenticate((String) session.get("token")).getId();
         Document again = pending("KAKAO", "same-account");
-        assertNotEquals(first.getString("_id"), memberId); assertEquals(memberId, again.getString("_id"));
+        assertNotEquals(first.getString("_id"), memberId);
+        assertEquals(memberId, again.getString("_id"));
         assertEquals("직접 이름", again.getString("name"));
-        assertEquals(true, again.getBoolean("profileComplete")); assertEquals(1, mongo.getCollection("users").countDocuments());
-        assertEquals(0, mongo.getCollection("social_signups").countDocuments());
+        assertEquals("manual@example.com", again.getString("emailNormalized"));
+        assertEquals(true, again.getBoolean("profileComplete"));
+        assertEquals(1, count("users")); assertEquals(0, count("social_signups"));
         setCurrent(again);
-        ApiException completed = assertThrows(ApiException.class, () -> auth.completeSocialProfile(profile("직접 이름", "01012345678")));
+        ApiException completed = assertThrows(ApiException.class,
+            () -> auth.completeSocialProfile(profile("직접 이름", "01012345678", "manual@example.com")));
         assertFalse(completed instanceof MemberIdentityConflict); assertEquals(409, completed.getStatus());
     }
-    @Test void concurrentLocalSignupHasOneWinnerAndDatabaseIndexEnforcesIdentity() throws Exception {
-        CountDownLatch start = new CountDownLatch(1);
-        try (var executor = Executors.newFixedThreadPool(2)) {
-            Callable<Integer> one = () -> { start.await(); try { auth.register(registration("raceuser1", "동시 이름", "01012345678")); return 200; } catch (MemberIdentityConflict conflict) { return 409; } };
-            Callable<Integer> two = () -> { start.await(); try { auth.register(registration("raceuser2", "동시 이름", "010-1234-5678")); return 200; } catch (MemberIdentityConflict conflict) { return 409; } };
-            var first = executor.submit(one); var second = executor.submit(two); start.countDown();
-            assertEquals(List.of(200, 409), List.of(first.get(), second.get()).stream().sorted().toList());
-        }
-        Document stored = mongo.findOne(new org.springframework.data.mongodb.core.query.Query(), Document.class, "users");
-        Document bypass = new Document(stored); bypass.put("_id", "bypass-id"); bypass.put("loginId", "bypass-id");
+
+    @ParameterizedTest @ValueSource(strings = {"phone", "email"})
+    void concurrentLocalSignupsHaveOneWinnerAndIndependentDatabaseConstraints(String duplicateContact) throws Exception {
+        race("LOCAL", "LOCAL", duplicateContact);
+        Document stored = mongo.getCollection("users").find().first();
+        assertNotNull(stored);
+        Document bypass = new Document(stored).append("_id", "bypass").append("loginId", "bypass")
+            .append("name", "완전히 다른 이름").append("nameNormalized", "완전히 다른 이름");
+        if (duplicateContact.equals("phone")) bypass.append("email", "bypass@example.com").append("emailNormalized", "bypass@example.com");
+        else bypass.append("phone", "021234567");
         assertThrows(DuplicateKeyException.class, () -> mongo.insert(bypass, "users"));
-        assertEquals(1, mongo.getCollection("users").countDocuments());
+        assertEquals(1, count("users"));
     }
-    @Test void concurrentLocalAndSocialCompletionCannotBothClaimSameIdentity() throws Exception {
-        Document newcomer = pending("GOOGLE", "concurrent"); CountDownLatch start = new CountDownLatch(1);
-        try (var executor = Executors.newFixedThreadPool(2)) {
-            var local = executor.submit(() -> { start.await(); try { auth.register(registration("localrace", "동시 이름", "01012345678")); return 200; } catch (MemberIdentityConflict conflict) { return 409; } });
-            var provider = executor.submit(() -> { start.await(); setCurrent(newcomer); try { auth.completeSocialProfile(profile("동시 이름", "010-1234-5678")); return 200; }
-                catch (MemberIdentityConflict conflict) { return 409; } finally { SecurityContextHolder.clearContext(); } });
-            start.countDown(); assertEquals(List.of(200, 409), List.of(local.get(), provider.get()).stream().sorted().toList());
+
+    @ParameterizedTest @ValueSource(strings = {"phone", "email"})
+    void concurrentLocalAndSocialCompletionCannotBothClaimEitherContact(String duplicateContact) throws Exception {
+        race("LOCAL", "GOOGLE", duplicateContact);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"phone", "email"})
+    void concurrentGoogleAndKakaoCompletionLeavesTheLoserPending(String duplicateContact) throws Exception {
+        race("GOOGLE", "KAKAO", duplicateContact);
+        assertEquals(1, count("social_signups"));
+        Document loser = mongo.getCollection("social_signups").find().first();
+        assertNotNull(loser); assertStillPending(loser);
+    }
+
+    @Test void legacyContactsBackfillIndependentlyWithoutInventingMissingValues() {
+        mongo.insert(new Document("_id", "admin").append("name", "관리자").append("loginId", "admin").append("role", "ADMIN"), "users");
+        mongo.insert(new Document("_id", "email-admin").append("name", "이메일 관리자").append("loginId", "emailadmin")
+            .append("email", " Admin@Example.com ").append("role", "ADMIN"), "users");
+        mongo.insert(new Document("_id", "legacy-local").append("name", "  KIM   DO  ").append("loginId", "oldlocal")
+            .append("phone", "010-1234-5678").append("role", "USER"), "users");
+        Document unfinished = pending("KAKAO", "pending-only");
+        indexes();
+        Document local = mongo.findById("legacy-local", Document.class, "users");
+        Document emailAdmin = mongo.findById("email-admin", Document.class, "users");
+        assertEquals("01012345678", local.getString("phone")); assertEquals(true, local.getBoolean("memberIdentityClaimed"));
+        assertFalse(local.containsKey("email")); assertFalse(local.containsKey("emailNormalized"));
+        assertEquals("admin@example.com", emailAdmin.getString("emailNormalized"));
+        assertEquals(true, emailAdmin.getBoolean("memberIdentityClaimed")); assertFalse(emailAdmin.containsKey("phone"));
+        assertFalse(mongo.findById("admin", Document.class, "users").containsKey("memberIdentityClaimed"));
+        indexes();
+        assertEquals(local, mongo.findById("legacy-local", Document.class, "users"));
+        assertEquals(emailAdmin, mongo.findById("email-admin", Document.class, "users"));
+        assertStillPending(unfinished);
+        assertGenericConflict(assertThrows(ApiException.class,
+            () -> auth.register(registration("newlocal", "다른 이름", "01012345678", "new@example.com"))));
+        assertGenericConflict(assertThrows(ApiException.class,
+            () -> auth.register(registration("newadmin", "다른 이름", "01087654321", "ADMIN@example.com"))));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"phone", "email"})
+    void conflictingLegacyContactsStopBeforeChangingOrMigratingAnyMember(String duplicateContact) {
+        String phoneTwo = duplicateContact.equals("phone") ? "01012345678" : "01087654321";
+        String emailTwo = duplicateContact.equals("email") ? " First@EXAMPLE.com " : "second@example.com";
+        mongo.insert(new Document("_id", "legacy-one").append("name", "첫 이름").append("loginId", "legacy1")
+            .append("phone", "010-1234-5678").append("email", "first@example.com").append("role", "USER"), "users");
+        mongo.insert(new Document("_id", "legacy-two").append("name", "다른 이름").append("loginId", "legacy2")
+            .append("phone", phoneTwo).append("email", emailTwo).append("authProvider", "GOOGLE").append("profileComplete", true).append("role", "USER"), "users");
+        mongo.insert(new Document("_id", "legacy-pending").append("loginId", "legacypending").append("role", "USER")
+            .append("authProvider", "KAKAO").append("socialIdentity", "KAKAO:4001").append("socialSubject", "4001"), "users");
+        List<Document> before = mongo.getCollection("users").find().sort(new Document("_id", 1)).into(new ArrayList<>());
+        IllegalStateException failure = assertThrows(IllegalStateException.class, this::indexes);
+        assertFalse(failure.getMessage().contains("010")); assertFalse(failure.getMessage().contains("first@"));
+        assertFalse(failure.getMessage().contains("첫 이름"));
+        assertEquals(before, mongo.getCollection("users").find().sort(new Document("_id", 1)).into(new ArrayList<>()));
+        assertEquals(0, count("social_signups"));
+    }
+
+    @Test void blankLegacyPhonesDoNotClaimTheSamePhoneWhenEmailsAreDifferent() {
+        for (String suffix : List.of("one", "two")) {
+            mongo.insert(new Document("_id", "legacy-" + suffix).append("loginId", "legacy" + suffix)
+                .append("name", "기존 회원").append("authProvider", "LOCAL").append("role", "USER")
+                .append("phone", " ").append("email", suffix + "@example.com"), "users");
         }
-        assertEquals(1, mongo.getCollection("users").countDocuments(new Document("memberIdentityClaimed", true)));
-        assertEquals(1, mongo.getCollection("users").countDocuments());
+        indexes(); indexes();
+        for (String suffix : List.of("one", "two")) {
+            Document member = mongo.findById("legacy-" + suffix, Document.class, "users");
+            assertNotNull(member); assertFalse(member.containsKey("phone"));
+            assertEquals(suffix + "@example.com", member.getString("email"));
+            assertEquals(suffix + "@example.com", member.getString("emailNormalized"));
+            assertEquals(true, member.getBoolean("memberIdentityClaimed"));
+            assertGenericConflict(assertThrows(ApiException.class,
+                () -> auth.register(registration("new" + suffix, "다른 이름", "01012345678", suffix + "@example.com"))));
+        }
+        assertEquals(2, count("users"));
+        auth.register(registration("withphone", "전화 회원", "01012345678", "new@example.com"));
+        assertEquals(3, count("users"));
     }
-    @Test void concurrentGoogleAndKakaoCompletionLeavesTheLoserPending() throws Exception {
-        Document google = pending("GOOGLE", "race-google"); Document kakao = pending("KAKAO", "race-kakao");
+
+    @Test void oldCombinedIndexIsReplacedByIndependentUniqueIndexesIdempotently() {
+        mongo.getCollection("users").createIndex(new Document("nameNormalized", 1).append("phone", 1),
+            new IndexOptions().unique(true).name("user_name_phone_v1").partialFilterExpression(new Document("memberIdentityClaimed", true)));
+        auth.register(registration("memberone", "같은 이름", "01012345678", "one@example.com"));
+        indexes(); indexes();
+        List<Document> all = mongo.getCollection("users").listIndexes().into(new ArrayList<>());
+        assertFalse(all.stream().anyMatch(index -> "user_name_phone_v1".equals(index.getString("name"))));
+        for (String field : List.of("phone", "emailNormalized")) {
+            Document index = all.stream().filter(item -> new Document(field, 1).equals(item.get("key"))).findFirst().orElseThrow();
+            assertEquals(true, index.getBoolean("unique"));
+            assertNotNull(index.get("partialFilterExpression"));
+        }
+        assertEquals(1, count("users"));
+    }
+
+    @Test void concurrentStartupPreservesContactsAndMigratesOneTemporarySignup() throws Exception {
+        mongo.getCollection("users").createIndex(new Document("nameNormalized", 1).append("phone", 1),
+            new IndexOptions().unique(true).name("user_name_phone_v1").partialFilterExpression(new Document("memberIdentityClaimed", true)));
+        mongo.insert(new Document("_id", "legacy-member").append("loginId", "legacymember").append("name", "기존 회원")
+            .append("phone", "010-1234-5678").append("email", " Legacy@Example.com ").append("role", "USER"), "users");
+        mongo.insert(new Document("_id", "legacy-signup").append("loginId", "legacysignup").append("role", "USER")
+            .append("authProvider", "GOOGLE").append("socialIdentity", "GOOGLE:startup-subject").append("socialSubject", "startup-subject"), "users");
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
-            Callable<Integer> first = () -> { start.await(); setCurrent(google); try { auth.completeSocialProfile(profile("동시 이름", "01012345678")); return 200; }
-                catch (MemberIdentityConflict conflict) { assertEquals("KAKAO", conflict.toPublic().get("existingAuthProvider")); return 409; }
-                finally { SecurityContextHolder.clearContext(); } };
-            Callable<Integer> second = () -> { start.await(); setCurrent(kakao); try { auth.completeSocialProfile(profile("동시 이름", "010-1234-5678")); return 200; }
-                catch (MemberIdentityConflict conflict) { assertEquals("GOOGLE", conflict.toPublic().get("existingAuthProvider")); return 409; }
-                finally { SecurityContextHolder.clearContext(); } };
+            Callable<Void> initialize = () -> { start.await(); indexes(); return null; };
+            var one = executor.submit(initialize); var two = executor.submit(initialize); start.countDown();
+            one.get(); two.get();
+        }
+        Document member = mongo.findById("legacy-member", Document.class, "users");
+        assertNotNull(member); assertEquals("01012345678", member.getString("phone"));
+        assertEquals("legacy@example.com", member.getString("emailNormalized"));
+        assertEquals(1, count("users")); assertEquals(1, count("social_signups"));
+        assertNull(mongo.findById("legacy-signup", Document.class, "users"));
+        List<Document> all = mongo.getCollection("users").listIndexes().into(new ArrayList<>());
+        assertFalse(all.stream().anyMatch(index -> "user_name_phone_v1".equals(index.getString("name"))));
+        assertTrue(all.stream().anyMatch(index -> "user_phone_v1".equals(index.getString("name"))));
+        assertTrue(all.stream().anyMatch(index -> "user_email_v1".equals(index.getString("name"))));
+    }
+
+    private void race(String firstProvider, String secondProvider, String duplicateContact) throws Exception {
+        Document firstPending = firstProvider.equals("LOCAL") ? null : pending(firstProvider, "race-one");
+        Document secondPending = secondProvider.equals("LOCAL") ? null : pending(secondProvider, "race-two");
+        String secondPhone = duplicateContact.equals("phone") ? "010-1234-5678" : "01087654321";
+        String secondEmail = duplicateContact.equals("email") ? " FIRST@example.com " : "second@example.com";
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Callable<Integer> first = () -> attempt(start, firstPending, firstProvider, "raceone", "첫 이름", "01012345678", "first@example.com");
+            Callable<Integer> second = () -> attempt(start, secondPending, secondProvider, "racetwo", "다른 이름", secondPhone, secondEmail);
             var one = executor.submit(first); var two = executor.submit(second); start.countDown();
             assertEquals(List.of(200, 409), List.of(one.get(), two.get()).stream().sorted().toList());
         }
-        assertEquals(1, mongo.getCollection("users").countDocuments(new Document("memberIdentityClaimed", true)));
-        assertEquals(1, mongo.getCollection("users").countDocuments());
-        assertEquals(1, mongo.getCollection("social_signups").countDocuments());
-        Document loser = mongo.getCollection("social_signups").find().first();
-        assertNotNull(loser);
-        for (String field : List.of("name", "email", "phone", "memberIdentityClaimed", "nameNormalized", "profileComplete")) assertFalse(loser.containsKey(field));
-        assertNull(mongo.findById(loser.getString("_id"), Document.class, "users"));
+        assertEquals(1, count("users"));
     }
-    @Test void indexBackfillsCompletedMembersButExcludesPendingAndPhoneLessAdmin() {
-        mongo.insert(new Document("_id", "admin").append("name", "관리자").append("loginId", "admin").append("role", "ADMIN"), "users");
-        mongo.insert(new Document("_id", "legacy-local").append("name", "  KIM   DO  ").append("loginId", "oldlocal").append("phone", "010-1234-5678").append("role", "USER"), "users");
-        Document unfinished = pending("KAKAO", "pending-only");
-        indexes(); indexes();
-        Document local = mongo.findById("legacy-local", Document.class, "users");
-        assertEquals("kim do", local.getString("nameNormalized")); assertEquals("01012345678", local.getString("phone"));
-        assertEquals(true, local.getBoolean("memberIdentityClaimed"));
-        assertFalse(mongo.findById("admin", Document.class, "users").containsKey("memberIdentityClaimed"));
-        assertNull(mongo.findById(unfinished.getString("_id"), Document.class, "users"));
-        assertFalse(mongo.findById(unfinished.getString("_id"), Document.class, "social_signups").containsKey("memberIdentityClaimed"));
-        assertThrows(MemberIdentityConflict.class, () -> auth.register(registration("newlocal", "Kim Do", "01012345678")));
+    private int attempt(CountDownLatch start, Document pending, String provider, String subject, String name, String phone, String email) throws Exception {
+        start.await();
+        if (pending != null) setCurrent(pending);
+        try { finish(provider, subject, name, phone, email); return 200; }
+        catch (ApiException conflict) { assertEquals(409, conflict.getStatus()); return conflict.getStatus(); }
+        finally { SecurityContextHolder.clearContext(); }
     }
-    @Test void conflictingLegacyBackfillStopsBeforeChangingOrMergingMembers() {
-        mongo.insert(new Document("_id", "legacy-one").append("name", "Kim Do").append("loginId", "legacy1").append("phone", "010-1234-5678").append("role", "USER"), "users");
-        mongo.insert(new Document("_id", "legacy-two").append("name", "KIM  DO").append("loginId", "legacy2").append("phone", "01012345678").append("authProvider", "GOOGLE").append("profileComplete", true).append("role", "USER"), "users");
-        IllegalStateException failure = assertThrows(IllegalStateException.class, this::indexes);
-        assertFalse(failure.getMessage().contains("010")); assertFalse(failure.getMessage().contains("Kim"));
-        assertEquals(2, mongo.getCollection("users").countDocuments());
-        assertFalse(mongo.findById("legacy-one", Document.class, "users").containsKey("memberIdentityClaimed"));
-        assertFalse(mongo.findById("legacy-two", Document.class, "users").containsKey("memberIdentityClaimed"));
-        assertEquals("010-1234-5678", mongo.findById("legacy-one", Document.class, "users").getString("phone"));
+    private void complete(String provider, String subject, String name, String phone, String email) {
+        if (!provider.equals("LOCAL")) setCurrent(pending(provider, subject));
+        finish(provider, subject, name, phone, email);
+    }
+    private void finish(String provider, String subject, String name, String phone, String email) {
+        if (provider.equals("LOCAL")) auth.register(registration(subject, name, phone, email));
+        else auth.completeSocialProfile(profile(name, phone, email));
+    }
+    private void assertConflict(MemberIdentityConflict conflict, String provider) {
+        assertEquals(409, conflict.getStatus()); assertEquals(provider, conflict.toPublic().get("existingAuthProvider"));
+        assertEquals("MEMBER_ALREADY_EXISTS", conflict.toPublic().get("code"));
+        String expected = provider.equals("KAKAO") ? "이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."
+            : provider.equals("GOOGLE") ? "이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요."
+            : "이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.";
+        assertEquals(expected, conflict.getMessage());
+    }
+    private void assertGenericConflict(ApiException conflict) {
+        assertEquals(ApiException.class, conflict.getClass());
+        assertEquals(409, conflict.getStatus());
+        assertEquals("이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.", conflict.getMessage());
+    }
+    private void assertStillPending(Document pending) {
+        Document unchanged = mongo.findById(pending.getString("_id"), Document.class, "social_signups");
+        assertNotNull(unchanged);
+        for (String field : List.of("name", "email", "emailNormalized", "phone", "memberIdentityClaimed", "nameNormalized", "profileComplete")) assertFalse(unchanged.containsKey(field));
+        assertEquals(pending.getInteger("tokenVersion"), unchanged.getInteger("tokenVersion"));
+        assertNull(mongo.findById(pending.getString("_id"), Document.class, "users"));
     }
     private void indexes() { new UserIndexes(mongo).run(new DefaultApplicationArguments(new String[0])); }
+    private long count(String collection) { return mongo.getCollection(collection).countDocuments(); }
     private void setCurrent(Document user) {
         UserPrincipal principal = Boolean.TRUE.equals(user.getBoolean("registrationPending")) ? UserPrincipal.forSignup(user) : new UserPrincipal(user);
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(principal, null, List.of()));
     }
     private Document pending(String provider, String subject) { return provider.equals("KAKAO") ? social.signIn("kakao", Map.of("id", Integer.toUnsignedLong(subject.hashCode()) + 1)) : social.signIn("google", Map.of("sub", subject)); }
-    private Map<String, Object> profile(String name, String phone) { return Map.of("name", name, "email", "manual@example.com", "phone", phone); }
-    private Map<String, Object> registration(String loginId, String name, String phone) { return Map.of("name", name, "loginId", loginId, "password", "TestPassword2026!", "phone", phone); }
+    private Map<String, Object> profile(String name, String phone, String email) { return Map.of("name", name, "email", email, "phone", phone); }
+    private Map<String, Object> registration(String loginId, String name, String phone, String email) { return Map.of("name", name, "loginId", loginId, "password", "TestPassword2026!", "phone", phone, "email", email); }
 }
