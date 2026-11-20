@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "frontend/",
+      "framework": "vite",
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "outputDirectory": "dist",
+      "rewrites": [{"source": "/(.*)", "destination": "/index.html"}]
+    },
+    "backend": {
+      "root": "backend/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile"
+    }
+  },
+  "rewrites": [
+    {"source": "/api/(.*)", "destination": {"service": "backend"}},
+    {"source": "/oauth2/(.*)", "destination": {"service": "backend"}},
+    {"source": "/login/oauth2/code/(.*)", "destination": {"service": "backend"}},
+    {"source": "/swagger-ui.html", "destination": {"service": "backend"}},
+    {"source": "/swagger-ui/(.*)", "destination": {"service": "backend"}},
+    {"source": "/v3/api-docs(.*)", "destination": {"service": "backend"}},
+    {"source": "/(.*)", "destination": {"service": "frontend"}}
+  ]
+}

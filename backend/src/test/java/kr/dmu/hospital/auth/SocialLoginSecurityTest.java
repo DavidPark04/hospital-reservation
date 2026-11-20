@@ -1,0 +1,203 @@
+package kr.dmu.hospital.auth;
+
+import jakarta.servlet.http.Cookie;
+import java.util.List;
+import java.util.Map;
+import kr.dmu.hospital.common.ApiErrorHandler;
+import kr.dmu.hospital.config.SecurityConfig;
+import org.bson.Document;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.context.SecurityContextImpl;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.test.context.web.WebAppConfiguration;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@ExtendWith(SpringExtension.class)
+@WebAppConfiguration
+@ContextConfiguration(classes = SocialLoginSecurityTest.TestConfig.class)
+class SocialLoginSecurityTest {
+    @Configuration @EnableWebMvc @EnableWebSecurity @Import(SecurityConfig.class)
+    static class TestConfig {
+        @Bean AuthService auth() { return mock(AuthService.class); }
+        @Bean JwtAuthFilter jwt(AuthService auth) { return new JwtAuthFilter(auth); }
+        @Bean SocialMemberService members() { return mock(SocialMemberService.class); }
+        @Bean SocialLoginSettings settings() { return new SocialLoginSettings("http://127.0.0.1:5174", "http://127.0.0.1:18081", "test-google-id", "test-google-secret", "test-kakao-id", "test-kakao-secret"); }
+        @Bean SocialLoginTickets tickets() { return mock(SocialLoginTickets.class); }
+        @Bean MongoAuthorizationRequests requests(SocialLoginSettings settings) { return new MongoAuthorizationRequests(mock(MongoTemplate.class), settings); }
+        @Bean SocialLoginFlow flow(SocialLoginSettings settings, SocialMemberService members, SocialLoginTickets tickets, MongoAuthorizationRequests requests) { return new SocialLoginFlow(settings, members, tickets, requests); }
+        @Bean SocialLoginController social(SocialLoginSettings settings, SocialLoginTickets tickets, SocialLoginFlow flow, AuthService auth) { return new SocialLoginController(settings, tickets, flow, auth); }
+        @Bean AuthController authController(AuthService auth) { return new AuthController(auth); }
+        @Bean ApiErrorHandler errors() { return new ApiErrorHandler(); }
+        @Bean ProtectedTestController protectedApis() { return new ProtectedTestController(); }
+    }
+    @RestController static class ProtectedTestController {
+        @GetMapping("/api/reservations") public Map<String, Object> reservations() { return Map.of("items", List.of()); }
+    }
+    @Autowired WebApplicationContext context;
+    @Autowired AuthService auth;
+    @Autowired SocialMemberService members;
+    @Autowired SocialLoginTickets tickets;
+    @Autowired SocialLoginFlow flow;
+    private MockMvc mvc;
+    @BeforeEach void setUp() {
+        reset(auth, members, tickets);
+        when(tickets.create(any())).thenReturn(SocialLoginTickets.randomValue());
+        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    }
+    @AfterEach void tearDown() { SecurityContextHolder.clearContext(); }
+
+    @Test void providerListExposesOnlyPublicConfiguration() throws Exception {
+        String json = mvc.perform(get("/api/auth/social/providers")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.providers[0].id").value("google"))
+            .andExpect(jsonPath("$.providers[1].enabled").value(true)).andReturn().getResponse().getContentAsString();
+        assertFalse(json.contains("test-google-id")); assertFalse(json.contains("secret"));
+    }
+    @Test void authorizationUsesConfiguredCallbackAndRandomState() throws Exception {
+        var first = mvc.perform(get("/oauth2/authorization/google").header("Host", "attacker.example"))
+            .andExpect(status().is3xxRedirection()).andReturn();
+        String url = first.getResponse().getRedirectedUrl();
+        assertNotNull(url); assertTrue(url.startsWith("https://accounts.google.com/o/oauth2/v2/auth?"));
+        assertTrue(url.contains("redirect_uri=http://127.0.0.1:18081/login/oauth2/code/google")
+            || url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A18081%2Flogin%2Foauth2%2Fcode%2Fgoogle"));
+        assertTrue(url.contains("state=")); assertTrue(url.contains("nonce=")); assertFalse(url.contains("attacker.example"));
+        assertTrue(url.contains("scope=openid")); assertFalse(url.contains("scope=openid%20"));
+        String second = mvc.perform(get("/oauth2/authorization/google")).andReturn().getResponse().getRedirectedUrl();
+        assertNotEquals(url, second);
+        assertNull(first.getRequest().getSession(false));
+        String binding = first.getResponse().getHeader("Set-Cookie");
+        assertNotNull(binding); assertTrue(binding.startsWith(MongoAuthorizationRequests.COOKIE_NAME + "="));
+        assertTrue(binding.contains("HttpOnly")); assertTrue(binding.contains("SameSite=Lax"));
+    }
+    @Test void callbackWithoutBindingOrWithWrongStateCannotAuthenticate() throws Exception {
+        mvc.perform(get("/login/oauth2/code/google").param("code", "not-used").param("state", "forged"))
+            .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("http://127.0.0.1:5174/login?socialError=failed"));
+        var start = mvc.perform(get("/oauth2/authorization/kakao")).andReturn();
+        assertNotNull(start.getResponse().getRedirectedUrl());
+        assertFalse(start.getResponse().getRedirectedUrl().contains("scope="));
+        Cookie binding = new Cookie(MongoAuthorizationRequests.COOKIE_NAME, SocialLoginTickets.randomValue());
+        mvc.perform(get("/login/oauth2/code/kakao").cookie(binding).param("code", "not-used").param("state", "wrong-state"))
+            .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("http://127.0.0.1:5174/login?socialError=failed"));
+        verifyNoInteractions(members);
+    }
+    @Test void oauthSessionAloneCannotAuthorizeApplicationApis() throws Exception {
+        UserPrincipal admin = new UserPrincipal(new Document("_id", "admin-id").append("loginId", "admin").append("name", "관리자").append("role", "ADMIN"));
+        var authentication = new UsernamePasswordAuthenticationToken(admin, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("SPRING_SECURITY_CONTEXT", new SecurityContextImpl(authentication));
+        mvc.perform(get("/api/auth/me").session(session)).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/admin/members").session(session)).andExpect(status().isUnauthorized());
+    }
+    @Test void handoffRequiresOriginAndCookieAndCanOnlyBeExchangedOnce() throws Exception {
+        String value = tickets.create(new Document("_id", "member").append("tokenVersion", 2));
+        when(tickets.consume(value)).thenReturn(new SocialLoginTickets.Ticket("member", 2, false, java.time.Instant.now().plusSeconds(60)))
+            .thenThrow(new kr.dmu.hospital.common.ApiException(401, "expired"));
+        when(tickets.consume(isNull())).thenThrow(new kr.dmu.hospital.common.ApiException(401, "expired"));
+        Cookie cookie = new Cookie(SocialLoginFlow.COOKIE_NAME, value);
+        when(auth.issueSocialSession("member", 2, false)).thenReturn(Map.of("token", "app-jwt", "user", Map.of("id", "member", "authProvider", "GOOGLE")));
+        mvc.perform(post("/api/auth/social/exchange").contentType("application/json").content("{}").cookie(cookie)
+            .header("Origin", "https://attacker.example")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/auth/social/exchange").contentType("application/json").content("{}").cookie(cookie))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/auth/social/exchange").contentType("application/json").content("{}").cookie(cookie)
+            .header("Origin", "http://127.0.0.1:5174")).andExpect(status().isOk()).andExpect(jsonPath("$.token").value("app-jwt"))
+            .andExpect(header().string("Cache-Control", "no-store"));
+        mvc.perform(post("/api/auth/social/exchange").contentType("application/json").content("{}").cookie(cookie)
+            .header("Origin", "http://127.0.0.1:5174")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/auth/social/exchange").contentType("application/json").content("{}")
+            .header("Origin", "http://127.0.0.1:5174")).andExpect(status().isUnauthorized());
+        verify(auth, times(1)).issueSocialSession("member", 2, false);
+    }
+    @Test void successUsesHttpOnlyCookieWithoutUrlTokenAndClearsSession() throws Exception {
+        Map<String, Object> attributes = Map.of("sub", "google-sub", "name", "시험 이름");
+        var authorities = List.of(new SimpleGrantedAuthority("ROLE_USER"));
+        var oauth = new OAuth2AuthenticationToken(new DefaultOAuth2User(authorities, attributes, "sub"), authorities, "google");
+        when(members.signIn("google", attributes)).thenReturn(new Document("_id", "member").append("tokenVersion", 0));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession(); request.setSession(session);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        SecurityContextHolder.getContext().setAuthentication(oauth);
+        flow.success(request, response, oauth);
+        assertEquals("http://127.0.0.1:5174/auth/social/callback", response.getRedirectedUrl());
+        String cookie = response.getHeader("Set-Cookie"); assertNotNull(cookie);
+        assertTrue(cookie.contains("HttpOnly")); assertTrue(cookie.contains("SameSite=Lax"));
+        assertTrue(cookie.contains("Path=/api/auth/social")); assertTrue(cookie.contains("Max-Age=60"));
+        assertTrue(session.isInvalid()); assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+    @Test void unavailableCredentialsDisableProviderAndDifferentCookieHostsAreRejected() {
+        SocialLoginSettings missing = new SocialLoginSettings("http://127.0.0.1:5174", "http://127.0.0.1:18081", "", "", "", "");
+        assertNull(missing.registration("google")); assertEquals(false, missing.providers().get(0).get("enabled"));
+        SocialLoginSettings minimal = new SocialLoginSettings("http://127.0.0.1:5174", "http://127.0.0.1:18081", "google", "secret", "kakao", "secret");
+        assertEquals(java.util.Set.of("openid"), minimal.registration("google").getScopes());
+        var kakaoScopes = minimal.registration("kakao").getScopes();
+        assertTrue(kakaoScopes == null || kakaoScopes.isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> new SocialLoginSettings("http://localhost:5174", "http://127.0.0.1:18081", "", "", "", ""));
+        assertThrows(IllegalArgumentException.class, () -> new SocialLoginSettings("http://example.com", "http://example.com", "", "", "", ""));
+    }
+    @Test void pendingProfileCanReadSelfCompleteAndLogoutButCannotUseProtectedFeatures() throws Exception {
+        Document document = new Document("_id", "pending-id").append("loginId", "google_pending").append("name", "")
+            .append("role", "USER").append("authProvider", "GOOGLE").append("profileComplete", false);
+        when(auth.authenticate("pending-token")).thenReturn(UserPrincipal.forSignup(document));
+        mvc.perform(get("/api/auth/me").header("Authorization", "Bearer pending-token")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.profileComplete").value(false)).andExpect(jsonPath("$.name").value(""));
+        mvc.perform(get("/api/reservations").header("Authorization", "Bearer pending-token")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/members").header("Authorization", "Bearer pending-token")).andExpect(status().isForbidden());
+        Map<String, Object> profile = Map.of("name", "입력 이름", "email", "manual@example.com", "phone", "01012345678");
+        when(auth.completeSocialProfile(profile)).thenReturn(Map.of("token", "completed-token", "user", Map.of("profileComplete", true)));
+        mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token")
+            .contentType("application/json").content("{\"name\":\"입력 이름\",\"email\":\"manual@example.com\",\"phone\":\"01012345678\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.user.profileComplete").value(true));
+        verify(auth).completeSocialProfile(profile);
+        mvc.perform(post("/api/auth/logout").header("Authorization", "Bearer pending-token")).andExpect(status().isOk());
+        verify(auth).logout();
+        document.put("profileComplete", true); document.put("name", "입력 이름"); document.put("phone", "01012345678");
+        when(auth.authenticate("complete-token")).thenReturn(new UserPrincipal(document));
+        mvc.perform(get("/api/reservations").header("Authorization", "Bearer complete-token")).andExpect(status().isOk());
+        mvc.perform(post("/api/auth/social/profile").contentType("application/json").content("{}"))
+            .andExpect(status().isUnauthorized());
+    }
+    @Test void identityConflictReturnsStructuredProviderAdviceForBothSignupEndpoints() throws Exception {
+        when(auth.register(anyMap())).thenThrow(new MemberIdentityConflict("KAKAO"));
+        mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
+            .andExpect(jsonPath("$.existingAuthProvider").value("KAKAO"))
+            .andExpect(jsonPath("$.message").value("이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."));
+        UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("loginId", "google_pending").append("name", "")
+            .append("role", "USER").append("authProvider", "GOOGLE").append("profileComplete", false));
+        when(auth.authenticate("pending-token")).thenReturn(pending);
+        when(auth.completeSocialProfile(anyMap())).thenThrow(new MemberIdentityConflict("LOCAL"));
+        mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
+            .andExpect(jsonPath("$.existingAuthProvider").value("LOCAL"))
+            .andExpect(jsonPath("$.message").value("이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요."));
+        doThrow(new kr.dmu.hospital.common.ApiException(409, "이미 사용 중인 아이디입니다.")).when(auth).register(anyMap());
+        mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist());
+    }
+}

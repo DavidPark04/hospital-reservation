@@ -1,0 +1,15 @@
+.git
+.runtime
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules
+**/build
+**/.gradle
+**/dist
+**/*.log
+**/*.zip
+**/*.tsbuildinfo
+data/private
+data/raw

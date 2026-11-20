@@ -23,5 +23,8 @@ __pycache__/
 .venv/
 .vercel/
 .local/
+.runtime/
+*.tsbuildinfo
+*.zip
 data/raw/
 data/private/
