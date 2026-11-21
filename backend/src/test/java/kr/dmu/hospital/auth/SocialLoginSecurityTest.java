@@ -8,6 +8,8 @@ import kr.dmu.hospital.config.SecurityConfig;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -212,37 +214,64 @@ class SocialLoginSecurityTest {
         mvc.perform(post("/api/auth/social/profile").contentType("application/json").content("{}"))
             .andExpect(status().isUnauthorized());
     }
-    @Test void identityConflictReturnsStructuredProviderAdviceForBothSignupEndpoints() throws Exception {
-        when(auth.register(anyMap())).thenThrow(new MemberIdentityConflict("KAKAO"));
+    @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
+    void identityConflictReturnsExactProviderAdviceForEverySignupEndpoint(String existingProvider) throws Exception {
+        String message = existingProvider.equals("KAKAO") ? "이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."
+            : existingProvider.equals("GOOGLE") ? "이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요."
+            : "이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.";
+        when(auth.register(anyMap())).thenThrow(new MemberIdentityConflict(existingProvider));
         mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
-            .andExpect(jsonPath("$.existingAuthProvider").value("KAKAO"))
-            .andExpect(jsonPath("$.message").value("이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."));
-        UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("loginId", "google_pending").append("name", "")
-            .append("role", "USER").append("authProvider", "GOOGLE").append("profileComplete", false));
-        when(auth.authenticate("pending-token")).thenReturn(pending);
-        when(auth.completeSocialProfile(anyMap())).thenThrow(new MemberIdentityConflict("LOCAL"));
-        mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
-            .andExpect(jsonPath("$.existingAuthProvider").value("LOCAL"))
-            .andExpect(jsonPath("$.message").value("이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요."));
-        doThrow(new kr.dmu.hospital.common.ApiException(409, "이미 사용 중인 아이디입니다.")).when(auth).register(anyMap());
-        mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist());
+            .andExpect(jsonPath("$.existingAuthProvider").value(existingProvider))
+            .andExpect(jsonPath("$.message").value(message))
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(3)));
+        for (String incomingProvider : List.of("GOOGLE", "KAKAO")) {
+            UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("name", "")
+                .append("role", "USER").append("authProvider", incomingProvider).append("profileComplete", false));
+            when(auth.authenticate("pending-token")).thenReturn(pending);
+            doThrow(new MemberIdentityConflict(existingProvider)).when(auth).completeSocialProfile(anyMap());
+            mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
+                .andExpect(jsonPath("$.existingAuthProvider").value(existingProvider))
+                .andExpect(jsonPath("$.message").value(message))
+                .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(3)));
+        }
     }
 
-    @Test void unmatchedContactConflictDoesNotExposeProviderForEitherSignupEndpoint() throws Exception {
-        String message = "이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.";
+    @Test void unmatchedNameContactConflictExposesOnlyGenericMessageForEverySignupEndpoint() throws Exception {
+        String message = "이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.";
         when(auth.register(anyMap())).thenThrow(new kr.dmu.hospital.common.ApiException(409, message));
         mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(message))
             .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
             .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
+        for (String incomingProvider : List.of("GOOGLE", "KAKAO")) {
+            UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("role", "USER").append("authProvider", incomingProvider));
+            when(auth.authenticate("pending-token")).thenReturn(pending);
+            doThrow(new kr.dmu.hospital.common.ApiException(409, message)).when(auth).completeSocialProfile(anyMap());
+            mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(message))
+                .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
+                .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
+        }
+    }
+
+    @Test void nonContactConflictsAndExpiredSignupKeepTheirOriginalResponses() throws Exception {
+        doThrow(new kr.dmu.hospital.common.ApiException(409, "이미 사용 중인 아이디입니다.")).when(auth).register(anyMap());
+        mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("이미 사용 중인 아이디입니다."))
+            .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
         UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("role", "USER").append("authProvider", "GOOGLE"));
         when(auth.authenticate("pending-token")).thenReturn(pending);
-        when(auth.completeSocialProfile(anyMap())).thenThrow(new kr.dmu.hospital.common.ApiException(409, message));
+        doThrow(new kr.dmu.hospital.common.ApiException(409, "이미 회원 정보 등록을 완료했습니다.")).when(auth).completeSocialProfile(anyMap());
         mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(message))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("이미 회원 정보 등록을 완료했습니다."))
+            .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
+        doThrow(new kr.dmu.hospital.common.ApiException(401, "가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요.")).when(auth).completeSocialProfile(anyMap());
+        mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
+            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요."))
             .andExpect(jsonPath("$.code").doesNotExist()).andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
             .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(1)));
     }
