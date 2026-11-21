@@ -7,11 +7,10 @@ import type {Doctor, Hospital, HospitalResult, Slot} from '../api'
 import {CHAT_MESSAGE_LIMIT, safeRecommendationSources, straightLineDistance} from '../chatPresentation'
 import HospitalLocation from '../HospitalLocation'
 import {DoctorPortrait} from './FilmVisual'
-import type {HomeProps} from './flow'
+import {HOME_HOSPITAL_FILTERS, type HomeProps} from './flow'
 import './live-scenes.css'
 
 type LiveProps = Pick<HomeProps,'onBooking'|'onAccount'|'recommendation'> & {phase:number;goToChapter:(phase:number)=>void}
-const defaultSearch = {query:'',region:'성동구',department:'05'}
 
 function ConsultScene() {
   const [message,setMessage] = useState('')
@@ -25,7 +24,7 @@ function ConsultScene() {
     <div className="ls-chat-reply"><span className="ls-avatar" data-film-anchor="chat"><Sparkles/></span><p>불편한 곳이나 찾고 있는 진료 분야를 알려주세요.</p></div>
     <form className="ls-compose" onSubmit={start}>
       <label htmlFor="medipick-chat" className="sr-only">상담에 가져갈 증상이나 진료 목적</label>
-      <textarea id="medipick-chat" rows={2} value={message} maxLength={CHAT_MESSAGE_LIMIT} onChange={e=>setMessage(e.target.value)} placeholder="예) 성동구에서 무릎 진료를 받고 싶어요."/>
+      <textarea id="medipick-chat" rows={2} value={message} maxLength={CHAT_MESSAGE_LIMIT} onChange={e=>setMessage(e.target.value)} placeholder="예) 서울에서 무릎 진료를 받고 싶어요."/>
       <button type="submit">상담으로 이동 <Send size={16}/></button>
     </form>
     <div className="ls-prompts" role="group" aria-label="상담 질문 예시">{['목이 붓고 아파요','허리가 불편해요','피부가 가려워요'].map(text=><button type="button" key={text} onClick={()=>setMessage(text)}>{text}</button>)}</div>
@@ -103,9 +102,9 @@ function ClinicStages({hospital,department,phase,goToChapter,onBooking,onAccount
 }
 
 export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recommendation}:LiveProps) {
-  const [filters,setFilters] = useState(defaultSearch)
-  const [region,setRegion] = useState(defaultSearch.region)
-  const [departmentFilter,setDepartmentFilter] = useState(defaultSearch.department)
+  const [filters,setFilters] = useState(HOME_HOSPITAL_FILTERS)
+  const [region,setRegion] = useState(HOME_HOSPITAL_FILTERS.region)
+  const [departmentFilter,setDepartmentFilter] = useState(HOME_HOSPITAL_FILTERS.department)
   const [browse,setBrowse] = useState(false)
   const [hospitalId,setHospitalId] = useState('')
   const consultation = !browse && recommendation
@@ -115,7 +114,8 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
     enabled:!consultation && phase>=2,
     staleTime:120_000
   })
-  const items = consultation ? [consultation.hospital] : list.data?.items||[]
+  const results = list.data?.items||[]
+  const items = consultation ? [consultation.hospital] : browse ? results : results.filter(h=>h.name===HOME_HOSPITAL_FILTERS.query && h.source!=='SAMPLE')
   const hospital = items.find(h=>h.id===hospitalId)||items[0]
   const department = (consultation ? consultation.department : filters.department)||hospital?.departmentCode||hospital?.departments?.[0]?.code||''
   const departmentLabel = hospital?.departments?.find(d=>d.code===department)?.name || DEPARTMENTS.find(d=>d.code===department)?.name || hospital?.departmentName
@@ -123,8 +123,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
   const distance = straightLineDistance(hospital?.distanceKm)
   const pending = !consultation && list.isLoading
   const error = !consultation ? list.error : null
-  function search(event:FormEvent) {
-    event.preventDefault()
+  function browseHospitals() {
     setBrowse(true)
     setHospitalId('')
     setFilters({query:'',region:region.trim(),department:departmentFilter})
@@ -143,7 +142,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
         <header className="ls-heading"><small>{consultation?'상담에서 선택한 병원':'희망 지역 · 진료과'}</small>
           <h3>{hospital?.name || '어디에서 진료받고 싶으세요?'}</h3>
         </header>
-        {!consultation&&<form className="ls-filter" onSubmit={search}><label><span>지역</span><input maxLength={80} value={region} onChange={e=>setRegion(e.target.value)} placeholder="시·구·동"/></label>
+        {!consultation&&<form className="ls-filter" onSubmit={e=>{e.preventDefault();browseHospitals()}}><label><span>지역</span><input maxLength={80} value={region} onChange={e=>setRegion(e.target.value)} placeholder="시·구·동"/></label>
           <label><span>진료과</span><select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)}>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
           <button type="submit" aria-label="이 조건으로 병원 검색"><Search size={18}/></button>
         </form>}
@@ -157,7 +156,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
         </div>
         {!hospital&&<QueryStatus loading={pending} error={error} message={statusText} retry={()=>list.refetch()}/>}
         {hospital&&<><div className="ls-reason-choices">{candidates()}</div><button type="button" className="ls-link" onClick={()=>goToChapter(3)}>이 병원 위치 보기 <ArrowRight size={16}/></button></>}
-        {consultation&&<button className="ls-link ls-secondary-link" onClick={()=>{setBrowse(true);setHospitalId('')}}>다른 지역·진료과 찾기</button>}
+        {consultation&&<button className="ls-link ls-secondary-link" onClick={browseHospitals}>다른 지역·진료과 찾기</button>}
       </div>
     </section>
     <section className="sc-pane sc-map-stage" data-film-page="map" inert={phase!==3} aria-label="선택한 병원의 지도와 길찾기">
