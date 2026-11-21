@@ -6,6 +6,7 @@ import { api, ApiError, clearToken, dateLabel, DEPARTMENTS, departmentName, fetc
 import MedipickHome from './medipick/MedipickHome';
 import {DoctorPortrait} from './medipick/FilmVisual';
 import type {BookingDraft, HomeRecommendation} from './medipick/flow';
+import {HOME_HOSPITAL_FILTERS} from './medipick/flow';
 import HospitalLocation from './HospitalLocation';
 import PhoneInput from './PhoneInput';
 import PasswordChange from './PasswordChange';
@@ -224,22 +225,26 @@ function FeaturedHospitals({onBooking}:{onBooking:(hospital:Hospital,department?
     observer.observe(section.current);
     return ()=>observer.disconnect();
   },[]);
-  const hospitals=useQuery({queryKey:['hospitals','home'],queryFn:()=>api<HospitalResult>('/hospitals?region=수원'),enabled:visible,staleTime:120_000});
+  const hospitals=useQuery({queryKey:['hospitals','home','서울특별시'],queryFn:()=>api<HospitalResult>('/hospitals?'+queryString({region:'서울특별시'})),enabled:visible,staleTime:120_000});
+  const defaultHospital=useQuery({queryKey:['hospitals','search',HOME_HOSPITAL_FILTERS],queryFn:()=>api<HospitalResult>('/hospitals?'+queryString(HOME_HOSPITAL_FILTERS)),enabled:visible,staleTime:120_000});
+  const firstHospital=defaultHospital.data?.items.find(h=>h.name===HOME_HOSPITAL_FILTERS.query&&h.address.startsWith('서울특별시 종로구'));
+  const featuredItems=[...(firstHospital?[firstHospital]:[]),...(hospitals.data?.items||[]).filter(h=>h.id!==firstHospital?.id)].slice(0,3);
   return <section ref={section} className="featured-hospitals">
-    <div className="section-heading"><div><h2>수원 지역 병원</h2><p>다른 지역도 병원명이나 진료과로 찾아볼 수 있어요.</p></div><a className="text-button" href="#/search">전체 병원 찾기</a></div>
-    {!visible||hospitals.isLoading?<Loading text="병원 정보를 확인하고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>
+    <div className="section-heading"><div><h2>서울 지역 병원</h2><p>다른 지역도 병원명이나 진료과로 찾아볼 수 있어요.</p></div><a className="text-button" href="#/search">전체 병원 찾기</a></div>
+    {!visible||hospitals.isLoading||defaultHospital.isLoading?<Loading text="병원 정보를 확인하고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>
       {hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}
-      <div className="hospital-grid">{hospitals.data?.items.slice(0,3).map(h=><HospitalCard hospital={h} key={h.id} onBooking={onBooking}/>)}</div>
-      {hospitals.data?.items.length===0&&<p className="empty-inline">조회된 병원이 없어요. 다른 지역이나 병원명으로 찾아보세요.</p>}
+      <div className="hospital-grid">{featuredItems.map(h=><HospitalCard hospital={h} key={h.id} onBooking={onBooking}/>)}</div>
+      {featuredItems.length===0&&<p className="empty-inline">조회된 병원이 없어요. 다른 지역이나 병원명으로 찾아보세요.</p>}
     </>}
   </section>;
 }
 function SearchPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,department?:string)=>void}){
   const params = new URLSearchParams(route.split('?')[1]);
-  const [query,setQuery]=useState(params.get('query')||''); const [region,setRegion]=useState(params.get('region')||''); const [department,setDepartment]=useState(params.get('department')||'');
-  const [filters,setFilters]=useState({query:params.get('query')||'',region:params.get('region')||'',department:params.get('department')||''});
+  const initialRegion=params.get('region')??(params.has('query')?'':'서울특별시');
+  const [query,setQuery]=useState(params.get('query')||''); const [region,setRegion]=useState(initialRegion); const [department,setDepartment]=useState(params.get('department')||'');
+  const [filters,setFilters]=useState({query:params.get('query')||'',region:initialRegion,department:params.get('department')||''});
   const hospitals=useQuery({queryKey:['hospitals','search',filters],queryFn:()=>api<HospitalResult>(`/hospitals?${queryString(filters)}`)});
-  return <div className="page-wrap"><div className="page-heading"><h1>나에게 맞는 병원 찾기</h1><p>병원명, 지역, 진료과를 선택해 원하는 병원을 찾아보세요.</p></div><form className="search-filters panel" onSubmit={e=>{e.preventDefault();setFilters({query,region,department});}}><label className="field search-query">병원명<div className="input-icon"><Search size={19}/><input placeholder="병원 이름을 입력해 주세요" value={query} onChange={e=>setQuery(e.target.value)}/></div></label><label className="field">희망 지역<div className="input-icon"><MapPin size={18}/><input placeholder="예) 수원, 영통" value={region} onChange={e=>setRegion(e.target.value)}/></div></label><label className="field">진료과<select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">전체 진료과</option>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><button className="button primary" type="submit"><Search size={18}/>검색</button></form><div className="search-results-heading"><h2>검색 결과 <span>{hospitals.data?.items.length ?? 0}</span></h2>{hospitals.data&&<SourceBadge source={hospitals.data.source}/>}</div>{hospitals.isLoading?<Loading text="조건에 맞는 병원을 찾고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}{hospitals.data?.items.length?<div className="hospital-grid">{hospitals.data.items.map(h=><HospitalCard key={h.id} hospital={h} onBooking={onBooking} department={filters.department}/>)}</div>:<div className="empty-inline"><Search size={32}/><h3>조건에 맞는 병원을 찾지 못했어요</h3><p>병원명 일부를 입력하거나 지역·진료과 조건을 줄여 보세요.</p></div>}</>}<p className="source-footnote">병원 정보는 건강보험심사평가원 제공 자료를 사용합니다. 실제 방문 전 진료 여부를 병원에 확인해 주세요.</p></div>;
+  return <div className="page-wrap"><div className="page-heading"><h1>나에게 맞는 병원 찾기</h1><p>병원명, 지역, 진료과를 선택해 원하는 병원을 찾아보세요.</p></div><form className="search-filters panel" onSubmit={e=>{e.preventDefault();setFilters({query,region,department});}}><label className="field search-query">병원명<div className="input-icon"><Search size={19}/><input placeholder="병원 이름을 입력해 주세요" value={query} onChange={e=>setQuery(e.target.value)}/></div></label><label className="field">희망 지역<div className="input-icon"><MapPin size={18}/><input placeholder="예) 서울, 종로구" value={region} onChange={e=>setRegion(e.target.value)}/></div></label><label className="field">진료과<select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">전체 진료과</option>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><button className="button primary" type="submit"><Search size={18}/>검색</button></form><div className="search-results-heading"><h2>검색 결과 <span>{hospitals.data?.items.length ?? 0}</span></h2>{hospitals.data&&<SourceBadge source={hospitals.data.source}/>}</div>{hospitals.isLoading?<Loading text="조건에 맞는 병원을 찾고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}{hospitals.data?.items.length?<div className="hospital-grid">{hospitals.data.items.map(h=><HospitalCard key={h.id} hospital={h} onBooking={onBooking} department={filters.department}/>)}</div>:<div className="empty-inline"><Search size={32}/><h3>조건에 맞는 병원을 찾지 못했어요</h3><p>병원명 일부를 입력하거나 지역·진료과 조건을 줄여 보세요.</p></div>}</>}<p className="source-footnote">병원 정보는 건강보험심사평가원 제공 자료를 사용합니다. 실제 방문 전 진료 여부를 병원에 확인해 주세요.</p></div>;
 }
 
 function ChatPage({route,onBooking,onExplore}:{route:string;onExplore:(hospital:Hospital,department?:string)=>void;onBooking:(hospital:Hospital,department?:string)=>void}){
