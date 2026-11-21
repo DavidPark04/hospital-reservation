@@ -1,10 +1,10 @@
-# AI 기반 병원 예약 지원 서비스
+# 메디픽 · AI 기반 병원 예약 지원 서비스
 
 **백엔드실습 · 기말프로젝트** — 박다윗 · 김도형 2인 팀
 
-증상과 희망 지역으로 진료과·병원 정보를 확인하고, 샘플 의료진의 일정으로 모의 예약을 진행하는 웹 서비스를 만듭니다.
+메디픽은 증상과 진료 목적에 따라 가까운 병·의원이나 전문 진료기관을 찾고, 추천 이유와 출처를 확인한 뒤 가상 의료진의 일정으로 모의 예약하는 서비스입니다.
 
-> 현재 상태: [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)에서 React 화면과 Spring API를 운영하며 MongoDB 연결을 확인했습니다. `main`의 앱 검사 통과 후 김도형의 Vercel 프로젝트로 자동 배포하도록 구성했습니다. 전화번호·이메일 중복 차단 수정본은 로컬 테스트 155개와 HTTP 검사 26개를 통과했으며, 버전별 운영 반영은 PR·배포 기록에서 확인합니다. 새 주소의 구글·카카오 실계정 로그인은 사용자 콘솔의 callback 등록 후 확인합니다.
+> 메디픽 #32에서는 홈을 스크롤하며 상담, 추천 근거, 병원 위치, 가상 의료진과 예약 시간을 살펴볼 수 있습니다. 병원 찾기와 AI 상담은 상단 메뉴에서도 바로 열립니다. [메디픽 열기](https://medi-pick.vercel.app)
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 
@@ -51,7 +51,7 @@
 | --- | --- |
 | Frontend | React · TypeScript · Vite · TanStack Query |
 | Backend | Java 21 · Spring Boot 3 · Spring Security · Spring Data MongoDB · WebClient |
-| Database | MongoDB Atlas, 트랜잭션 가능한 replica set |
+| Database | MongoDB Atlas의 `MediPick` 데이터베이스, 트랜잭션 가능한 replica set |
 | AI / 외부 API | OpenAI · 심평원 병원정보/의료기관별상세정보 · 카카오 지도 Web SDK |
 | 배포 | Vercel Services: Vite FE + Java 21 Container BE, MongoDB Atlas |
 | 협업 | GitHub Issues·PR · Notion |
@@ -97,7 +97,7 @@ flowchart LR
 
 ## 8. 배포 URL
 
-새 운영 대상은 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다. GitHub 저장소는 `DavidPark04/hospital-reservation`을 유지하고, 김도형의 Vercel 프로젝트에서 React 화면과 Spring API를 함께 운영합니다. 자동 배포에 필요한 설정과 접속 확인 방법은 [배포 안내](infra/README.md)를 확인합니다.
+GitHub 저장소 `DavidPark04/hospital-reservation`의 `main` 검사에 통과하면 Vercel 프로젝트 `medipick`에 React 화면과 Spring API를 함께 배포합니다. [운영 사이트](https://medi-pick.vercel.app) · [배포 및 소셜 로그인 주소 설정](infra/README.md)
 
 ## 9. 폴더와 시작 방법
 

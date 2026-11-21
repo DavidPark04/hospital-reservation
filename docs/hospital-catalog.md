@@ -46,13 +46,13 @@
 3. 대상 DB가 포함된 `MONGODB_URI`를 현재 셸의 환경변수로 전달하고 아래 계획 확인 명령을 실행합니다. 계획 파일이 없으면 현재 두 컬렉션의 UUID·문서 수·인덱스 수와 정의 해시를 고정해 저장하며, 이미 있으면 그 계획과 현재 상태를 대조합니다. `--database`는 URI의 실제 DB명을 확인하는 값입니다.
 
 ```bash
-node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json
+node scripts/rename-hospital-collections.mjs --database MediPick --plan .runtime/hospital-collection-rename-plan.json
 ```
 
 4. 트래픽·작업 중지가 유지된 상태에서 같은 계획으로 적용합니다. `--writers-stopped`는 운영자가 중지를 확인했다는 표시이며 도구가 서버나 워크플로를 중지해 주지는 않습니다.
 
 ```bash
-node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json --apply --writers-stopped
+node scripts/rename-hospital-collections.mjs --database MediPick --plan .runtime/hospital-collection-rename-plan.json --apply --writers-stopped
 ```
 
 5. 같은 정지 구간에 새 버전을 배포합니다. 배포와 DB 이름 전환의 선후는 바꿀 수 있지만 둘 다 완료되기 전에는 트래픽이나 수집을 재개하지 않습니다. 새 서버는 구형 컬렉션 구성이 남아 있으면 시작을 거절합니다.
@@ -65,7 +65,7 @@ node scripts/rename-hospital-collections.mjs --database hospital_reservation --p
 구버전으로 복구해야 하면 트래픽·작업 중지를 유지하고 같은 계획으로 다음 명령을 실행합니다.
 
 ```bash
-node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json --rollback --apply --writers-stopped
+node scripts/rename-hospital-collections.mjs --database MediPick --plan .runtime/hospital-collection-rename-plan.json --rollback --apply --writers-stopped
 ```
 
 `state: legacy`를 확인하고 구버전 코드를 복구한 뒤 트래픽·수집을 재개합니다. 전환·복구 중에는 대상 컬렉션을 삭제하거나 덮어쓰지 않습니다. 계획과 UUID·문서 수·인덱스가 달라지면 중단하므로, 운영 재개 후 자료가 변한 상황에서 계획 파일을 새로 만들어 검사를 우회하지 말고 실제 변경과 복구 대상을 먼저 확인합니다.
