@@ -12,9 +12,9 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 
-/** The daily catalog owns basic facts; hospitals retains selected-hospital detail caches. */
+/** hospitals owns daily basic facts; hospitalDetails retains selected-hospital detail caches. */
 public final class HospitalCatalog {
-    public static final String COLLECTION = "hospitalBasicCatalog";
+    public static final String COLLECTION = "hospitals";
     private static final String SOURCE = "https://www.data.go.kr/data/15001698/openapi.do";
     private static final List<String> BASIC_FIELDS = List.of("provider", "externalId", "name", "address", "tel",
             "location", "latitude", "longitude", "basicFetchedAt");
@@ -32,7 +32,7 @@ public final class HospitalCatalog {
 
     public static Document require(MongoTemplate mongo, String id) {
         Document basic = find(mongo, id);
-        Document cached = mongo.findById(id, Document.class, "hospitals");
+        Document cached = mongo.findById(id, Document.class, "hospitalDetails");
         if (basic == null) {
             if (cached != null && "SAMPLE".equals(cached.getString("source"))) return cached;
             throw new ApiException(404, "저장된 병원 정보를 찾을 수 없습니다. 다시 검색해 주세요.");

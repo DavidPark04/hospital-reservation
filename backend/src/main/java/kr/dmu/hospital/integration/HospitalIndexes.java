@@ -15,7 +15,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 
-/** Report section 4.3 hospital schema, version 1. Existing facts are retained. */
+/** Selected-hospital detail cache schema, version 1. Existing facts are retained. */
 @Component
 @Order(5)
 public class HospitalIndexes implements ApplicationRunner {
@@ -27,12 +27,12 @@ public class HospitalIndexes implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        for (String name : List.of("hospitals", "hospitalEvidence")) {
+        for (String name : List.of("hospitalDetails", "hospitalEvidence")) {
             if (!mongo.collectionExists(name)) {
                 mongo.createCollection(name);
             }
         }
-        MongoCollection<Document> hospitals = mongo.getCollection("hospitals");
+        MongoCollection<Document> hospitals = mongo.getCollection("hospitalDetails");
         MongoCollection<Document> evidence = mongo.getCollection("hospitalEvidence");
         hospitals.createIndex(new Document("provider", 1).append("externalId", 1),
                 new IndexOptions().unique(true).name("hospital_provider_external_v1"));

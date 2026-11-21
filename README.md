@@ -123,7 +123,7 @@ python3 scripts/check_repository.py
 
 Java 21과 Node.js 22를 준비한 뒤 루트와 `frontend`에서 각각 `npm ci`를 실행합니다. 루트 `.env.example`을 참고해 로컬 환경변수를 설정하고 백엔드를 빌드합니다. Windows 통합 실행은 `start.cmd`, 개별 실행·검증은 [Backend](backend/README.md)와 [Frontend](frontend/README.md)를 따릅니다. 기본 화면은 `http://127.0.0.1:5174`, API는 `http://127.0.0.1:18081`입니다.
 
-웹 접속·검색·AI 추천은 병원 기본 API를 호출하지 않습니다. 기본 자료는 `hospitalBasicCatalog`에서 읽고, 병원을 선택한 뒤 필요한 진료과·특수진료·전문병원 지정 상세 3종은 기존처럼 조회하여 1시간 캐시합니다. 자정 동기화는 GitHub Actions에서 기본 API만 수집하며 Vercel을 매일 재배포하지 않습니다. 병원 기본 자료가 준비되지 않은 로컬 DB는 [초기 적재 절차](docs/hospital-catalog.md)를 먼저 실행합니다.
+웹 접속·검색·AI 추천은 병원 기본 API를 호출하지 않습니다. 기본 자료는 기획서의 병원 컬렉션인 `hospitals`에서 읽고, 병원을 선택한 뒤 필요한 진료과·특수진료·전문병원 지정 상세 3종은 기존처럼 조회하여 `hospitalDetails`에 1시간 캐시합니다. 자정 동기화는 GitHub Actions에서 기본 API만 수집하며 Vercel을 매일 재배포하지 않습니다. 병원 기본 자료가 준비되지 않은 로컬 DB는 [초기 적재 절차](docs/hospital-catalog.md)를 먼저 실행합니다.
 
 병원 상세 지도는 `VITE_KAKAO_MAP_JS_KEY`에 카카오의 **JavaScript 키**를 설정하고 카카오맵 사용 설정·SDK 도메인을 등록해야 표시됩니다. HIRA 좌표를 우선 사용하고, 좌표가 없으면 병원 주소로 위치를 확인합니다. 위치를 확정할 수 없으면 임의의 지점을 표시하지 않고 카카오맵 검색 링크를 제공합니다. 가상 샘플 병원은 지도·길찾기에서 제외하며 현재 위치를 수집하지 않습니다. 길찾기는 카카오맵 화면으로 연결합니다. 설정 방법은 [지도 배포 설정](infra/README.md#카카오-지도-설정)을 참고합니다.
 

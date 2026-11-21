@@ -62,7 +62,7 @@ public class HospitalService {
             sampleFilters.add(Criteria.where("source").is("SAMPLE"));
             if (!department.isBlank()) sampleFilters.add(Criteria.where("departments.code").is(department));
             List<Document> samples = mongo.find(Query.query(new Criteria().andOperator(sampleFilters.toArray(Criteria[]::new)))
-                    .with(Sort.by("name", "_id")).limit(30), Document.class, "hospitals");
+                    .with(Sort.by("name", "_id")).limit(30), Document.class, "hospitalDetails");
             for (Document sample : samples) items.add(publicHospital(sample, "SAMPLE"));
             if (!items.isEmpty()) return result(items, "SAMPLE", "전국 병원 정보가 아직 준비되지 않아 예약 체험용 샘플을 표시합니다.");
         }
@@ -163,14 +163,14 @@ public class HospitalService {
     private Document materialize(String id) {
         Document hospital = HospitalCatalog.require(mongo, id);
         if ("SAMPLE".equals(hospital.getString("source"))) return hospital;
-        if (mongo.exists(Query.query(Criteria.where("_id").is(id)), "hospitals")) return hospital;
+        if (mongo.exists(Query.query(Criteria.where("_id").is(id)), "hospitalDetails")) return hospital;
         return writeTogether(() -> {
             Document current = HospitalCatalog.require(mongo, id);
             Update insert = new Update();
             for (Map.Entry<String, Object> entry : current.entrySet()) {
                 if (!"_id".equals(entry.getKey())) insert.setOnInsert(entry.getKey(), entry.getValue());
             }
-            boolean created = mongo.upsert(Query.query(Criteria.where("_id").is(id)), insert, "hospitals").getUpsertedId() != null;
+            boolean created = mongo.upsert(Query.query(Criteria.where("_id").is(id)), insert, "hospitalDetails").getUpsertedId() != null;
             if (created && current.get("evidence") instanceof List<?> facts) {
                 for (Object value : facts) if (value instanceof Document fact && "BASIC".equals(fact.getString("kind"))) mongo.save(fact, "hospitalEvidence");
             }
@@ -181,7 +181,7 @@ public class HospitalService {
     private Document saveDetails(String id, List<Document> departments, List<Document> facts,
                                  Set<String> refreshedKinds, boolean complete, Date now) {
         return writeTogether(() -> {
-            Document current = mongo.findById(id, Document.class, "hospitals");
+            Document current = mongo.findById(id, Document.class, "hospitalDetails");
             if (current == null) throw new ApiException(404, "병원 정보를 찾을 수 없습니다. 다시 검색해 주세요.");
             if (current.get("detailFetchedAt") instanceof Date previous && previous.after(now)) return current;
             // The timestamp orders concurrent responses; only complete results get the one-hour cache shortcut.
@@ -194,13 +194,13 @@ public class HospitalService {
             }
             if (primaryDepartment == null) update.unset("departmentCode").unset("departmentName");
             else update.set("departmentName", primaryDepartment.getString("name"));
-            mongo.updateFirst(Query.query(Criteria.where("_id").is(id)), update, "hospitals");
+            mongo.updateFirst(Query.query(Criteria.where("_id").is(id)), update, "hospitalDetails");
             List<Object> currentFactIds = new ArrayList<>();
             for (Document fact : facts) currentFactIds.add(fact.get("_id"));
             mongo.remove(Query.query(Criteria.where("hospitalId").is(id).and("kind").in(refreshedKinds)
                     .and("_id").nin(currentFactIds)), "hospitalEvidence");
             for (Document fact : facts) mongo.save(fact, "hospitalEvidence");
-            return mongo.findById(id, Document.class, "hospitals");
+            return mongo.findById(id, Document.class, "hospitalDetails");
         });
     }
 

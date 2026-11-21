@@ -29,7 +29,7 @@ public class DemoData implements ApplicationRunner {
         addHospital("sample-child", "수원 아이봄소아청소년과 (샘플)", "경기도 수원시 영통구 · 시연용 주소", "11", "소아청소년과");
     }
     private void addHospital(String id, String name, String address, String code, String department) {
-        if (mongo.findById(id, Document.class, "hospitals") != null) return;
+        if (mongo.findById(id, Document.class, "hospitalDetails") != null) return;
         Date now = new Date();
         Document evidence = new Document("kind", "SAMPLE").append("label", "시연용 진료과")
             .append("value", department + " 예약 흐름을 확인하기 위한 가상 병원입니다.")
@@ -38,7 +38,7 @@ public class DemoData implements ApplicationRunner {
                 .append("name", name).append("address", address).append("tel", "").append("location", null).append("basicFetchedAt", now)
             .append("departmentCode", code).append("departmentName", department)
             .append("departments", List.of(new Document("code", code).append("name", department)))
-            .append("evidence", List.of(evidence)).append("source", "SAMPLE").append("fetchedAt", now), "hospitals");
+            .append("evidence", List.of(evidence)).append("source", "SAMPLE").append("fetchedAt", now), "hospitalDetails");
         mongo.insert(new Document(evidence).append("_id", UUID.randomUUID().toString()).append("hospitalId", id), "hospitalEvidence");
     }
 }
