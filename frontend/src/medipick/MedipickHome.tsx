@@ -72,7 +72,7 @@ function HomeSearch() {
         <option value="query">병원명</option><option value="region">지역</option>
       </select>
       <label className="sr-only" htmlFor="film-search-query">{field === 'region' ? '찾고 싶은 지역' : '병원 이름'}</label>
-      <input id="film-search-query" type="search" placeholder={field === 'region' ? '예) 수원, 성동구' : '병원 이름 입력'} value={query} onChange={event => setQuery(event.target.value)}/>
+      <input id="film-search-query" type="search" placeholder={field === 'region' ? '예) 서울, 종로구' : '병원 이름 입력'} value={query} onChange={event => setQuery(event.target.value)}/>
       <button type="submit">검색</button>
     </form>
     <nav aria-label="진료과별 병원 찾기">{DEPARTMENTS.map(department =>
