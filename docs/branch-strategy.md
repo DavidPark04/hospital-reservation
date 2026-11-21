@@ -4,19 +4,17 @@
 
 ```mermaid
 flowchart LR
-    Task[작업 브랜치: FE / BE / 공통 / 문서] -->|PR · 검사 통과 · Squash| Develop[develop: 통합]
-    Develop -->|릴리스 PR · Merge commit| Main[main: 제출 / 배포]
-    Main -->|릴리스 후 동기화 PR · Merge commit| Develop
-    Hotfix[hotfix: main에서 생성] -->|긴급 수정 PR · Squash| Main
+    Task[기능·문서·긴급 수정 브랜치] -->|PR 한 개 · 검사 통과 · Squash| Main[main]
+    Main -->|병합 커밋의 push 검사| CI[Repository checks + Application checks]
+    CI -->|같은 SHA로 fast-forward| Develop[develop]
+    Develop -->|같은 워크플로에서 같은 SHA 배포| Vercel[Vercel production]
 ```
 
-두 영구 브랜치 `main`, `develop`을 유지합니다. FE·BE별로 영구 통합 브랜치를 추가하지 않고, 작업별 브랜치 이름과 폴더로 구분합니다. 모든 일반 작업은 최신 `develop`에서 시작합니다.
-
-두 브랜치 모두 PR은 필수이며 상대 승인은 선택입니다. 최신 대상 브랜치를 반영하고 필수 검사 통과·리뷰 대화 해결 후 작성자가 병합할 수 있습니다.
+`main`에서 모든 작업을 시작하고, 작업 브랜치에서 `main`으로 PR 한 개를 엽니다. `develop`은 검사를 마친 `main`을 그대로 가리키며 GitHub Actions가 관리합니다. 작업과 충돌 해결은 작업 브랜치에서 진행합니다.
 
 ## 이름
 
-형식: `종류/영역/이슈번호-짧은-설명`. 영어 소문자·숫자·하이픈을 사용합니다.
+작업 브랜치 이름은 `종류/영역/이슈번호-짧은-설명`으로 작성합니다. 영어 소문자·숫자·하이픈을 사용합니다.
 
 | 종류 | 영역 | 예시 |
 | --- | --- | --- |
@@ -31,12 +29,9 @@ flowchart LR
 
 ## 허용 PR 경로
 
-- 일반 작업 → `develop`
-- `develop` → `main`: 릴리스
-- `main` → `develop`: 릴리스·긴급 수정 동기화
-- `hotfix/…` → `main`: 긴급 수정
+기능, 문서, 긴급 수정 모두 작업 브랜치 → `main` 경로를 따릅니다. PR의 `Repository checks`와 `Application checks`가 성공하고 리뷰 대화를 해결하면 작성자가 **Squash and merge**합니다. 팀원 리뷰는 선택 사항입니다. PR 제목과 squash 커밋에는 GitHub가 해당 PR에 발급한 실제 번호를 사용합니다.
 
-이외 경로는 `Repository checks`가 실패하도록 검사합니다. 이 검사는 PR의 출발·대상 이름을 확인하며 GitHub 권한 통제를 대체하지 않습니다. 서버 측 보호 적용 여부는 [설정 현황](repository-settings.md)을 확인합니다.
+`Repository checks`는 PR의 출발·대상 브랜치 이름을 검사합니다. GitHub 서버의 보호 설정은 별도로 확인합니다. [저장소 설정 현황](repository-settings.md)
 
 ## 최초 작업 브랜치
 
@@ -44,21 +39,14 @@ flowchart LR
 - `chore/frontend/2-project-init`: React·TypeScript 초기 설정
 - `docs/3-api-contract`: API·컬렉션 계약
 
-세 브랜치는 처음에는 `develop`과 동일한 커밋입니다. 브랜치 생성은 기능 구현 완료를 뜻하지 않습니다. 담당자는 Issue에서 정합니다.
-
-```bash
-git fetch origin
-git switch --track origin/chore/backend/1-project-init
-```
-
-FE 담당은 frontend 브랜치를 선택합니다. 로컬 브랜치가 이미 있으면 `git switch 브랜치명`만 실행합니다.
+프로젝트 초기에는 위 세 브랜치를 당시의 `develop`에서 생성했습니다. 새 작업 브랜치는 최신 `main`에서 생성합니다. [작업 시작 예시](../CONTRIBUTING.md#1-작업-시작)
 
 ## 릴리스
 
-1. `develop`의 앱 테스트·빌드·시연 결과를 확인합니다.
-2. `develop` → `main` PR을 만들고 `chore: v0.1.0 릴리스`처럼 제목을 붙입니다.
-3. 필수 검사 통과·리뷰 대화 해결 후 **Create a merge commit**으로 병합합니다. 상대 승인은 필수가 아니며 릴리스를 Squash하지 않습니다.
-4. `main` → `develop` 동기화 PR을 **Create a merge commit**으로 병합합니다.
-5. 검증된 `main`에 `v0.1.0` 같은 태그를 붙이고 변경점·알려진 제한을 기록합니다.
+1. `main`에 병합된 커밋의 SHA를 확인합니다. `main` push의 `Application checks` 또는 `Repository checks`가 끝나면 `Vercel production`이 시작됩니다. 같은 SHA에서 두 검사의 최신 실행이 모두 성공해야 다음 단계로 진행합니다. 다른 검사가 진행 중이면 변경 없이 종료하고, 그 검사가 완료될 때 다시 확인합니다. 이미 같은 SHA를 성공적으로 배포했다면 자동 중복 배포는 건너뜁니다.
+2. 워크플로는 최신 `main`을 다시 확인하고 `develop`을 해당 SHA로 fast-forward합니다. 두 이력이 갈라져 있으면 실행이 중단되므로 각 브랜치에만 있는 커밋부터 확인합니다.
+3. 같은 워크플로가 이 SHA를 Vercel에 배포합니다. 성공하면 `main`과 `develop` 끝의 SHA 및 운영 배포의 소스 SHA가 모두 같습니다. [Actions 배포 이력](https://github.com/DavidPark04/hospital-reservation/actions/workflows/vercel-production.yml)
 
-`main` 푸시의 `Application checks`가 성공하면 `Vercel production`이 같은 커밋을 운영 배포합니다. 최신 `main`보다 오래된 커밋, PR·`develop` 검사는 배포하지 않습니다. 환경변수·배포 인증 설정과 수동 재배포는 [배포 안내](../infra/README.md)를 따릅니다.
+`GITHUB_TOKEN`으로 `develop`을 갱신하는 push는 새 push 워크플로를 실행하지 않습니다. 동기화와 배포를 한 워크플로에서 처리하는 이유입니다. [GitHub Actions의 토큰 동작](https://docs.github.com/en/actions/concepts/security/github_token)
+
+수동 재배포도 현재 `main` SHA에 대한 `main` push 검사 두 개의 성공을 확인합니다. [배포 및 복구 절차](../infra/README.md)

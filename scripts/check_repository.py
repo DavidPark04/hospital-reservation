@@ -25,10 +25,7 @@ HOTFIX = re.compile(
 def check_pr(pr):
     head, base = pr['head']['ref'], pr['base']['ref']
     errors = []
-    allowed = (
-        (base == 'develop' and (head == 'main' or TASK.fullmatch(head)))
-        or (base == 'main' and (head == 'develop' or HOTFIX.fullmatch(head)))
-    )
+    allowed = base == 'main' and (TASK.fullmatch(head) or HOTFIX.fullmatch(head))
     if not allowed:
         errors.append(f'허용되지 않는 PR 경로: {head} -> {base}')
     if not re.fullmatch(rf'(?:{TYPES}): \S[^\r\n]*', pr.get('title', '')):

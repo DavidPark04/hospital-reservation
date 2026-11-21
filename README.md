@@ -4,7 +4,7 @@
 
 메디픽은 증상과 진료 목적에 따라 가까운 병·의원이나 전문 진료기관을 찾고, 추천 이유와 출처를 확인한 뒤 가상 의료진의 일정으로 모의 예약하는 서비스입니다.
 
-> 메디픽 #32에서는 홈을 스크롤하며 상담, 추천 근거, 병원 위치, 가상 의료진과 예약 시간을 살펴볼 수 있습니다. 병원 찾기와 AI 상담은 상단 메뉴에서도 바로 열립니다. [메디픽 열기](https://medi-pick.vercel.app)
+> 홈을 스크롤하며 상담, 추천 근거, 병원 위치, 가상 의료진과 예약 시간을 살펴볼 수 있습니다. 병원 찾기와 AI 상담은 상단 메뉴에서도 바로 열립니다. [메디픽 열기](https://medi-pick.vercel.app)
 
 [노션 프로젝트](https://app.notion.com/p/050b8822a70f83c0bdcf81cbf0090447) · [협업 규칙](CONTRIBUTING.md) · [브랜치 안내](docs/branch-strategy.md) · [진행 현황](docs/progress-and-next.md)
 
@@ -97,7 +97,7 @@ flowchart LR
 
 ## 8. 배포 URL
 
-GitHub 저장소 `DavidPark04/hospital-reservation`의 `main` 검사에 통과하면 Vercel 프로젝트 `medipick`에 React 화면과 Spring API를 함께 배포합니다. [운영 사이트](https://medi-pick.vercel.app) · [배포 및 소셜 로그인 주소 설정](infra/README.md)
+작업 PR 한 개를 `main`에 병합하면 병합된 커밋을 검사합니다. `Repository checks`와 `Application checks`가 모두 성공하면 `Vercel production`이 `develop`을 같은 커밋으로 갱신하고 React 화면과 Spring API를 함께 배포합니다. [운영 사이트](https://medi-pick.vercel.app) · [배포 및 소셜 로그인 주소 설정](infra/README.md)
 
 ## 9. 폴더와 시작 방법
 
@@ -116,8 +116,8 @@ hospital-reservation/
 ```bash
 git clone https://github.com/DavidPark04/hospital-reservation.git
 cd hospital-reservation
-git switch develop
-git pull --ff-only origin develop
+git switch main
+git pull --ff-only origin main
 python3 scripts/check_repository.py
 ```
 
@@ -139,11 +139,10 @@ AI 상담은 증상·진료 목적을 대화로 확인한 뒤 가까운 병·의
 
 ## 10. 협업 규칙
 
-- `main`: 제출·배포 기준. `develop`: 개발 통합. 두 브랜치에 직접 push하지 않습니다.
-- 작업마다 `develop`에서 브랜치를 만들고, FE·BE·공통 작업을 이름으로 구분합니다.
-- 상대 승인 없이 검사 통과·리뷰 대화 해결 후 작성자가 병합할 수 있습니다.
-- 작업 PR → `develop`은 **Squash and merge**, `develop` → `main`은 **Create a merge commit**입니다.
-- 커밋·PR 제목은 `feat: 모의 예약 생성`처럼 `종류: 한국어 설명`으로 씁니다.
+- 새 기능과 긴급 수정은 모두 최신 `main`에서 작업 브랜치를 만들고 `main`으로 PR 한 개를 엽니다.
+- PR 검사와 리뷰 대화를 확인한 뒤 작성자가 **Squash and merge**합니다. 팀원 리뷰는 선택 사항입니다.
+- 제목은 `종류: 한국어 설명` 형식으로 작성합니다. PR 제목과 최종 squash 커밋에 GitHub가 발급한 실제 PR 번호를 붙입니다.
+- `develop`은 검사된 `main`의 사본이며 배포 워크플로가 fast-forward 방식으로 갱신합니다. 파일 변경은 작업 브랜치에서 진행합니다.
 - 비밀 키·DB URI·실제 사용자 데이터는 커밋하지 않습니다.
 
 자세한 예시와 긴급 수정 절차는 [CONTRIBUTING.md](CONTRIBUTING.md), 실제 GitHub 적용 상태는 [저장소 설정 현황](docs/repository-settings.md)을 확인합니다.

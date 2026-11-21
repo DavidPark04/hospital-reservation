@@ -6,6 +6,7 @@ import type { HomeProps } from './flow'
 import './film.css'
 import ScenePanes from './LiveScenes'
 import FilmVisual from './FilmVisual'
+import { advanceFilmPosition } from './filmMotion'
 
 type FrameStyle = CSSProperties & Record<string, string | number>
 const Scenes = memo(ScenePanes)
@@ -85,6 +86,7 @@ export default function MedipickHome({ onBooking, onAccount, recommendation, ini
   const track = useRef<HTMLElement>(null)
   const stage = useRef<HTMLDivElement>(null)
   const openingEnd = useRef<HTMLSpanElement>(null)
+  const syncPosition = useRef<(() => void) | null>(null)
   const phase = Math.round(progress)
   const goToChapter = useCallback((index: number) => {
     const anchor = track.current?.querySelector<HTMLElement>('[data-film-anchor-index="' + index + '"]')
@@ -96,40 +98,83 @@ export default function MedipickHome({ onBooking, onAccount, recommendation, ini
     const line = track.current, screen = stage.current, end = openingEnd.current
     if (!line || !screen || !end) return
     const motion = matchMedia('(prefers-reduced-motion: reduce)')
+    const touch = matchMedia('(hover: none) and (pointer: coarse)')
     let frame = 0
     let headerHidden = false
+    let headerOffset = ''
+    let geometryDirty = true
+    let snap = true
+    let previousTime = 0
+    let displayedY = 0
+    let top = 0, lead = 1, journey = 1, height = 1
     const root = document.documentElement
-    const measure = () => {
+    const animate = (time: number) => {
       frame = 0
-      const y = Math.max(0, -line.getBoundingClientRect().top)
-      const lead = Math.max(1, end.offsetTop)
-      const journey = Math.max(1, line.offsetHeight - screen.offsetHeight - lead)
-      const openingRatio = clamp(y / lead)
-      const chapterPosition = clamp((y - lead) / journey * lastChapter, lastChapter)
+      // Layout only changes on resize. Avoid forcing a layout read on each wheel/touch frame.
+      if (geometryDirty) {
+        top = line.getBoundingClientRect().top + window.scrollY
+        lead = Math.max(1, end.offsetTop)
+        height = line.offsetHeight
+        journey = Math.max(1, height - screen.offsetHeight - lead)
+        geometryDirty = false
+      }
+      const y = window.scrollY - top
+      const target = clamp(y, lead + journey)
+      const elapsed = Math.max(0, time - previousTime)
+      previousTime = time
+      displayedY = snap || motion.matches || y < 0 || y > lead + journey
+        ? target : advanceFilmPosition(displayedY, target, elapsed, touch.matches ? 65 : 90)
+      snap = false
+      const openingRatio = clamp(displayedY / lead)
+      const chapterPosition = clamp((displayedY - lead) / journey * lastChapter, lastChapter)
       const opening = motion.matches ? Math.round(openingRatio) : openingRatio
       const progress = motion.matches ? Math.round(chapterPosition) : chapterPosition
       setPosition(previous => previous.opening === opening && previous.progress === progress ? previous : { opening, progress })
-      const pastFilm = y >= line.offsetHeight - 1
+      const pastFilm = y >= height - 1
       const slide = pastFilm ? 0 : smooth(0, .34, opening)
-      root.style.setProperty('--medipick-header-offset', (-100 * slide).toFixed(2) + '%')
+      const offset = (-100 * slide).toFixed(2) + '%'
+      if (offset !== headerOffset) {
+        root.style.setProperty('--medipick-header-offset', offset)
+        headerOffset = offset
+      }
       const hidden = slide === 1
       if (hidden !== headerHidden) {
         headerHidden = hidden
         window.dispatchEvent(new CustomEvent('medipick-header-visibility', { detail: hidden }))
       }
+      // Continue between input events, then stop completely once the scene has settled.
+      if (displayedY !== target) frame = requestAnimationFrame(animate)
     }
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure) }
-    measure()
-    const observer = new ResizeObserver(schedule)
+    const schedule = () => {
+      if (!frame && !document.hidden) {
+        previousTime = performance.now()
+        frame = requestAnimationFrame(animate)
+      }
+    }
+    const resize = () => { geometryDirty = true; schedule() }
+    const restore = () => {
+      cancelAnimationFrame(frame)
+      frame = 0
+      snap = true
+      geometryDirty = true
+      if (!document.hidden) animate(performance.now())
+    }
+    syncPosition.current = restore
+    animate(performance.now())
+    const observer = new ResizeObserver(resize)
     observer.observe(line)
     observer.observe(screen)
     window.addEventListener('scroll', schedule, { passive: true })
-    window.addEventListener('resize', schedule)
-    motion.addEventListener('change', schedule)
+    window.addEventListener('resize', resize)
+    window.addEventListener('pageshow', restore)
+    document.addEventListener('visibilitychange', restore)
+    motion.addEventListener('change', restore)
     return () => {
+      syncPosition.current = null
       cancelAnimationFrame(frame); observer.disconnect()
-      window.removeEventListener('scroll', schedule); window.removeEventListener('resize', schedule)
-      motion.removeEventListener('change', schedule)
+      window.removeEventListener('scroll', schedule); window.removeEventListener('resize', resize)
+      window.removeEventListener('pageshow', restore); document.removeEventListener('visibilitychange', restore)
+      motion.removeEventListener('change', restore)
       root.style.removeProperty('--medipick-header-offset')
       if (headerHidden) window.dispatchEvent(new CustomEvent('medipick-header-visibility', { detail: false }))
     }
@@ -140,6 +185,7 @@ export default function MedipickHome({ onBooking, onAccount, recommendation, ini
     if (index < 0) return
     const frame = requestAnimationFrame(() => {
       track.current?.querySelector('[data-film-anchor-index="' + index + '"]')?.scrollIntoView({ behavior: 'instant' })
+      syncPosition.current?.()
     })
     return () => cancelAnimationFrame(frame)
   }, [initialScene])
@@ -167,6 +213,7 @@ export default function MedipickHome({ onBooking, onAccount, recommendation, ini
     vars['--' + key + '-opacity'] = arrival * (index === lastChapter ? 1 : 1 - smooth(.53, .88, delta))
     vars['--' + key + '-reveal'] = smooth(-.66, -.025, delta)
   }
+  vars['--map-controls-opacity'] = mapOpening * Number(vars['--map-opacity'])
   return <div className="medipick-home">
     <section ref={track} className="film-scroll" style={{ '--travel-steps': lastChapter } as FrameStyle} aria-label="스크롤로 둘러보는 메디픽">
       <span ref={openingEnd} className="film-opening-end" aria-hidden="true"/>
