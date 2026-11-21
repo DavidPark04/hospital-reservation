@@ -10,6 +10,8 @@ AI 상담 또는 직접 검색으로 병원을 찾고, 저장된 가상 의료�
 - 핵심 검증: 정원 초과·중복 요청·타인 예약 접근 방지, 취소 정원 복구 1회, 일정 변경 실패 시 롤백.
 - 시험 이후 확장: 병원평가 정보, NMC 진료요일, 동의·보관 기간을 검토한 상담 이력, 이메일 알림, 전체 예약·회원 관리 도구.
 
+2026-11-21 추가 요구: 모든 진료 분야를 대상으로 사용자와 대화하며 진료 목적·경과·선호를 확인하고, 주변 병·의원 안내와 세부 분야 전문 진료기관 탐색을 제공합니다. 전문 분야는 공식 안내·기사·블로그·SNS 등 공개 웹 자료를 출처 유형과 함께 표시하고 실제 병원 DB에 연결합니다. 증상만으로 경증·비응급을 확정하거나 대학병원 방문이 불필요하다고 단정하지 않습니다. [대화형 추천](recommendations.md)에 구현 범위와 근거·캐시 정책을 기록합니다. 이는 병원평가 API 전체 수집과 별개입니다.
+
 영통구를 초기 검증 지역으로 제안하며 최종 범위는 팀에서 확정합니다. React·TypeScript·Vite·TanStack Query, Spring Boot 3·Java 21·Security·Data MongoDB·WebClient, MongoDB Atlas를 기준으로 합니다. 초기에는 FE Vercel·BE Render 후보를 검토했으나, 11/20 사용자 결정으로 Vercel의 FE·Java Container BE 구성으로 변경했습니다. 11/21에는 김도형 소유의 Vercel 프로젝트와 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)으로 운영 대상을 옮기고, 기존 GitHub 저장소의 `main` 검사 성공 후 자동 배포하도록 구성했습니다.
 
 ## 4주 일정

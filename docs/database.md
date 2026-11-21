@@ -13,6 +13,7 @@
 | `hospitals` | 기획서의 병원 기본 정보: 사전 수집한 전국 병원 기본 원본·검색 필드·진료과 소속·활성 여부 | 병원 식별번호에 따른 안정된 UUID; `(provider,externalId)` unique; 활성·이름 및 진료과·활성·이름 조회 인덱스 |
 | `hospitalImportRuns` | 수집 적용 실행별 상태·건수, 마지막 성공 실행, 적용 잠금·이전 수집본 역적용 방지 | 실행 UUID; 고정 `_id` `hospital-basic-current`, `hospital-basic-high-water`, `hospital-basic-sync-lock` |
 | `hospitalDetails` | 선택한 실제 병원의 상세 캐시·진료과와 샘플 병원 | `(provider,externalId)` unique; 기존 예약·의료진의 병원 ID 유지 |
+| `hospitalRecommendationEvidence` | 진료 분야·지역별 공개 웹 검색 근거의 24시간 캐시 | 검색 조건 해시 `_id`; `expiresAt` TTL; 사용자·증상 원문·정밀 위치 제외 |
 | `hospitalEvidence` | 병원별 근거·출처·기준 기간·조회 시점 | 병원 정보와 연결해 저장 |
 | `doctors` | 병원·진료과에 배정한 가상 의료진 | `(hospitalId,departmentCode,sampleCode)` unique |
 | `timeSlots` | 가상 진료 일정·정원·예약 수·휴진 | `(doctorId,startAt)` unique; 0 ≤ reservedCount ≤ capacity validator |

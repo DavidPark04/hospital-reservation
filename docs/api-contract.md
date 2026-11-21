@@ -77,7 +77,9 @@ PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. �
 
 병원 정보의 선택 필드 `latitude`, `longitude`는 HIRA가 제공한 유효 좌표입니다. 프런트 지도는 이 좌표를 우선 사용하고, 없는 경우 카카오 지도 SDK로 병원 주소를 변환합니다. 주소가 모호하거나 위치를 확인하지 못하면 좌표를 추정해 표시하지 않습니다. `SAMPLE` 병원은 실제 위치 안내에서 제외합니다. 지도·외부 길찾기 연결을 위한 새 서버 API나 사용자 현재 위치 수집은 추가하지 않습니다.
 
-상담 요청은 `{messages:[{role,content}],region?}`, 응답은 `reply,hospitals,departmentCode?,departmentName?,needsMoreInfo,emergency,mode,source?,notice?`입니다. `mode`는 `AI` 또는 `FALLBACK`입니다. 병원 후보는 검색과 같은 MongoDB 기본 카탈로그에서 선택하며 상담 때문에 기본 공공 API를 호출하지 않습니다. 실제 조회 병원 밖의 후보를 생성하지 않으며 증상 원문은 DB에 저장하지 않습니다. AI나 상세 공공 API 장애를 성공 응답으로 숨기지 않습니다.
+상담 요청은 `{messages:[{role,content}],region?,location?:{latitude,longitude}}`이며 위치는 사용자가 명시적으로 제공할 때만 사용합니다. 응답은 기존 `reply,hospitals,departmentCode?,departmentName?,needsMoreInfo,emergency,mode,source?,notice?`에 `carePreference`, `careGuidance`, `followUpOptions`, `specialty`, `stage`, `promptCare`를 추가합니다. `carePreference`는 `NEARBY/SPECIALIST/UNDECIDED`, `stage`는 `CONTEXT/PREFERENCE/LOCATION/RESULTS/EMERGENCY`입니다. `followUpOptions`는 사용자가 선택하면 일반 사용자 메시지로 다시 전송하는 문자열 배열입니다.
+
+`mode`는 `AI/FALLBACK`, 추천 전체 `source`는 `CACHE/WEB/WEB_CACHE`일 수 있습니다. 웹으로 찾은 후보도 실제 MongoDB 병원과 연결하므로 개별 병원 카드의 `source`는 `CACHE`입니다. 카드에는 `hospitalType`, `distanceKm?`(직선거리), `specialty?`, `recommendationReason?`, `recommendationSources?:[{url,title,checkedAt,kind,label}]`가 추가됩니다. `kind`는 `OFFICIAL/NEWS/EXPERIENCE/WEB`이며 출처 유형과 검색 결과의 AI 요약임을 표시합니다. 후기·SNS를 치료 성적이나 병원 간 우열로 확정하지 않습니다. 기본 공공 API를 새로 호출하지 않으며 대화 원문·정밀 위치는 저장하지 않습니다. AI·웹 검색 실패를 성공 추천으로 숨기지 않습니다. [추천 동작](recommendations.md)을 함께 참고하세요.
 
 ## 예약 정합성
 

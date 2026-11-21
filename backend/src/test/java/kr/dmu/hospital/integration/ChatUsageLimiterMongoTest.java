@@ -143,7 +143,7 @@ class ChatUsageLimiterMongoTest {
     @Test
     void invalidMessagesAreNotCountedAndEmergencyShortCircuitIsCountedWithoutExternalCalls() {
         OpenAiClient ai = mock(OpenAiClient.class);
-        HospitalService hospitals = mock(HospitalService.class);
+        HospitalRecommendationService hospitals = mock(HospitalRecommendationService.class);
         ChatService chat = new ChatService(ai, hospitals, new ObjectMapper(), limiter(clock));
         assertThrows(ApiException.class, () -> chat.chat(Map.of("messages", List.of()), "ip:192.0.2.50", false));
         assertEquals(0, mongo.getCollection(ChatUsageLimiter.COLLECTION).countDocuments());

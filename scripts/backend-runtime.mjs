@@ -35,10 +35,35 @@ export function resolveJavaExecutable(env) {
   throw new Error('Could not locate the actual Java executable. Set JAVA_HOME to a valid JDK 21 installation and try again.');
 }
 
-export function configurationFingerprint(env) {
-  let artifact=null;
-  try {const stat=fs.statSync(backendJar);artifact=[stat.size,stat.mtimeMs];} catch {}
+export function configurationFingerprint(env,artifact) {
+  if(artifact===undefined) {
+    artifact=null;
+    try {const stat=fs.statSync(backendJar);artifact=[stat.size,stat.mtimeMs];} catch {}
+  }
   return crypto.createHash('sha256').update(JSON.stringify([artifact,configKeys.map(key=>[key,env[key]??''])])).digest('hex');
+}
+export function createBackendJarCopy(env,{source=backendJar,directory=path.join(root,'.runtime/backend-jars')}={}) {
+  // Spring Boot loads nested classes lazily. A running JVM must not read the JAR
+  // that the next Gradle build replaces, even when startup already succeeded.
+  const before=fs.statSync(source);
+  if(!before.isFile())throw new Error('The backend build is not a JAR file. Complete the backend build before starting.');
+  fs.mkdirSync(directory,{recursive:true});
+  const ownedDirectory=fs.mkdtempSync(path.join(directory,'run-'));
+  const jar=path.join(ownedDirectory,'hospital-reservation.jar');
+  const cleanup=()=>{
+    // Remove only the file created by this invocation. Never recursively clean
+    // the runtime directory, which can contain another live JVM's artifact.
+    try {fs.unlinkSync(jar);} catch {}
+    try {fs.rmdirSync(ownedDirectory);} catch {}
+  };
+  try {
+    fs.copyFileSync(source,jar,fs.constants.COPYFILE_EXCL);
+    const after=fs.statSync(source);
+    const copied=fs.statSync(jar);
+    if(['dev','ino','size','mtimeMs','ctimeMs'].some(key=>before[key]!==after[key])||copied.size!==before.size)
+      throw new Error('The backend build changed while preparing startup. Wait for the build to finish and start again.');
+    return {jar,fingerprint:configurationFingerprint(env,[before.size,before.mtimeMs]),cleanup};
+  } catch(error) {cleanup();throw error;}
 }
 export function readBackendState(file=stateFile) {
   try {
@@ -57,17 +82,20 @@ export function inspectBackend(env,{file=stateFile,isAlive=processAlive}={}) {
   if(alive!==true)return {status:'unverified',pid:state.pid};
   return {status:state.fingerprint===configurationFingerprint(env)?'matching':'mismatch',pid:state.pid};
 }
-export function trackBackend(child,env,{file=stateFile,onError=()=>{}}={}) {
+export function trackBackend(child,env,{file=stateFile,onError=()=>{},runtimeJar}={}) {
+  const fingerprint=runtimeJar?.fingerprint??configurationFingerprint(env);
   child.once('spawn',()=>{
     try {
       fs.mkdirSync(path.dirname(file),{recursive:true});
-      fs.writeFileSync(file,JSON.stringify({version:1,pid:child.pid,fingerprint:configurationFingerprint(env),startedAt:new Date().toISOString()}),{mode:0o600});
+      fs.writeFileSync(file,JSON.stringify({version:1,pid:child.pid,fingerprint,startedAt:new Date().toISOString()}),{mode:0o600});
     } catch {onError();}
   });
   child.once('exit',()=>{
     // An older process must never remove a newer process's metadata.
     try {if(readBackendState(file)?.pid===child.pid)fs.unlinkSync(file);} catch {}
+    runtimeJar?.cleanup();
   });
+  child.once('error',()=>{if(!child.pid)runtimeJar?.cleanup();});
 }
 function exited(child) {return child.exitCode!==null && child.exitCode!==undefined || child.signalCode!==null && child.signalCode!==undefined;}
 async function waitForChildren(children,ms) {
