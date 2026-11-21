@@ -45,13 +45,25 @@ class HospitalIndexesMongoTest {
     }
 
     @Test
+    void detailStartupBackfillLeavesTheBasicHospitalCollectionUnchanged() {
+        Document basic = hospital("basic", "basic-source").append("active", true)
+                .append("apiFields", new Document("yadmNm", "기본 병원"));
+        mongo.getCollection("hospitals").insertOne(basic);
+        insert(hospital("selected", "selected-source").append("latitude", 37.25).append("longitude", 127.05));
+        migrate();
+        assertEquals(basic, mongo.getCollection("hospitals").find(new Document("_id", "basic")).first());
+        assertEquals(new Document("latitude", 37.25).append("longitude", 127.05), get("selected").get("location"));
+        assertEquals(1, mongo.getCollection("hospitalDetails").countDocuments());
+    }
+
+    @Test
     void enforcesProviderExternalIdentityWithNamedUniqueIndex() {
         migrate();
-        mongo.getCollection("hospitals").insertOne(hospital("one", "shared"));
+        mongo.getCollection("hospitalDetails").insertOne(hospital("one", "shared"));
         assertThrows(MongoWriteException.class,
-                () -> mongo.getCollection("hospitals").insertOne(hospital("two", "shared")));
-        mongo.getCollection("hospitals").insertOne(hospital("three", "shared").append("provider", "SAMPLE"));
-        Document index = mongo.getCollection("hospitals").listIndexes()
+                () -> mongo.getCollection("hospitalDetails").insertOne(hospital("two", "shared")));
+        mongo.getCollection("hospitalDetails").insertOne(hospital("three", "shared").append("provider", "SAMPLE"));
+        Document index = mongo.getCollection("hospitalDetails").listIndexes()
                 .into(new java.util.ArrayList<>()).stream()
                 .filter(row -> "hospital_provider_external_v1".equals(row.getString("name"))).findFirst().orElseThrow();
         assertEquals(Boolean.TRUE, index.getBoolean("unique"));
@@ -142,7 +154,7 @@ class HospitalIndexesMongoTest {
         migrate();
         assertEquals(first, get("h"));
         assertEquals(2, mongo.getCollectionNames().size());
-        assertEquals(1, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(1, mongo.getCollection("hospitalDetails").countDocuments());
     }
 
     private Document hospital(String id, String externalId) {
@@ -154,7 +166,7 @@ class HospitalIndexesMongoTest {
                 .append("value", id).append("sourceUrl", "https://example.test/source").append("fetchedAt", fetchedAt);
     }
 
-    private void insert(Document document) { mongo.getCollection("hospitals").insertOne(document); }
-    private Document get(String id) { return mongo.getCollection("hospitals").find(new Document("_id", id)).first(); }
+    private void insert(Document document) { mongo.getCollection("hospitalDetails").insertOne(document); }
+    private Document get(String id) { return mongo.getCollection("hospitalDetails").find(new Document("_id", id)).first(); }
     private void migrate() { new HospitalIndexes(mongo).run(new DefaultApplicationArguments(new String[0])); }
 }
