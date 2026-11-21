@@ -1,6 +1,6 @@
 # 병원 기본 목록 운영
 
-웹의 병원 검색·홈 목록·AI 추천은 MongoDB의 `hospitalBasicCatalog`를 조회합니다. 사용자가 접속하거나 검색할 때 기본 공공 API 수집을 시작하지 않습니다. 초기 적재와 일일 수집은 별도 실행하며, 실제 저장 완료 건수는 실행 결과에서 확인합니다.
+웹의 병원 검색·홈 목록·AI 추천은 기획서의 병원 기본 정보 컬렉션인 MongoDB `hospitals`를 조회합니다. 사용자가 접속하거나 검색할 때 기본 공공 API 수집을 시작하지 않습니다. 초기 적재와 일일 수집은 별도 실행하며, 실제 저장 완료 건수는 실행 결과에서 확인합니다.
 
 ## 수집 범위
 
@@ -18,17 +18,57 @@
 
 | 저장소 | 역할 |
 | --- | --- |
-| `hospitalBasicCatalog` | 전체 기본 원본 `apiFields`, 검색 필드, `departmentCodes`, `departments`, `active`, 내용 비교 해시 |
-| `hospitals`, `hospitalEvidence` | 선택한 병원의 상세 캐시·근거와 기존 예약·의료진의 참조 |
-| `hospitalImportRuns` | 실행별 상태·건수와 마지막 성공 실행, 동시 적용 방지 잠금 |
+| `hospitals` | 기획서의 병원 기본 정보: 전체 기본 원본 `apiFields`, 검색 필드, `departmentCodes`, `departments`, `active`, 내용 비교 해시 |
+| `hospitalDetails`, `hospitalEvidence` | 선택한 병원의 상세 캐시·근거와 기존 예약·의료진의 참조 |
+| `hospitalImportRuns` | 실행별 상태·건수와 마지막 성공 실행, 이전 수집본 역적용 방지 기준, 동시 적용 방지 잠금 |
 
-병원 ID는 기존 앱과 같은 `UUID.nameUUIDFromBytes(UTF-8("HIRA:" + ykiho))` 규칙을 사용합니다. 기본 카탈로그를 전부 `hospitals`에 복제하지 않습니다. 웹에서 공개하는 병원 응답에는 원본 전체 필드·암호화 기관번호·비교용 해시를 넣지 않습니다.
+병원 ID는 기존 앱과 같은 `UUID.nameUUIDFromBytes(UTF-8("HIRA:" + ykiho))` 규칙을 사용합니다. `hospitalDetails`는 기획서 이후 추가한 상세 캐시용 보조 컬렉션이며, `hospitals`의 기본 목록을 전부 복제하지 않습니다. 두 컬렉션은 같은 병원 ID를 사용합니다. 웹에서 공개하는 병원 응답에는 원본 전체 필드·암호화 기관번호·비교용 해시를 넣지 않습니다.
 
 `basicSourceHash`는 정렬한 기본 원본 필드의 SHA-256이고, `catalogHash`는 기본 해시와 정렬한 진료과 소속으로 계산합니다. 신규 병원은 추가하고, 해시나 활성 상태가 달라진 문서만 갱신합니다. 진료과 소속만 달라지면 같은 기본 필드·기본 조회 시각을 다시 쓰지 않습니다. 내용이 같은 문서는 날짜만 갱신하지 않으므로 `basicFetchedAt`과 전체 동기화 성공 시각은 다를 수 있습니다.
 
 검증한 전체 목록에서 빠진 병원은 `active:false`로 바꾸고 `retiredAt`을 남깁니다. 이는 현재 원본 목록에서 확인되지 않는다는 뜻이며 폐업 판정이 아닙니다. 다시 나타나면 활성화합니다. 회원·예약·의료진과 과거 이력은 삭제하지 않습니다.
 
 수집을 모두 검증한 뒤 DB 변경분을 순서대로 적용하며 반영된 자료는 이후 웹 조회에 사용됩니다. 전체 DB를 한 번에 교체하는 트랜잭션은 아닙니다. DB 쓰기 도중 실패하면 일부 변경이 반영될 수 있으며, 같은 검증 자료로 재실행해 이어서 적용합니다.
+
+## 기존 컬렉션 이름 전환
+
+이전 버전의 DB를 새 버전과 함께 사용할 때 한 번 실행하는 절차입니다. 병원 기본 정보를 기획서의 `hospitals` 이름으로 맞추며, 기존 문서를 다시 수집하거나 복제하지 않고 컬렉션 이름만 순서대로 변경합니다.
+
+| 이전 이름 | 전환 후 이름 | 자료 |
+| --- | --- | --- |
+| `hospitals` | `hospitalDetails` | 선택한 병원의 상세 캐시와 샘플 |
+| `hospitalBasicCatalog` | `hospitals` | 전국 병원 기본 정보 |
+
+`_id`, 병원 참조와 인덱스를 유지합니다. `hospitalEvidence`, 회원, 의료진, 일정, 예약, 수집 실행 기록의 이름과 자료는 이 작업에서 변경하지 않습니다. 전환 도구는 [rename-hospital-collections.mjs](../scripts/rename-hospital-collections.mjs)입니다.
+
+1. 새 코드의 검사·빌드를 완료하고, 일일 수집 워크플로가 전환 중 새로 시작하지 않도록 중지합니다. 실행 중인 수집은 종료될 때까지 기다립니다.
+2. Vercel 운영 트래픽을 일시 정지하고 같은 DB에 연결한 로컬 서버·다른 배포·수동 작업도 중지합니다. 이미 실행 중인 요청과 DB 작업이 끝났는지 확인합니다. 고정된 시간만 기다린 것으로 종료를 판단하지 않습니다.
+3. 대상 DB가 포함된 `MONGODB_URI`를 현재 셸의 환경변수로 전달하고 아래 계획 확인 명령을 실행합니다. 계획 파일이 없으면 현재 두 컬렉션의 UUID·문서 수·인덱스 수와 정의 해시를 고정해 저장하며, 이미 있으면 그 계획과 현재 상태를 대조합니다. `--database`는 URI의 실제 DB명을 확인하는 값입니다.
+
+```bash
+node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json
+```
+
+4. 트래픽·작업 중지가 유지된 상태에서 같은 계획으로 적용합니다. `--writers-stopped`는 운영자가 중지를 확인했다는 표시이며 도구가 서버나 워크플로를 중지해 주지는 않습니다.
+
+```bash
+node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json --apply --writers-stopped
+```
+
+5. 같은 정지 구간에 새 버전을 배포합니다. 배포와 DB 이름 전환의 선후는 바꿀 수 있지만 둘 다 완료되기 전에는 트래픽이나 수집을 재개하지 않습니다. 새 서버는 구형 컬렉션 구성이 남아 있으면 시작을 거절합니다.
+6. 같은 계획 확인 명령으로 `state: current`, `basic: hospitals`, `details: hospitalDetails`와 기존 UUID·문서 수·인덱스 일치를 확인합니다. 트래픽을 재개한 뒤 `/api/health`, 병원 검색·상세, 기존 예약 조회를 확인하고 일일 수집 워크플로를 다시 활성화합니다. 매일 한국 시간 00시 수집 일정과 변경분 저장 방식은 유지됩니다.
+
+계획 파일은 이름 전환 대상을 고정하는 메타데이터이며 DB 백업은 아닙니다. DB 백업·계획 파일·운영 로그는 Git에 올리지 않고 따로 보관합니다.
+
+각 이름 변경에는 `dropTarget:false`를 사용합니다. 두 이름 변경 전체가 하나의 트랜잭션은 아니므로 첫 단계 뒤 실패하면 `hospitalBasicCatalog`와 `hospitalDetails`가 함께 있는 중간 상태가 될 수 있습니다. 이때 트래픽·작업 중지를 유지하고 같은 적용 명령과 계획 파일로 재실행하면 남은 단계부터 이어집니다. 완료 상태에서 재실행하면 문서를 다시 옮기지 않습니다.
+
+구버전으로 복구해야 하면 트래픽·작업 중지를 유지하고 같은 계획으로 다음 명령을 실행합니다.
+
+```bash
+node scripts/rename-hospital-collections.mjs --database hospital_reservation --plan .runtime/hospital-collection-rename-plan.json --rollback --apply --writers-stopped
+```
+
+`state: legacy`를 확인하고 구버전 코드를 복구한 뒤 트래픽·수집을 재개합니다. 전환·복구 중에는 대상 컬렉션을 삭제하거나 덮어쓰지 않습니다. 계획과 UUID·문서 수·인덱스가 달라지면 중단하므로, 운영 재개 후 자료가 변한 상황에서 계획 파일을 새로 만들어 검사를 우회하지 말고 실제 변경과 복구 대상을 먼저 확인합니다.
 
 ## 매일 한국 시간 자정 실행
 
@@ -67,7 +107,7 @@ node scripts/sync-hospital-catalog.mjs --directory .runtime/hospital-catalog/ini
 ## 확인과 복구
 
 - 성공 후 `sync-result.json`과 Actions 실행 요약의 `rows`, `inserted`, `updated`, `reactivated`, `retired`, `unchanged`, `verified`를 확인합니다.
-- `hospitalImportRuns`에는 실행 UUID의 `COMPLETE` 또는 `FAILED` 상태를 기록합니다. `_id: hospital-basic-current`는 마지막 성공 실행과 범위별 건수·수집 시각을 가리킵니다. `hospital-basic-sync-lock`은 중복 DB 적용을 막는 임시 잠금입니다.
+- `hospitalImportRuns`에는 실행 UUID의 `COMPLETE` 또는 `FAILED` 상태를 기록합니다. `_id: hospital-basic-current`는 마지막 성공 실행과 범위별 건수·수집 시각을 가리킵니다. `hospital-basic-high-water`는 적용을 시작한 최신 수집본의 기준을 유지해 일부 반영 후 실패한 경우에도 이전 자료가 덮어쓰지 못하게 합니다. `hospital-basic-sync-lock`은 중복 DB 적용을 막는 임시 잠금입니다.
 - 누락 페이지·중복 기관번호·총건수 불일치·분류 범위 불일치·수집 중 전국 총건수 변경이 있으면 적용을 시작하지 않습니다. 기본 자료에 없는 기관이 진료과 목록에 나타나도 중단합니다.
 - 기존 활성 자료에서 빠진 건수가 `max(100, 기존 활성 건수의 5% 내림)`보다 크면 대량 비활성화를 중단합니다. 실제 원본 변화인지 확인한 뒤 수집 범위와 자료를 검토하며, 한 번 실패했다는 이유로 DB를 비우지 않습니다.
 - 로컬 수집 중 연결 오류가 나면 같은 디렉터리로 재실행해 검증된 페이지를 이어서 사용할 수 있습니다. 날짜가 지난 자료나 변한 원본 총건수 때문에 검증이 실패하면 새 디렉터리에서 다시 수집합니다. GitHub runner의 파일은 다음 실행에 자동 보존되지 않으므로 원격 재실행은 새 수집으로 진행합니다.

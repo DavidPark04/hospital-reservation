@@ -95,7 +95,7 @@ class MemberMongoIntegrationTest {
                 .append("tokenVersion", 7).append("bookingVersion", 9)
                 .append("createdAt", Date.from(Instant.parse("2026-01-01T00:00:00Z"))), "users");
         mongo.insert(new Document("_id", "hospital").append("name", "시험 병원").append("address", "시험 주소")
-                .append("tel", "000-0000-0000").append("source", "SAMPLE"), "hospitals");
+                .append("tel", "000-0000-0000").append("source", "SAMPLE"), "hospitalDetails");
         mongo.insert(new Document("_id", "doctor").append("hospitalId", "hospital").append("departmentCode", "01")
                 .append("departmentName", "내과").append("name", "시험 의료진").append("isVirtual", true), "doctors");
         for (int i = 1; i <= 3; i++) {

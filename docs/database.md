@@ -10,9 +10,9 @@
 | `social_login_tickets` | 인증 결과를 앱 JWT로 교환하는 임시 티켓 | `expiresAt` TTL 0초, 유효 60초, 원자적 일회용 소모 |
 | `social_withdrawal_proofs` | 같은 소셜 계정을 다시 확인한 탈퇴 증명 | 임의 증명값의 SHA-256 해시 `_id`, 회원·제공자 식별자·토큰 버전 바인딩, 유효 5분, `expiresAt` TTL 0초 |
 | `chat_usage` | 한국 시간 날짜·호출자 HMAC 키와 상담 횟수 | `_id` unique, 다음 한국 시간 자정 `expiresAt` TTL |
-| `hospitalBasicCatalog` | 사전 수집한 전국 병원 기본 원본·검색 필드·진료과 소속·활성 여부 | 병원 식별번호에 따른 안정된 UUID; `(provider,externalId)` unique; 활성·이름 및 진료과·활성·이름 조회 인덱스 |
-| `hospitalImportRuns` | 수집 적용 실행별 상태·건수, 마지막 성공 실행, 적용 잠금 | 실행 UUID; 고정 `_id` `hospital-basic-current`, `hospital-basic-sync-lock` |
-| `hospitals` | 선택한 실제 병원의 상세 캐시·진료과와 샘플 병원 | `(provider,externalId)` unique; 기존 예약·의료진의 병원 ID 유지 |
+| `hospitals` | 기획서의 병원 기본 정보: 사전 수집한 전국 병원 기본 원본·검색 필드·진료과 소속·활성 여부 | 병원 식별번호에 따른 안정된 UUID; `(provider,externalId)` unique; 활성·이름 및 진료과·활성·이름 조회 인덱스 |
+| `hospitalImportRuns` | 수집 적용 실행별 상태·건수, 마지막 성공 실행, 적용 잠금·이전 수집본 역적용 방지 | 실행 UUID; 고정 `_id` `hospital-basic-current`, `hospital-basic-high-water`, `hospital-basic-sync-lock` |
+| `hospitalDetails` | 선택한 실제 병원의 상세 캐시·진료과와 샘플 병원 | `(provider,externalId)` unique; 기존 예약·의료진의 병원 ID 유지 |
 | `hospitalEvidence` | 병원별 근거·출처·기준 기간·조회 시점 | 병원 정보와 연결해 저장 |
 | `doctors` | 병원·진료과에 배정한 가상 의료진 | `(hospitalId,departmentCode,sampleCode)` unique |
 | `timeSlots` | 가상 진료 일정·정원·예약 수·휴진 | `(doctorId,startAt)` unique; 0 ≤ reservedCount ≤ capacity validator |
@@ -24,7 +24,7 @@ OAuth state·브라우저 바인딩은 SHA-256 해시로 저장합니다. OAuth 
 
 ## 병원 기본 카탈로그
 
-`hospitalBasicCatalog`는 병원 기본 API의 `ykiho`를 `externalId`로 보관하고, `HIRA:`와 이 값을 합친 UTF-8 바이트에서 Java `UUID.nameUUIDFromBytes`와 같은 UUID를 만듭니다. 기존 `hospitals`와 같은 병원은 같은 ID를 사용하므로 가상 의료진·예약의 참조를 바꾸지 않습니다.
+`hospitals`는 기획서 4.3의 병원 기본 정보 컬렉션입니다. 병원 기본 API의 `ykiho`를 `externalId`로 보관하고, `HIRA:`와 이 값을 합친 UTF-8 바이트에서 Java `UUID.nameUUIDFromBytes`와 같은 UUID를 만듭니다. `hospitalDetails`와 같은 병원은 같은 ID를 사용하므로 가상 의료진·예약의 참조를 바꾸지 않습니다.
 
 검색용 `name`, `address`, `tel`, 유효 좌표와 `location` 외에 API가 반환한 모든 기본 필드를 `apiFields`에 보존합니다. `departmentCodes`는 기본 API의 진료과 조건별 목록으로 확인한 소속이며, 병원별 상세 API를 전부 수집했다는 의미가 아닙니다. `active:false`인 병원은 새 검색·예약 대상에서 제외합니다. 기존 예약·회원·의료진 이력은 삭제하지 않습니다.
 
@@ -32,7 +32,7 @@ OAuth state·브라우저 바인딩은 SHA-256 해시로 저장합니다. OAuth 
 
 모든 수집 범위의 페이지·총건수·중복·체크섬을 검증한 뒤 DB 적용을 시작합니다. 불완전 수집이나 비정상적인 대량 감소는 운영 자료에 반영하지 않습니다. 정상 전체 수집에서 확인되지 않은 병원은 비활성화하며, 실제 폐업 판정으로 표현하지 않습니다. 저장 절차·실행 기록·복구는 [병원 목록 운영 안내](hospital-catalog.md)를 따릅니다.
 
-`hospitals`와 `hospitalEvidence`는 선택한 병원에 필요한 상세 캐시와 근거를 유지합니다. 기본 카탈로그 전체를 이 두 컬렉션에 복제하지 않아 서버 시작 시 전국 병원별 근거 조회가 반복되는 것을 막습니다. 상세 3종은 요청 시 조회하며 완전한 결과만 1시간 재사용합니다.
+`hospitalDetails`와 `hospitalEvidence`는 선택한 병원에 필요한 상세 캐시와 근거를 유지합니다. `hospitalDetails`는 기획서 이후 상세 API 재사용을 위해 추가한 보조 컬렉션이며, `hospitals`의 전국 기본 목록과 구분합니다. 기본 목록 전체를 이 두 컬렉션에 복제하지 않아 서버 시작 시 전국 병원별 근거 조회가 반복되는 것을 막습니다. 상세 3종은 요청 시 조회하며 완전한 결과만 1시간 재사용합니다. 일일 기본 정보 수집 시각과 변경분만 저장하는 방식은 그대로 유지합니다.
 
 ## 회원과 가입 진행 상태
 
