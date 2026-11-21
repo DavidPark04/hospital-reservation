@@ -12,6 +12,7 @@ flowchart LR
     Sync[GitHub Actions / 매일 00시 KST 예정] --> Basic[HIRA 병원 기본 API]
     Sync --> DB
     BE --> AI[OpenAI]
+    AI --> Web[전문 진료 분야 웹 검색 / 인용 출처]
     BE --> OAuth[Google / Kakao]
     FE --> Maps[Kakao 지도 SDK / 외부 길찾기]
 ```
@@ -33,6 +34,8 @@ Frontend는 `App.tsx`의 페이지 흐름, 소셜 가입 전용 컴포넌트, `S
 ## 병원 목록과 상세 정보
 
 검색·홈·AI 추천의 병원 후보는 기획서의 병원 컬렉션인 `hospitals`에서 조회합니다. 방문자가 검색할 때 기본 API를 호출하지 않습니다. 일일 수집은 기본 목록의 `dgsbjtCd` 조건으로 진료과별 소속 병원도 확인하므로, 전국 병원의 상세 3종을 일괄 호출하지 않고 진료과 검색을 준비할 수 있습니다.
+
+상담은 증상·경과·진료 목적과 희망 방향을 대화로 확인합니다. 주변 병·의원은 DB의 종별·진료과·주소·좌표를 사용하며, 전문 진료기관은 웹에서 공개 자료를 찾은 후 실제 DB의 기관명·분원·주소를 대조합니다. 공식 안내·기사·후기 등 출처 유형을 구분하고 검색 결과의 AI 요약으로 표시합니다. `hospitalRecommendationEvidence`에 개인 정보와 연결되지 않은 공개 검색 결과만 24시간 보관합니다. 응급이 의심되는 대화에서는 일반 추천보다 응급진료 안내를 우선합니다. 세부 흐름은 [대화형 추천](recommendations.md)에 설명합니다.
 
 병원 상세를 열면 `hospitals`의 기본 정보와 `hospitalDetails`의 상세 캐시를 합칩니다. `hospitalDetails`는 기획서 이후 추가한 보조 컬렉션으로, 필요한 병원만 저장하고 같은 병원 ID를 사용해 예약·가상 의료진의 참조를 유지합니다. HIRA 상세 3종의 1시간 캐시 정책은 유지합니다. `hospitals` 전체를 서버 시작 때 병원별로 정리하거나 `hospitalDetails`·`hospitalEvidence`에 복제하지 않습니다.
 
