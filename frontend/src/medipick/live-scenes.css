@@ -1,0 +1,145 @@
+.medipick-home .film-panes {
+  position:absolute; inset:0; overflow:hidden; container:film-pages / size; pointer-events:none;
+  color:var(--ink); text-align:left; --ls-left:44%; --ls-right:max(6%,calc((100% - 1290px) / 2)); --ls-top:10%; --ls-bottom:max(11%,72px);
+}
+.medipick-home .sc-pane { position:absolute; inset:0; overflow:hidden; pointer-events:auto; }
+.medipick-home .sc-pane[inert] { pointer-events:none; }
+.medipick-home .sc-chat-stage { opacity:var(--chat-opacity,0); clip-path:var(--chat-ui-mask,inset(100%)); mask-image:var(--chat-cutout,none); }
+.medipick-home .sc-reasons-stage { color:var(--ink); opacity:var(--reasons-opacity,0); clip-path:var(--reasons-ui-mask,inset(100%)); mask-image:var(--reasons-cutout,none); }
+.medipick-home .sc-map-stage { opacity:var(--map-opacity,0); clip-path:var(--map-ui-mask,inset(100%)); mask-image:var(--map-cutout,none); }
+.medipick-home .sc-doctors-stage { opacity:var(--doctors-opacity,0); clip-path:var(--doctors-ui-mask,inset(100%)); mask-image:var(--doctors-cutout,none); }
+.medipick-home .sc-book-stage { opacity:var(--book-opacity,0); clip-path:var(--book-ui-mask,inset(100%)); mask-image:var(--book-cutout,none); }
+.medipick-home .ls-stack {
+  position:absolute; left:var(--ls-left); right:var(--ls-right); top:var(--ls-top); bottom:var(--ls-bottom); display:flex; flex-direction:column;
+  justify-content:safe center; align-items:stretch; gap:clamp(12px,2vh,22px); overflow-y:auto; scrollbar-width:thin; padding:4px;
+}
+.medipick-home .ls-heading { border:0; background:transparent; padding:0; }
+.medipick-home .ls-heading small,.medipick-home .ls-reason-info small { display:block; color:inherit; opacity:.86; font-size:.82rem; font-weight:630; }
+.medipick-home .ls-heading h3 { display:flex; align-items:center; gap:.5em; margin:.22em 0 0; font-size:clamp(1.4rem,2.5vw,2.5rem); color:inherit; line-height:1.19; letter-spacing:-.06em; word-break:keep-all; }
+.medipick-home .ls-link { background:transparent; border:none; min-height:30px; width:fit-content; padding:2px; display:inline-flex; align-items:center; gap:7px; color:var(--accent); font-size:.94rem; font-weight:730; text-decoration:none; }
+.medipick-home .ls-link:hover { text-decoration:underline; text-underline-offset:3px; }
+.medipick-home .ls-primary,.medipick-home .ls-compose button { background:var(--accent); color:white; border:none; border-radius:12px; min-height:40px; padding:8px 16px; display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:.92rem; font-weight:710; }
+.medipick-home .ls-primary:disabled { opacity:.5; cursor:default; }
+.medipick-home .ls-status { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-block:8px; font-size:.93rem; }
+.medipick-home .ls-note { margin:0; color:var(--muted); font-size:.9rem; line-height:1.55; word-break:keep-all; }
+.medipick-home .ls-chat { gap:clamp(17px,3vh,32px); }
+.medipick-home .ls-demo-bubble,.medipick-home .ls-chat-reply p {
+  margin:0; width:fit-content; font-size:clamp(1.16rem,2.2vw,2rem); font-weight:685; letter-spacing:-.055em; line-height:1.42; padding:clamp(14px,2vw,29px); border-radius:28px; word-break:keep-all;
+}
+.medipick-home .ls-demo-bubble { background:#414d5d; color:white; align-self:flex-end; border-bottom-right-radius:5px; }
+.medipick-home .ls-chat-reply { display:flex; align-items:flex-start; gap:10px; max-width:96%; }
+.medipick-home .ls-chat-reply p { background:white; color:var(--ink); border-top-left-radius:5px; box-shadow:0 20px 44px -32px #30394763; }
+.medipick-home .ls-avatar { width:clamp(35px,3.7vw,55px); flex:none; aspect-ratio:1; display:grid; place-items:center; border-radius:36%; background:#f1f4f8; color:var(--accent); }
+.medipick-home .ls-compose { display:flex; gap:7px; flex-direction:column; align-items:flex-end; background:white; border:1px solid #d6dbe2; padding:11px; border-radius:17px; }
+.medipick-home .ls-compose textarea { display:block; width:100%; min-height:44px; resize:vertical; max-height:110px; border:0; color:var(--ink); background:white; padding:4px; font:inherit; }
+.medipick-home .ls-compose button { min-height:35px; }
+.medipick-home .ls-prompts { display:flex; flex-wrap:wrap; gap:6px; }
+.medipick-home .ls-prompts button { min-height:34px; padding:5px 11px; border:1px solid #d3d9e0; border-radius:18px; background:#ffffff; color:#465463; font-size:.85rem; font-weight:620; }
+.medipick-home .sc-reason-sheet { border-top:2px solid #cbd2db; }
+.medipick-home .ls-filter { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; align-items:end; gap:6px; }
+.medipick-home .ls-filter label,.medipick-home .ls-candidate,.medipick-home .ls-date { display:grid; gap:4px; min-width:0; font-size:.8rem; font-weight:650; }
+.medipick-home .ls-filter input,.medipick-home .ls-filter select,.medipick-home .ls-candidate select,.medipick-home .ls-date input {
+  min-width:0; width:100%; min-height:36px; color:var(--ink); border:1px solid #bdc7d2; background:#fff; border-radius:9px; padding:5px 9px; font-size:.92rem; line-height:1.25; font-family:inherit;
+}
+.medipick-home .ls-filter button { border:1px solid #ccd4df; background:#ffffff; color:var(--accent); border-radius:9px; width:40px; height:36px; display:grid; place-items:center; }
+.medipick-home .ls-reason-info { display:grid; gap:5px; }
+.medipick-home .ls-reason-info>span { display:flex; align-items:center; gap:8px; font-size:.84rem; color:#54606c; }
+.medipick-home .ls-reason-info>span i { flex-shrink:0; }
+.medipick-home .ls-reason-info p { margin:0; color:var(--ink); font-size:clamp(.94rem,1.2vw,1.14rem); line-height:1.5; word-break:keep-all; }
+.medipick-home .ls-reason-info .ls-focal { font-size:clamp(2.4rem,5.2vw,5.3rem); line-height:1.14; letter-spacing:-.08em; font-weight:770; }
+.medipick-home .ls-reason-info ul { list-style:none; display:grid; gap:4px; padding:0; margin:0; }
+.medipick-home .ls-reason-info li a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; font-size:.85rem; }
+.medipick-home .ls-reason-info li small { display:inline; color:#54606c; }
+.medipick-home .sc-reason-sheet .ls-link { color:var(--accent); }
+.medipick-home .ls-secondary-link { font-size:.82rem; font-weight:550; }
+.medipick-home .ls-map { position:absolute; inset:0; isolation:isolate; display:flex; flex-direction:column; align-items:flex-end; justify-content:flex-end; padding:0 var(--ls-right) calc(var(--ls-bottom) + 20px); }
+.medipick-home .ls-map::before { position:absolute; inset:0; z-index:-2; pointer-events:none; content:''; background:radial-gradient(ellipse at 68% 42%,#e3e8ee,#f3f5f7 46%,#fbfcfd 74%); }
+.medipick-home .ls-map .hospital-location { position:static; margin:0; padding:0; background:none; border:0; border-radius:0; box-shadow:none; width:min(49%,610px); }
+.medipick-home .ls-map .hospital-location>.section-title-row { display:none; }
+.medipick-home .ls-map .hospital-map-frame { position:absolute; z-index:-1; inset:0 0 clamp(42px,7vh,68px); margin:0; border:0; border-radius:0; background:#eef1f4; }
+.medipick-home .ls-map .hospital-map-frame::after { content:''; position:absolute; z-index:1; inset:0 0 22px; pointer-events:none; background:linear-gradient(90deg,#fffffff7 4%,#ffffffe9 29%,transparent 54%); }
+.medipick-home .ls-map .hospital-map-canvas { position:relative; z-index:0; height:100%; pointer-events:none; }
+.medipick-home .ls-map .hospital-map-canvas a { pointer-events:auto; }
+.medipick-home .ls-map .hospital-map-status { z-index:2; padding:0 5% 0 43%; background:transparent; gap:7px; }
+.medipick-home .ls-map .hospital-map-status p { font-size:.9rem; background:#fffffff2; border-radius:9px; padding:5px 10px; }
+.medipick-home .ls-map .hospital-location-details,.medipick-home .ls-map .map-unavailable,.medipick-home .ls-map .hospital-map-help,.medipick-home .ls-map-controls,.medipick-home .ls-map-empty { background:#fffffff5; color:var(--ink); }
+.medipick-home .ls-map .hospital-location-details,.medipick-home .ls-map .map-unavailable,.medipick-home .ls-map-empty { border-radius:18px 18px 0 0; padding:14px 18px 6px; margin:0; }
+.medipick-home .ls-map .hospital-location-details { align-items:flex-start; gap:.6rem; }
+.medipick-home .ls-map .hospital-location-details strong { font-size:clamp(1rem,1.5vw,1.35rem); }
+.medipick-home .ls-map .hospital-location-details>div:first-child { flex-basis:185px; }
+.medipick-home .ls-map .hospital-map-actions { flex:none; width:auto; gap:6px; }
+.medipick-home .ls-map .hospital-map-actions .button { padding:6px 9px; min-height:32px; font-size:.77rem; }
+.medipick-home .ls-map .hospital-map-help { margin:0; padding:4px 18px 0; font-size:.76rem; }
+.medipick-home .ls-map-controls { width:min(49%,610px); display:flex; align-items:end; gap:12px; justify-content:space-between; border-radius:0 0 18px 18px; padding:8px 18px 14px; }
+.medipick-home .ls-map-controls .ls-candidate { flex:1; }
+.medipick-home .ls-map-controls .ls-link { flex-shrink:0; }
+.medipick-home .ls-map-empty { width:min(49%,610px); padding:22px; border-radius:18px; }
+.medipick-home .ls-doctors { display:grid; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); gap:clamp(6px,1vw,17px); }
+.medipick-home .ls-doctors button { position:relative; min-width:0; display:flex; flex-direction:column; align-items:flex-start; text-align:left; color:var(--ink); border:0; background:transparent; padding:0 0 5px; }
+.medipick-home .ls-portrait { width:100%; display:block; aspect-ratio:.8; max-height:26svh; overflow:hidden; border-radius:46% 46% 5px 5px; background:#e6eaf0; }
+.medipick-home .ls-doctors button:nth-child(2n) .ls-portrait { background:#eeeae7; }
+.medipick-home .ls-doctors button:nth-child(3n) .ls-portrait { background:#edf0f2; }
+.medipick-home .ls-doctors button:nth-child(3n) .fv-portrait { transform:scaleX(-1); }
+.medipick-home .ls-doctors strong { margin-top:8px; font-size:clamp(1rem,1.7vw,1.6rem); letter-spacing:-.06em; }
+.medipick-home .ls-doctors strong small,.medipick-home .ls-doctors button>span:last-of-type { font-size:.8rem; font-weight:530; color:var(--muted); }
+.medipick-home .ls-doctors i { position:absolute; right:3px; top:2px; width:23px; height:23px; display:grid; place-items:center; border-radius:50%; color:white; background:var(--accent); }
+.medipick-home .ls-ticket { flex-direction:row; justify-content:initial; align-items:safe center; gap:0; }
+.medipick-home .ls-ticket-stub,.medipick-home .ls-ticket-body { align-self:auto; min-height:220px; background:#ffffff; border-top:5px solid #527397; }
+.medipick-home .ls-ticket-stub { width:24%; flex:none; display:grid; justify-content:center; align-content:center; align-self:stretch; height:auto; min-height:0; background:transparent; border:0; z-index:1; }
+.medipick-home .ls-ticket-stub span { color:var(--muted); font-size:.83rem; }
+.medipick-home .ls-ticket-stub b { color:var(--accent); font-size:clamp(2.8rem,5.3vw,5rem); line-height:1.06; letter-spacing:-.08em; }
+.medipick-home .ls-ticket-body { position:relative; flex:1; display:flex; flex-direction:column; justify-content:center; align-items:stretch; gap:10px; border-radius:0 9px 9px 0; padding:clamp(13px,2vw,27px); overflow-wrap:anywhere; }
+.medipick-home .ls-ticket-body::before { content:''; position:absolute; right:100%; top:-5px; bottom:0; width:32%; border-top:5px solid #527397; border-right:1px dashed #c8cfd7; border-radius:9px 0 0 9px; background:#ffffff; }
+.medipick-home .ls-ticket-body h3 { font-size:clamp(1.05rem,1.65vw,1.6rem); }
+.medipick-home .ls-times { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:5px; }
+.medipick-home .ls-times button { padding:4px; border:1px solid transparent; border-radius:8px; background:#f0f2f5; color:#37414d; font-weight:700; font-size:.86rem; }
+.medipick-home .ls-times button:disabled { opacity:.53; }
+.medipick-home .ls-times button[aria-pressed=true] { border-color:#527397; background:var(--selection); color:var(--accent); }
+.medipick-home .ls-times small { display:block; font-size:.68rem; font-weight:580; }
+@media (max-width:760px) {
+  .medipick-home .film-panes { --ls-left:6%; --ls-right:6%; --ls-top:29%; --ls-bottom:max(58px,10%); }
+  .medipick-home .ls-stack { gap:10px; }
+  .medipick-home .ls-chat-reply p,.medipick-home .ls-demo-bubble { border-radius:16px; padding:13px; }
+  .medipick-home .ls-chat-reply p { border-top-left-radius:4px; }
+  .medipick-home .ls-demo-bubble { border-bottom-right-radius:4px; }
+  .medipick-home .ls-focal { font-size:2.6rem; }
+  .medipick-home .ls-map { padding-left:var(--ls-left); }
+  .medipick-home .ls-map .hospital-location,.medipick-home .ls-map-controls,.medipick-home .ls-map-empty { width:100%; }
+  .medipick-home .ls-map .hospital-map-frame::after { background:linear-gradient(180deg,#fffffffb 0%,#fffffff2 21%,transparent 42%); }
+  .medipick-home .ls-map .hospital-map-status { padding:0 6% 18%; }
+  .medipick-home .ls-map .hospital-location-details { display:block; padding:9px 13px 3px; }
+  .medipick-home .ls-map .hospital-map-actions { margin-top:4px; }
+  .medipick-home .ls-map .hospital-map-help { padding:3px 13px; line-height:1.4; }
+  .medipick-home .ls-map-controls { padding:5px 13px 9px; gap:7px; }
+  .medipick-home .ls-map-controls .ls-link { font-size:.82rem; }
+  .medipick-home .ls-ticket { gap:0; }
+  .medipick-home .ls-ticket-stub { width:20%; }
+  .medipick-home .ls-ticket-body::before { width:25%; }
+  .medipick-home .ls-heading h3 { font-size:1.4rem; }
+}
+@media (max-height:610px) {
+  .medipick-home .ls-stack { gap:6px; }
+  .medipick-home .ls-ticket { gap:0; }
+  .medipick-home .ls-ticket-body { gap:5px; padding:9px; }
+  .medipick-home .ls-map .hospital-map-help { font-size:.68rem; }
+}
+@media (max-width:390px) and (max-height:640px) {
+  .medipick-home .ls-ticket { top:27%; bottom:48px; }
+  .medipick-home .ls-ticket-body { min-width:0; padding:8px; gap:5px; }
+  .medipick-home .ls-ticket-body .ls-heading h3 { font-size:1rem; }
+  .medipick-home .ls-ticket-body .ls-heading small { font-size:.72rem; }
+  .medipick-home .ls-ticket .ls-primary { min-height:33px; padding:4px 7px; font-size:.8rem; }
+  .medipick-home .ls-ticket .ls-link { min-height:25px; font-size:.8rem; }
+  .medipick-home .ls-times { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .medipick-home .ls-times button { padding:3px 1px; font-size:.77rem; line-height:1.18; }
+}
+@media (min-width:600px) and (max-height:490px) {
+  .medipick-home .film-panes { --ls-top:5%; --ls-left:44%; --ls-bottom:44px; }
+  .medipick-home .ls-map { padding-left:44%; }
+  .medipick-home .ls-map .hospital-location,.medipick-home .ls-map-controls,.medipick-home .ls-map-empty { width:100%; }
+}
+@media (prefers-reduced-motion:no-preference) {
+  .medipick-home .ls-demo-bubble { transform:translate3d(calc(35px * (1 - var(--chat-reveal,1))),calc(22px * (1 - var(--chat-reveal,1))),0); }
+  .medipick-home .ls-portrait { transform:translateY(calc(38px * (1 - var(--doctors-reveal,1)))); }
+  .medipick-home .ls-doctors button:nth-child(even) .ls-portrait { transform:translateY(calc(-38px * (1 - var(--doctors-reveal,1)))); }
+}

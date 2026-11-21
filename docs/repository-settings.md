@@ -35,4 +35,6 @@
 
 2026-11-21 현재 저장소는 **공개**이며 `kdh0381` 공동 작업자 권한으로 PR 작성·검사 확인·병합을 진행합니다. GitHub 저장소 소유자는 `DavidPark04`로 유지합니다.
 
-운영 대상은 김도형 소유의 `0381kdh-8885/hospital-reservation-app` Vercel 프로젝트와 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다. `main` 앱 검사 성공 후 GitHub Actions가 해당 프로젝트에 배포하도록 구성했습니다. 저장소 Actions에는 `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, 프로젝트 범위의 60일 `VERCEL_TOKEN`을 암호화해 저장하고, DB·OAuth·외부 API 키는 Vercel Production 환경변수로 관리합니다. 이 문서에는 실제 비밀값을 기록하지 않습니다. 설정과 재배포 방법은 [배포 안내](../infra/README.md)를 따릅니다.
+메디픽 #32의 운영 프로젝트는 `0381kdh-8885/medipick`입니다. `main`의 앱 검사가 성공하면 GitHub Actions가 같은 커밋을 이 프로젝트에 배포합니다. [메디픽 운영 사이트](https://medi-pick.vercel.app)
+
+GitHub Actions의 배포 작업은 `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, 프로젝트 범위의 60일 `VERCEL_TOKEN`을 사용합니다. 서버의 DB·OAuth·외부 API 키는 Vercel Production 환경변수로 관리합니다. 병원 목록을 동기화하는 Actions와 Spring API는 같은 MongoDB Atlas `MediPick` 데이터베이스를 사용합니다. [배포 및 환경변수 안내](../infra/README.md)
