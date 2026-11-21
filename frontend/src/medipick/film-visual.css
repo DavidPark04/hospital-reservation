@@ -1,0 +1,224 @@
+@scope (.medipick-home) {
+.film-visual, .fv-frame, .fv-backdrops, .fv-sheet {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.film-visual { isolation: isolate; }
+.fv-frame { z-index: 2; pointer-events: none; }
+.fv-backdrops { z-index: 0; overflow: hidden; pointer-events: none; }
+.fv-sheet { overflow: hidden; }
+
+/* The hero sits above the backgrounds and passes through the camera into the first chapter. */
+.fv-flight {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 35%;
+  width: min(58vw, 62svh, 650px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  opacity: var(--fv-pass);
+  pointer-events: none;
+  user-select: none;
+}
+.fv-flight[hidden] { display: none; }
+.fv-crown, .fv-art, .fv-orbit { position: absolute; }
+.fv-crown {
+  inset: -23%;
+  background: radial-gradient(ellipse at 47% 54%, #c6d0e146, #f6f8fa26 36%, transparent 66%);
+  transform: scale(var(--fv-crown-scale));
+}
+.fv-orbit {
+  left: 50%;
+  top: 48%;
+  width: 137%;
+  height: 48%;
+  transform: translate(-50%, -50%) rotate(var(--fv-orbit-tilt)) scale(var(--fv-orbit-scale));
+}
+.fv-orbit i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #9ba9bb85;
+  border-radius: 50%;
+  mask-image: conic-gradient(from 24deg, transparent 0 8%, #000 28%, #0005 46%, transparent 60% 69%, #000 90%, transparent);
+}
+.fv-orbit b {
+  position: absolute;
+  top: var(--fv-bead-y);
+  left: var(--fv-bead-x);
+  width: clamp(4px, .8vw, 10px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 29% 26%, #fff, #f9fafb 22%, #b2c0d2 56%, #8797ab);
+  box-shadow: 0 0 12px #94a3b33d;
+  transform: translate(-50%, -50%);
+}
+.fv-art {
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  display: block;
+  filter: saturate(.29) brightness(1.14) drop-shadow(0 12px 14px #67768e22);
+  transform: translate(calc(-50% + var(--fv-art-x)), calc(-50% + var(--fv-art-y)))
+    perspective(850px) rotateX(var(--fv-pitch)) rotateY(var(--fv-yaw)) rotateZ(var(--fv-roll)) scale(var(--fv-art-scale));
+}
+
+.fv-chat {
+  background: radial-gradient(ellipse at 70% 38%, #f1f3f6, transparent 54%), linear-gradient(120deg, #ffffff 4%, #f7f8fa 84%);
+  clip-path: var(--chat-mask, inset(0));
+  opacity: var(--fv-chat-fade);
+}
+.fv-chat-frequency {
+  position: absolute;
+  right: -27%;
+  bottom: -69%;
+  width: min(95vw, 1400px);
+  aspect-ratio: 1.25;
+  border: 1px solid #a8b3bf49;
+  border-radius: 50%;
+  box-shadow: 0 0 0 26px #fff5, 0 0 0 27px #a8b3bf38, 0 0 0 50px #fff5, 0 0 0 51px #b4becb32;
+  transform: translateX(var(--fv-chat-parallax)) rotate(-13deg);
+}
+.fv-reasons {
+  background: radial-gradient(ellipse at 77% 62%, #ffffff, transparent 62%), linear-gradient(124deg, #f6f7f9, #f0f2f4 66%, #e7ebef);
+  clip-path: var(--reasons-mask, inset(0 100% 0 0));
+}
+.fv-optic {
+  position: absolute;
+  right: -20%;
+  top: 6%;
+  width: min(65vw, 950px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid #8794a736;
+  transform: translateX(var(--fv-reasons-parallax)) rotate(-14deg);
+}
+.fv-optic i {
+  position: absolute;
+  border: 1px solid #8794a730;
+  border-radius: 50%;
+  inset: 6%;
+}
+.fv-optic i:nth-child(2) { inset: 18%; }
+.fv-optic i:nth-child(3) { inset: 32%; }
+.fv-optic b {
+  position: absolute;
+  inset: 0 50%;
+  width: 1px;
+  background: linear-gradient(transparent, #8794a74a, transparent);
+}
+.fv-map {
+  background: linear-gradient(133deg, #f6f7f9, #f1f3f6 63%, #e9edf1);
+  clip-path: var(--map-mask, circle(0% at 70% 50%));
+}
+.fv-map-water {
+  position: absolute;
+  width: 120%;
+  height: 49%;
+  bottom: -35%;
+  left: 2%;
+  background: #cbd5e1;
+  border-radius: 50%;
+  transform: translateX(var(--fv-map-parallax)) rotate(-12deg);
+}
+/* The small symbol and the travelling cutout share the same geometry. */
+.fv-pin-source {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+}
+.fv-pin-source::before, .fv-pin-transfer i {
+  content: '';
+  position: absolute;
+  inset: 7%;
+  border-radius: 50% 50% 50% var(--pin-corner,8%);
+  background: var(--pin-paint,#43638d);
+  transform: rotate(-45deg);
+  mask-image: radial-gradient(circle closest-side, transparent var(--pin-hole,34%), #000 calc(var(--pin-hole,34%) + 2%));
+}
+.film-visual[data-pin-in-flight] .fv-pin-source { opacity: 0; }
+.fv-pin-transfer {
+  --iris: var(--map-opening, var(--fv-local-aperture));
+  --pin-corner: calc(8% + 42% * var(--iris));
+  --pin-hole: calc(34% + 51% * var(--iris));
+  --pin-paint: color-mix(in srgb, #43638d, #a8b9cb var(--fv-pin-wash));
+  position: absolute;
+  z-index: 3;
+  left: var(--fv-pin-x);
+  top: var(--fv-pin-y);
+  width: var(--fv-pin-size);
+  height: var(--fv-pin-size);
+  opacity: var(--fv-pin-opacity);
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(var(--fv-pin-twist))
+    scale(calc(var(--fv-pin-scale) * (1 - var(--iris)) + var(--fv-iris-scale) * var(--iris) / (.34 + .51 * var(--iris))));
+}
+.fv-pin-transfer i {
+  background: linear-gradient(135deg, var(--pin-paint) 28%, color-mix(in srgb, var(--pin-paint), #5d7897 var(--fv-pin-wash)) 74%, var(--pin-paint));
+}
+.fv-pin-transfer[hidden] { display: none; }
+.fv-doctors {
+  background: radial-gradient(ellipse at 70% 28%, #ffffff, transparent 58%), linear-gradient(112deg, #fdfdfd, #f0f1f2 73%);
+  clip-path: var(--doctors-mask, inset(100% 0 0));
+}
+.fv-clinic-light {
+  position: absolute;
+  width: min(77vw, 1060px);
+  aspect-ratio: 1;
+  border-radius: 50% 50% 0 0;
+  right: -9%;
+  top: 28%;
+  transform: translateX(var(--fv-doctors-parallax)) rotate(18deg);
+  background: linear-gradient(125deg, #ffffff74, #a3acb826);
+}
+.fv-portrait { display: block; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; }
+.fv-booking {
+  background: linear-gradient(128deg, #fdfdfd, #f7f8fa 58%, #e9ecf0);
+  clip-path: var(--book-mask, inset(0 0 100%));
+}
+.fv-paper {
+  position: absolute;
+  right: -25vw;
+  bottom: -77%;
+  width: 84vw;
+  aspect-ratio: .99;
+  transform: translateX(var(--fv-booking-parallax)) rotate(-15deg);
+}
+.fv-paper i {
+  position: absolute;
+  inset: 0;
+  border-radius: 4%;
+  background: linear-gradient(145deg, #ffffff, #f1f2f4 55%, #fafbfc);
+  box-shadow: 0 0 0 1px #d1d6dc, 0 -8px 27px #6873821c;
+}
+.fv-paper i:nth-child(2) { transform: translate(-1.5%, 2.7%) rotate(5deg); }
+.fv-paper i:nth-child(3) { transform: translate(-3.6%, 5.1%) rotate(9deg); }
+
+@media (max-width: 760px) {
+  .fv-flight { top: 37%; width: min(78vw, 53svh); }
+  .fv-optic { width: 104vw; right: -53%; top: 24%; }
+  .fv-paper { width: 110vw; bottom: -26%; right: -54vw; }
+}
+@media (max-height: 550px) and (orientation: landscape) {
+  .fv-flight { top: 35%; width: min(49vw, 60svh); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fv-pin-transfer { display: none; }
+  .film-visual[data-pin-in-flight] .fv-pin-source { opacity: 1; }
+  .fv-art { transform: translate(-50%, -50%); }
+  .fv-orbit { display: none; }
+  .fv-crown, .fv-optic, .fv-paper, .fv-map-water, .fv-clinic-light, .fv-chat-frequency { transform: none; }
+  .fv-chat { clip-path: none; }
+  .fv-reasons { clip-path: none; opacity: var(--fv-reasons-fade); }
+  .fv-map { clip-path: none; opacity: var(--fv-map-fade); }
+  .fv-doctors { clip-path: none; opacity: var(--fv-doctors-fade); }
+  .fv-booking { clip-path: none; opacity: var(--fv-booking-fade); }
+}
+
+}

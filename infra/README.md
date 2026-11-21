@@ -1,6 +1,6 @@
 # 배포와 운영
 
-GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 새 운영 대상은 [hospital-reservation-app.vercel.app](https://hospital-reservation-app.vercel.app)입니다.
+GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 새 운영 대상은 [medi-pick.vercel.app](https://medi-pick.vercel.app)입니다.
 
 2026-11-21 첫 운영 배포에서 화면·병원 검색·MongoDB 연결과 소셜 인증 시작 주소를 확인했습니다. Production 환경변수와 GitHub Actions 비밀값 3개를 등록했습니다. 버전별 운영 반영은 해당 PR·Actions·Vercel 배포 결과로 확인하며, Google/Kakao 운영 callback 등록과 실계정 로그인 검증은 사용자가 직접 진행합니다.
 
@@ -8,7 +8,7 @@ GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형
 
 | 항목 | 적용 값 |
 | --- | --- |
-| 소유 scope / 프로젝트 | `0381kdh-8885` / `hospital-reservation-app` |
+| 소유 scope / 프로젝트 | `0381kdh-8885` / `medipick` |
 | 소스 저장소 | `DavidPark04/hospital-reservation` |
 | 운영 브랜치·배포 방식 | `main`, GitHub Actions에서 Vercel CLI 소스 배포 |
 | Root Directory | 기존 `frontend` 대신 저장소 루트: 입력란 비우기 |
@@ -16,7 +16,7 @@ GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형
 | 배포 구성 | 저장소 루트 [vercel.json](../vercel.json)의 `services` |
 | frontend service | `frontend/`, Vite, `npm ci`, `npm run build`, `dist` |
 | backend service | `backend/`, Container Runtime, [Dockerfile](../backend/Dockerfile) |
-| 운영 주소 | `https://hospital-reservation-app.vercel.app` |
+| 운영 주소 | `https://medi-pick.vercel.app` |
 
 `frontend/vercel.json`만 읽는 기존 Root Directory 설정을 유지하면 Java 백엔드가 함께 배포되지 않습니다. 루트 설정은 API·OAuth·OpenAPI 경로를 backend, 나머지 경로를 frontend로 전달합니다. `/auth/social/callback`과 화면 직접 접속·새로고침은 SPA 진입점으로 처리합니다.
 
@@ -28,9 +28,9 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 | Secret | 값 |
 | --- | --- |
-| `VERCEL_TOKEN` | `hospital-reservation-app` 프로젝트에만 접근하는 배포 토큰. 현재 유효기간 60일 |
+| `VERCEL_TOKEN` | `medipick` 프로젝트에만 접근하는 배포 토큰. 현재 유효기간 60일 |
 | `VERCEL_ORG_ID` | `0381kdh-8885` scope의 실제 ID (`team_...`), 표시 이름이 아님 |
-| `VERCEL_PROJECT_ID` | `hospital-reservation-app`의 프로젝트 ID |
+| `VERCEL_PROJECT_ID` | `medipick`의 프로젝트 ID |
 
 배포 CLI는 저장소 루트의 소스를 업로드하고 Vercel이 두 서비스를 빌드하므로 배포 작업에 DB·OAuth·OpenAI 키를 전달하지 않습니다. 별도의 병원 기본 목록 동기화에는 Actions의 `MONGODB_URI`, `HIRA_HOSPITAL_KEY`가 필요합니다. 나머지 서버 비밀값은 아래 Vercel Production 환경변수에서 관리합니다. 로컬 `.runtime`, `.env`, 의존성·빌드 결과는 [.vercelignore](../.vercelignore)로 업로드에서 제외합니다.
 
@@ -60,10 +60,10 @@ GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각
 
 | 변수 | 값 또는 용도 |
 | --- | --- |
-| `MONGODB_URI` | 기존 Atlas의 `hospital_reservation` DB 연결 URI |
+| `MONGODB_URI` | 기존 Atlas의 `MediPick` DB 연결 URI |
 | `JWT_SECRET` | 모든 backend 인스턴스가 공유하는 고정된 충분히 긴 비밀값 |
-| `APP_FRONTEND_URL` | `https://hospital-reservation-app.vercel.app` |
-| `APP_BACKEND_URL` | `https://hospital-reservation-app.vercel.app` |
+| `APP_FRONTEND_URL` | `https://medi-pick.vercel.app` |
+| `APP_BACKEND_URL` | `https://medi-pick.vercel.app` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | 기존 Google 웹 OAuth 클라이언트 |
 | `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | 기존 Kakao REST API 키·Client Secret |
 | `VITE_KAKAO_MAP_JS_KEY` | 지도용 공개 JavaScript 키. frontend 빌드에 반영하며 서버 비밀값과 구분 |
@@ -83,7 +83,7 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 ## 카카오 지도 설정
 
 1. 기존 카카오 개발자 앱의 **카카오맵 → 사용 설정**을 확인하고 해당 앱에서 지도 API를 사용할 수 있게 설정합니다.
-2. **앱 → 플랫폼 키 → JavaScript 키**의 JavaScript SDK 도메인에 `https://hospital-reservation-app.vercel.app`, `http://127.0.0.1:5174`, `http://localhost:5174`를 등록합니다. 다른 개발 포트를 사용하면 그 origin도 별도로 등록합니다.
+2. **앱 → 플랫폼 키 → JavaScript 키**의 JavaScript SDK 도메인에 `https://medi-pick.vercel.app`, `http://127.0.0.1:5174`, `http://localhost:5174`를 등록합니다. 다른 개발 포트를 사용하면 그 origin도 별도로 등록합니다.
 3. 해당 JavaScript 키를 Vercel **Production**의 `VITE_KAKAO_MAP_JS_KEY`에 입력합니다. 이는 브라우저에 공개되는 지도 전용 설정이며 `KAKAO_CLIENT_ID`의 REST API 키나 Client Secret으로 대체하지 않습니다.
 4. 환경변수를 저장한 뒤 frontend를 다시 빌드·배포하고 실제 병원 상세에서 지도 마커와 길찾기 목적지를 확인합니다. 미등록 Preview 도메인에서는 지도가 표시되지 않을 수 있습니다.
 
@@ -97,9 +97,9 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 
 로컬 callback을 유지하면서 아래 운영 callback을 추가합니다.
 
-- Google 승인된 리디렉션 URI: `https://hospital-reservation-app.vercel.app/login/oauth2/code/google`
-- Kakao Redirect URI: `https://hospital-reservation-app.vercel.app/login/oauth2/code/kakao`
-- 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://hospital-reservation-app.vercel.app`을 사용합니다.
+- Google 승인된 리디렉션 URI: `https://medi-pick.vercel.app/login/oauth2/code/google`
+- Kakao Redirect URI: `https://medi-pick.vercel.app/login/oauth2/code/kakao`
+- 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://medi-pick.vercel.app`을 사용합니다.
 
 기존 동의 범위는 유지합니다. Google은 `openid`, Kakao는 추가 개인정보 scope 없이 계정 식별번호만 사용하고 이름·이메일·전화번호는 앱의 추가 입력 화면에서 받습니다. 앱 비즈니스 전환이나 이메일·SMS 인증은 이번 구성에 포함되지 않습니다.
 

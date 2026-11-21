@@ -23,7 +23,7 @@ public class MetaController {
         this.mongo = mongo; this.model = model; this.openaiKey = openaiKey; this.hospitalKey = hospitalKey; this.detailKey = detailKey;
     }
     @GetMapping("/api/meta") public Map<String, Object> meta() {
-        return Map.of("serviceName", "온유 · 병원예약도우미", "model", model, "virtualReservation", true,
+        return Map.of("serviceName", "메디픽", "model", model, "virtualReservation", true,
             "departments", List.of(dept("01", "내과"), dept("13", "이비인후과"), dept("05", "정형외과"), dept("14", "피부과"), dept("11", "소아청소년과"), dept("23", "가정의학과"), dept("12", "안과"), dept("10", "산부인과")),
             "integrations", Map.of("openai", !openaiKey.isBlank(), "hira", !hospitalKey.isBlank() && !detailKey.isBlank()));
     }

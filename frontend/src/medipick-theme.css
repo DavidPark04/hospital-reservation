@@ -1,0 +1,91 @@
+:root {
+  --medipick-header-height: 70px;
+  --accent: #365f96;
+  --accent-strong: #294b77;
+  --selection: #edf2f8;
+  --teal: var(--accent);
+  --teal-dark: var(--accent-strong);
+  --ink: #252c35;
+  --muted: #54606c;
+  --line: #dce0e5;
+  --pale: #f5f6f8;
+  --shadow: 0 8px 32px #2029360b;
+  color: var(--ink);
+  background: #ffffff;
+}
+#main-content:focus { outline: 0; }
+.site-header { height: var(--medipick-header-height); background: #ffffff; border-color: var(--line); z-index: 15; }
+.site-header.home-header { position: fixed; inset: 0 0 auto; transform: translateY(var(--medipick-header-offset, 0%)); }
+.header-inner { max-width: 1240px; }
+.brand, .brand:hover { color: var(--ink); font-size: 1.23rem; letter-spacing: -.065em; gap: 7px; }
+.brand-mark { width: 30px; height: 30px; background: transparent; color: var(--accent); transform: rotate(-9deg); }
+.brand-mark svg { width: 30px; height: 30px; }
+.nav > a { color: #505a65; }
+.nav > a.active, .nav > a:hover { color: var(--accent-strong); }
+.nav > a.active::after { height: 2px; }
+.button, .text-button, .site-header .user-name { letter-spacing: -.027em; }
+.button { border-radius: 12px; }
+.button.dark, .button.primary { color: #fff; background: var(--accent); box-shadow: none; }
+.button.dark { background: #38414c; }
+.button.dark:hover { background: var(--ink); }
+.button.primary:hover { background: var(--accent-strong); }
+.button.secondary, .user-name { background: #f4f5f7; color: var(--ink); border-color: #d8dfe7; }
+.button.outline { border-color: #c5cdd8; color: var(--accent-strong); }
+.button.outline:hover, .icon-button:hover { background: #f1f3f5; }
+:is(a, button, input, textarea, select):focus-visible { outline-color: #365f96; }
+input:focus, select:focus, textarea:focus { border-color: #607fa6; }
+.page-wrap, .featured-hospitals { width: min(1180px,calc(100% - 64px)); margin-inline: auto; }
+.page-heading h1, .booking-heading h1 { font-size: clamp(1.85rem,3.3vw,3.25rem); line-height: 1.16; letter-spacing: -.06em; }
+.page-heading p { font-size: 1rem; color: var(--muted); }
+.panel, .hospital-card, .dialog { border-radius: 21px; border-color: var(--line); }
+.panel, .hospital-card { background: #fff; box-shadow: var(--shadow); }
+.search-filters { padding: clamp(18px,2.5vw,30px); }
+.field :is(input, select), .chat-compose textarea { background-color: #ffffff; border-color: #d6dce2; border-radius: 10px; }
+.hospital-symbol, .assistant-icon, .empty-icon, .notice-icon, .account-avatar { background: var(--selection); color: var(--accent); }
+.hospital-card .icon-text, .hospital-card .icon-text svg { color: #565f6b; }
+.hospital-card h3 { overflow-wrap: anywhere; }
+.source-badge.cache, .source-badge.live, .hospital-care-tags span, .count-pill, .booking-mode { color: #4b5866; background: #f3f4f6; }
+.hospital-card-bottom { flex-wrap: wrap; gap: 8px; }
+.hospital-card-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.featured-hospitals { padding-block: clamp(30px,6vw,76px); }
+.featured-hospitals .section-heading { align-items: baseline; flex-wrap: wrap; gap: 12px; }
+.featured-hospitals h2 { font-size: clamp(1.5rem,2.6vw,2.2rem); letter-spacing: -.055em; }
+.featured-hospitals .section-heading p { color: var(--muted); }
+.chat-page .chat-panel { border-color: #d9dee5; }
+.chat-panel-heading { background: #f7f8fa; border-color: var(--line); }
+.chat-panel .model-label, .chat-results-context, .recommendation-reason, .chat-tip, .recommendation-empty { background: #f4f6f8; color: var(--accent-strong); border-color: #dfe3e8; }
+.messages { background: #ffffff; scrollbar-color: #ced4dc transparent; }
+.message-bubble { border-radius: 6px 19px 19px 19px; background: #f1f3f6; color: #333d49; font-size: .96rem; }
+.message-bubble strong { color: var(--accent-strong); }
+.message.user .message-bubble { border-radius: 19px 6px 19px 19px; background: #414d5d; color: white; }
+.assistant .message-avatar, .recommendation-art, .recommendation-art svg+svg { color: var(--accent); background: var(--selection); }
+.chat-choice { background: #ffffff; border-color: #c8d1db; color: var(--accent-strong); }
+.chat-choice:hover { background: var(--selection); border-color: #8295ab; }
+.notice.info { color: #354558; background: #f1f3f5; border-color: #d9dfe5; }
+.booking-heading { margin-bottom: 18px; }
+.doctor-card { background: #ffffff; border-color: #dce0e4; border-radius: 16px; overflow: hidden; padding-top: 12px; }
+.doctor-card.selected, .slot-button.selected, .date-shortcuts button.selected { background: var(--selection); border-color: #6581a7; color: var(--accent-strong); }
+.doctor-card.selected { box-shadow: 0 0 0 1px #6581a7; }
+.slot-button.selected span { color: var(--accent-strong); }
+.doctor-portrait { display: block; width: min(100%,155px); height: 88px; overflow: hidden; margin-bottom: 8px; }
+.doctor-portrait canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.booking-summary { overflow: hidden; }
+.booking-date-stub { display: flex; align-items: baseline; gap: 12px; padding: 3px 0 16px; margin-bottom: 16px; color: var(--accent); border-bottom: 1px dashed #c5cdd8; }
+.booking-date-stub span { font-size: .88rem; color: #54606c; }
+.booking-date-stub b { font-size: 2.9rem; line-height: 1; letter-spacing: -.07em; }
+.dialog { background: #ffffff; box-shadow: 0 24px 80px #20293630; }
+.site-footer { background: #f6f7f9; border-color: var(--line); }
+.footer-inner strong, .footer-inner p, .footer-note { color: #505b69; }
+.footer-inner strong { color: var(--accent-strong); font-size: 1.05rem; }
+@media (max-width:1000px) {
+  .site-header .nav { background: #ffffff; }
+  .site-header .nav>a.active { background: var(--selection); }
+}
+@media (max-width:720px) {
+  :root { --medipick-header-height: 58px; }
+  .header-inner { padding-inline: 18px; }
+  .page-wrap, .featured-hospitals { width: calc(100% - 32px); }
+  .page-heading p { font-size: .92rem; }
+  .panel, .hospital-card { border-radius: 16px; }
+  .footer-inner p { font-size: .76rem; }
+}
