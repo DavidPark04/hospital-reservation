@@ -7,9 +7,9 @@
   outline-offset: 3px;
 }
 .film-scroll {
-  --travel: max(760px, 128svh);
+  --travel: max(1140px, 192svh);
   --stage-height: 100dvh;
-  --opening-travel: clamp(300px,60svh,690px);
+  --opening-travel: clamp(450px,90svh,1035px);
   --poster-side: clamp(16px,2.1vw,38px);
   --poster-gap: clamp(7px,1.2svh,14px);
   --poster-foot: clamp(14px,2.6svh,29px);
@@ -132,7 +132,7 @@
   .film-controls { bottom: 5px; }
 }
 @media (min-width: 530px) and (max-height: 480px) and (orientation: landscape) {
-  .film-scroll { --opening-travel: 235px; --poster-gap: 3px; --poster-foot: 9px; }
+  .film-scroll { --opening-travel: 352.5px; --poster-gap: 3px; --poster-foot: 9px; }
   .film-word-frame, .film-word-frame[data-pane] { top: 18%; left: 4%; width: 27%; }
   .film-kicker { margin-bottom: 6px; font-size: 11px; }
   .film-word-frame h2 { font-size: clamp(24px,3.5vw,34px); }
@@ -149,7 +149,7 @@
 }
 /* Give touch momentum more travel, including phones held in landscape. */
 @media (max-width: 760px), (hover: none) and (pointer: coarse) {
-  .film-scroll { --travel: max(1000px,170svh); --opening-travel: clamp(360px,80svh,700px); }
+  .film-scroll { --travel: max(1100px,187svh); --opening-travel: clamp(396px,88svh,770px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .film-camera, .film-word-frame, .film-intro { transition: none; }
