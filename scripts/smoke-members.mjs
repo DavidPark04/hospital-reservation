@@ -6,7 +6,7 @@ import { MongoClient } from 'mongodb';
 // Supply SMOKE_ADMIN_PASSWORD explicitly; never load or print credential files.
 const base = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:18081';
 const uri = process.env.SMOKE_MONGODB_URI || 'mongodb://127.0.0.1:27118/?replicaSet=hospital-rs';
-const databaseName = process.env.SMOKE_DATABASE || 'hospital_reservation';
+const databaseName = process.env.SMOKE_DATABASE || 'MediPick';
 const adminLoginId = (process.env.SMOKE_ADMIN_LOGIN_ID || 'admin').trim().toLowerCase();
 const adminPassword = process.env.SMOKE_ADMIN_PASSWORD;
 const users = [];
