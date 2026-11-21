@@ -10,7 +10,7 @@ GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형
 | --- | --- |
 | 소유 scope / 프로젝트 | `0381kdh-8885` / `medipick` |
 | 소스 저장소 | `DavidPark04/hospital-reservation` |
-| 운영 브랜치·배포 방식 | `main`, GitHub Actions에서 Vercel CLI 소스 배포 |
+| 운영 브랜치·배포 방식 | `main`에서 검증한 커밋을 `develop`에 동기화하고 GitHub Actions에서 Vercel CLI로 배포 |
 | Root Directory | 기존 `frontend` 대신 저장소 루트: 입력란 비우기 |
 | 프로젝트 Build / Install / Output | 기존 정적 사이트 override를 해제하고 저장소 설정 사용 |
 | 배포 구성 | 저장소 루트 [vercel.json](../vercel.json)의 `services` |
@@ -34,11 +34,17 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 배포 CLI는 저장소 루트의 소스를 업로드하고 Vercel이 두 서비스를 빌드하므로 배포 작업에 DB·OAuth·OpenAI 키를 전달하지 않습니다. 별도의 병원 기본 목록 동기화에는 Actions의 `MONGODB_URI`, `HIRA_HOSPITAL_KEY`가 필요합니다. 나머지 서버 비밀값은 아래 Vercel Production 환경변수에서 관리합니다. 로컬 `.runtime`, `.env`, 의존성·빌드 결과는 [.vercelignore](../.vercelignore)로 업로드에서 제외합니다.
 
-[Vercel production](../.github/workflows/vercel-production.yml)은 `main` 푸시의 `Application checks` 성공 후 **검사를 통과한 동일 SHA**를 배포합니다. PR·`develop`·fork 실행은 배포하지 않으며, 배포 직전에 최신 `main`과 SHA를 비교해 과거 검사 재실행으로 운영 버전이 되돌아가지 않게 합니다. 동시 배포는 한 번에 하나씩 진행합니다.
+기능 개발과 긴급 수정은 최신 `main`에서 작업 브랜치를 만든 뒤 `main`을 대상으로 PR 한 개를 제출합니다. PR 검사를 통과하면 **Squash and merge**로 병합합니다. GitHub가 부여한 실제 PR 번호와 병합 커밋 SHA로 변경 내용을 추적합니다.
+
+`main` 푸시의 앱 검사 또는 저장소 검사가 끝나면 `Vercel production`이 시작됩니다. **동일한 `main` 푸시 SHA**에서 두 검사의 최신 실행이 모두 성공했는지 확인합니다. 다른 검사가 진행 중이면 변경 없이 종료하고, 그 검사의 완료 이벤트에서 다시 확인합니다. 이미 같은 SHA를 성공적으로 배포했다면 자동 중복 배포는 건너뛰며, 수동 재배포는 허용합니다. [Application checks](../.github/workflows/application-checks.yml) · [Repository checks](../.github/workflows/repository-checks.yml)
+
+최신 `main`이 여전히 그 커밋이면 `develop`을 해당 SHA로 fast-forward하고 같은 워크플로에서 Vercel에 배포합니다. `GITHUB_TOKEN`으로 `develop`을 갱신하면 새 `push` 워크플로가 시작되지 않으므로 배포까지 한 실행에서 처리합니다. [Vercel production](../.github/workflows/vercel-production.yml)
+
+`develop`은 검증된 `main`을 따라갑니다. `develop`에 `main`으로 병합되지 않은 커밋이 있어 fast-forward가 불가능하면 동기화와 배포를 중단합니다. 이때 `git fetch origin` 후 `git log --left-right origin/main...origin/develop`으로 양쪽 고유 커밋을 확인하고 저장소 소유자와 이력을 정리합니다. 워크플로는 강제 푸시를 사용하지 않습니다.
 
 루트 `vercel.json`의 `git.deploymentEnabled=false`는 기존 팀원 프로젝트를 포함한 Vercel 기본 Git 자동 배포를 중지합니다. 기존 배포 사이트는 삭제하지 않으며, 새 운영 배포는 위 Actions의 CLI 명령으로만 실행합니다. 이 설정은 CLI 배포를 막지 않습니다. [Vercel Git 설정](https://vercel.com/docs/project-configuration/git-configuration#turning-off-all-automatic-deployments)
 
-환경변수만 변경한 뒤에는 Actions → Vercel production → Run workflow에서 `main`을 선택합니다. 수동 실행도 그 커밋의 앱 검사 성공을 요구합니다. 워크플로 파일이 `main`에 병합되고 위 secrets가 설정되어야 자동 배포가 시작됩니다.
+환경변수만 변경한 뒤에는 Actions → Vercel production → Run workflow에서 `main`을 선택합니다. 수동 재배포에도 현재 `main`의 정확한 SHA로 발생한 `main` 푸시에서 `Repository checks`와 `Application checks`가 모두 성공한 기록이 필요합니다. 워크플로 파일과 배포에 필요한 GitHub Actions secrets를 먼저 설정합니다.
 
 자동 배포 토큰이 만료되면 기존 사이트는 유지되지만 새 배포 인증이 실패합니다. Vercel에서 같은 프로젝트 범위의 토큰을 다시 발급해 GitHub의 `VERCEL_TOKEN`만 교체한 뒤 `main` 재배포를 실행합니다.
 
@@ -105,8 +111,8 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 
 ## 배포 순서와 검증
 
-1. 작업 PR → `develop`은 Squash, `develop` → `main`은 Merge commit으로 병합합니다. 최신 커밋의 Repository checks·Frontend build·Backend tests를 확인합니다.
-2. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. `main` 병합 후 Application checks → Vercel production 결과를 확인합니다. 설정을 나중에 마쳤다면 위 수동 재배포를 실행합니다.
+1. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. 작업 브랜치에서 `main`으로 올린 PR의 저장소·프론트·백엔드 검사가 통과하면 Squash로 병합합니다.
+2. 병합 커밋의 `main` 푸시 검사 두 개와 Vercel production 결과를 확인합니다. 배포가 끝나면 `git ls-remote origin refs/heads/main refs/heads/develop`으로 두 브랜치가 배포한 SHA를 가리키는지 확인합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
 4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 기본 검색은 적재된 MongoDB 카탈로그에서 `CACHE`로 반환하고 기본 API를 호출하지 않아야 합니다. 일일 동기화 완료 건수와 이름·지역·진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크, 샘플 병원 지도 제외도 확인합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.

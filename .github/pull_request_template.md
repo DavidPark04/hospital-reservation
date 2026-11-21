@@ -1,7 +1,7 @@
 ## 관련 작업
 
 Refs #이슈번호
-<!-- develop PR은 자동 종료되지 않습니다. 통합·검증 후 Issue를 완료 처리합니다. -->
+<!-- 이 PR로 Issue를 완료하면 Closes #이슈번호를 사용합니다. -->
 
 ## 변경 이유와 동작
 
@@ -20,4 +20,5 @@ Refs #이슈번호
 
 ## 병합 방식
 
-<!-- 작업 → develop: Squash / develop ↔ main: Merge commit / hotfix → main: Squash -->
+<!-- 작업·긴급 수정 브랜치 → main으로 Squash and merge합니다. PR을 열고 GitHub가 발급한 번호를 PR·squash 커밋 제목에 한 번만 붙입니다. -->
+<!-- main에 병합된 SHA의 push 검사 두 개가 성공하면 Vercel production이 develop을 같은 SHA로 갱신하고 운영 배포합니다. -->

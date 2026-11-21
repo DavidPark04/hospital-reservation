@@ -6,11 +6,11 @@
 
 1. Issue에 목적, 완료 기준, 영향 영역, 선행 작업을 적습니다.
 2. 담당자는 한 명으로 정하고 필요하면 상대에게 리뷰를 요청합니다. 공동 작업이면 본문에 역할을 나눕니다.
-3. 최신 `develop`에서 작업 브랜치를 만듭니다.
+3. 최신 `main`에서 작업 브랜치를 만듭니다. 긴급 수정도 같은 절차를 따릅니다.
 
 ```bash
-git switch develop
-git pull --ff-only origin develop
+git switch main
+git pull --ff-only origin main
 git switch -c feat/backend/12-create-reservation
 # 변경 파일을 확인하고 필요한 파일만 추가
 git add backend/src docs/api-contract.md
@@ -24,25 +24,24 @@ git push -u origin feat/backend/12-create-reservation
 
 | 흐름 | 방법 | 기준 |
 | --- | --- | --- |
-| 작업 브랜치 → `develop` | Squash and merge | 한 Issue 또는 작은 완료 단위 |
-| `develop` → `main` | Create a merge commit | 팀이 시연·제출 가능한 버전을 확인 |
-| `main` → `develop` | Create a merge commit | 릴리스·긴급 수정 이력을 통합 브랜치에 반영 |
-| `hotfix/영역/번호-내용` → `main` | Squash and merge | 배포·제출 버전의 긴급 오류, 필수 검사 통과 |
+| 작업·긴급 수정 브랜치 → `main` | PR 한 개를 Squash and merge | 해당 PR의 최신 검사 결과와 리뷰 대화 확인 |
+| `main` → `develop` | GitHub Actions가 fast-forward | 병합된 `main` 커밋의 push 검사 두 개 성공 |
+| 검사된 `main` → Vercel | 같은 `Vercel production` 실행에서 배포 | `develop`이 같은 커밋 SHA를 가리키는지 확인 |
 
-`main`, `develop`에는 직접 push·force push하지 않고 삭제하지 않습니다. 사람별 영구 브랜치는 만들지 않습니다. 각자 작업 브랜치를 소유하고 다른 사람 브랜치에 임의로 push하지 않습니다. 긴급 수정 후에는 `main` → `develop` PR을 반드시 만듭니다.
+작업자는 자기 작업 브랜치에 push합니다. 충돌은 그 브랜치에 최신 `main`을 병합해 해결하고 검사를 다시 실행합니다. PR 병합 후에는 GitHub의 Delete branch로 작업 브랜치를 정리할 수 있습니다.
 
-작업 브랜치는 병합 후 해당 PR의 Delete branch로 정리합니다. `develop`은 릴리스 후에도 유지합니다. 충돌은 작업 브랜치에서 최신 `develop`을 merge해 해결하고, 충돌 해결 뒤 검사를 다시 실행합니다. 공용 브랜치를 rebase하지 않습니다.
+`develop`은 검사된 `main`의 사본입니다. 두 브랜치의 이력이 갈라져 fast-forward가 불가능하면 자동화가 중단됩니다. Actions 실행에서 실패 원인을 확인하고 각 브랜치에만 있는 커밋을 검토합니다.
 
 ## 3. PR과 리뷰
 
-- 기본 대상은 `develop`입니다. `main` 대상은 릴리스·긴급 수정만 허용합니다.
+- 기능·문서·긴급 수정 모두 PR의 대상 브랜치를 `main`으로 선택합니다.
 - 제목에 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `build:`, `style:`, `revert:` 중 하나를 사용합니다.
 - 변경 이유, 변경 동작, 검증 명령·결과, 관련 Issue를 작성합니다. 미실행 검사를 통과했다고 쓰지 않습니다.
-- 필수 승인 수는 0명입니다. CI 성공·리뷰 대화 해결 후 작성자가 상대 승인 없이 병합할 수 있습니다. 새 변경을 push하면 해당 커밋의 검사를 확인합니다.
-- 상대 리뷰는 선택입니다. 검토를 요청받으면 가능하면 하루 안에 의견을 남기되, 미응답을 승인으로 기록하지 않습니다. 리뷰 응답을 기다리는 것은 기본 병합 조건이 아닙니다.
+- 팀은 상대 리뷰를 선택 사항으로 운영합니다. 작성자는 PR의 `Repository checks`와 `Application checks` 결과를 확인하고 리뷰 대화를 해결한 뒤 병합합니다. 새 변경을 push하면 새 커밋의 검사를 확인합니다.
+- 검토를 요청받으면 가능하면 하루 안에 의견을 남깁니다.
 - API 요청·응답, 인증, 컬렉션·인덱스, 공통 설정을 바꾸면 관련 문서도 같은 PR에서 수정합니다.
 
-기본 브랜치는 `main`입니다. 작업 PR에는 `Refs #번호`를 적고, `develop` 통합·검증 후 Issue를 수동 완료 처리합니다. `Closes #번호` 자동 종료는 기본 브랜치를 대상으로 하는 PR에서만 동작하므로, `develop` PR에서 자동 종료를 기대하지 않습니다. [GitHub 공식 설명](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
+관련 Issue는 PR 본문에서 `Refs #번호`로 연결합니다. 이 PR의 병합으로 Issue까지 완료되면 `Closes #번호`를 쓸 수 있습니다. 기본 브랜치 `main`에 병합될 때 해당 Issue가 닫힙니다. [GitHub 공식 설명](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
 
 ## 4. 커밋 메시지
 
@@ -59,6 +58,8 @@ git push -u origin feat/backend/12-create-reservation
 | revert | 변경 되돌리기 | `revert: 병원 검색 캐시 변경 되돌리기` |
 
 한 커밋은 한 목적을 갖습니다. `수정`, `완료`, `final_final`은 사용하지 않습니다. 작업 브랜치 접두사 전체 규칙은 [브랜치 안내](docs/branch-strategy.md)에 있습니다.
+
+PR을 열면 GitHub가 고정 번호를 발급합니다. PR 제목과 최종 squash 커밋 제목 끝에 실제 번호를 `(#번호)`로 한 번만 적습니다. 동기화 후 두 브랜치가 같은 커밋을 가리키므로 양쪽의 링크가 같은 PR로 연결됩니다.
 
 ## 5. 코드·데이터 규칙
 
