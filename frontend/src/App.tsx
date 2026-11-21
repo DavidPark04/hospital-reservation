@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock3, Heart, HeartPulse, Hospital as HospitalIcon, Info, LoaderCircle, LogOut, MapPin, Menu, MessageCircle, Phone, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Stethoscope, UserRound, X, AlertCircle, RefreshCw, CalendarCheck2, ExternalLink, Building2 } from 'lucide-react';
+import { CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock3, Hospital as HospitalIcon, Info, LoaderCircle, LogOut, MapPin, Menu, Phone, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Stethoscope, UserRound, X, AlertCircle, RefreshCw, CalendarCheck2, ExternalLink, Building2 } from 'lucide-react';
 import { api, ApiError, clearToken, dateLabel, DEPARTMENTS, departmentName, fetchedLabel, getToken, normalizePhone, queryString, setToken, timeLabel, today, validPhone } from './api';
-import ScrollStory from './ScrollStory';
+import MedipickHome from './medipick/MedipickHome';
+import {DoctorPortrait} from './medipick/FilmVisual';
+import type {BookingDraft, HomeRecommendation} from './medipick/flow';
 import HospitalLocation from './HospitalLocation';
 import PhoneInput from './PhoneInput';
 import PasswordChange from './PasswordChange';
@@ -23,14 +25,14 @@ function currentRoute(){
   return '/';
 }
 function go(path:string){
+  if(currentRoute()===path&&window.location.pathname==='/'&&!window.location.search){window.scrollTo({top:0,behavior:'instant'});return;}
   if(window.location.pathname!=='/'||window.location.search){
     window.history.replaceState(null,'',`/#${path}`);
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }else window.location.hash=path;
-  window.scrollTo({top:0,behavior:'smooth'});
 }
 function useRoute(){const [route,setRoute]=useState(currentRoute);useEffect(()=>{const changed=()=>setRoute(currentRoute());window.addEventListener('hashchange',changed);return()=>window.removeEventListener('hashchange',changed);},[]);return route;}
-type BookingSelection={hospital:Hospital;department:string;reservation?:Reservation};
+type BookingSelection={hospital:Hospital;department:string;reservation?:Reservation;draft?:BookingDraft};
 const SOCIAL_RETURN='hospital-social-return';
 const AUTH_RETURN_ROUTES=['/booking','/reservations','/admin','/admin/members','/mypage'];
 function readSocialReturn():{route:string;booking:BookingSelection|null}{
@@ -44,6 +46,10 @@ function readSocialReturn():{route:string;booking:BookingSelection|null}{
 }
 export default function App(){
   const route = useRoute();
+  const isHome = route.split('?')[0]==='/';
+  const homeScene = isHome ? new URLSearchParams(route.split('?')[1]).get('scene') || undefined : undefined;
+  const [viewedRecommendation,setViewedRecommendation]=useState<(HomeRecommendation & {chatRoute:string})>();
+  const [headerHidden,setHeaderHidden]=useState(false);
   const queryClient = useQueryClient();
   const [user,setUser]=useState<User|null>(null);
   const [authReady,setAuthReady]=useState(!getToken()||currentRoute()==='/auth/social/callback');
@@ -55,6 +61,26 @@ export default function App(){
   const [toast,setToast]=useState('');
   const [withdrawalReturn,setWithdrawalReturn]=useState(()=>window.location.pathname==='/mypage'?new URLSearchParams(window.location.search).get('withdrawal')||'':'');
   const profilePending=needsSocialProfile(user);
+  const homeVisible=isHome&&authReady&&!profilePending;
+  const chatRoute=route.startsWith('/chat')?route:(homeScene&&viewedRecommendation?viewedRecommendation.chatRoute:undefined);
+  useLayoutEffect(()=>{
+    if(homeScene)return;
+    const top=()=>window.scrollTo({top:0,behavior:'instant'});
+    top();
+    // Hash navigation and the outgoing scroll animation settle after React commits the new page.
+    const frame=requestAnimationFrame(top);
+    return ()=>cancelAnimationFrame(frame);
+  },[route,homeScene]);
+  useEffect(()=>{
+    const update=(event:Event)=>{
+      const hidden=(event as CustomEvent<boolean>).detail;
+      setHeaderHidden(hidden);
+      if(hidden)setMobileMenu(false);
+    };
+    window.addEventListener('medipick-header-visibility',update);
+    return ()=>window.removeEventListener('medipick-header-visibility',update);
+  },[]);
+  useEffect(()=>{if(!homeVisible)setHeaderHidden(false);},[homeVisible]);
   const meta = useQuery({queryKey:['meta'],queryFn:()=>api<Meta>('/meta')});
   useEffect(()=>{
     if(!getToken()||currentRoute()==='/auth/social/callback')return;
@@ -71,7 +97,7 @@ export default function App(){
     }).finally(()=>{if(active)setAuthReady(true);});
     return()=>{active=false;};
   },[]);
-  useEffect(()=>{const expired=()=>{setUser(null);setWithdrawalReturn('');setAuthMode('login');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});};window.addEventListener('auth-expired',expired);return()=>window.removeEventListener('auth-expired',expired);},[queryClient]);
+  useEffect(()=>{const expired=()=>{setUser(null);setViewedRecommendation(undefined);setWithdrawalReturn('');setAuthMode('login');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});};window.addEventListener('auth-expired',expired);return()=>window.removeEventListener('auth-expired',expired);},[queryClient]);
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),5000);return()=>clearTimeout(timer);},[toast]);
   useEffect(()=>setMobileMenu(false),[route]);
   useEffect(()=>{
@@ -84,7 +110,14 @@ export default function App(){
     if(authReady&&profilePending){setAuthMode(null);if(route!=='/complete-profile')go('/complete-profile');}
     else if(authReady&&user&&route==='/complete-profile'&&currentRoute()==='/complete-profile')go('/mypage');
   },[authReady,profilePending,route,user]);
-  function startBooking(hospital:Hospital, department?:string, reservation?:Reservation){setBooking({hospital,department:department || hospital.departmentCode || hospital.departments?.[0]?.code || '01',reservation});go('/booking');}
+  function startBooking(hospital:Hospital, department?:string, reservation?:Reservation, draft?:BookingDraft){
+    setBooking({hospital,department:department || hospital.departmentCode || hospital.departments?.[0]?.code || '01',reservation,draft});
+    go('/booking');
+  }
+  function showRecommendation(hospital:Hospital,department?:string){
+    setViewedRecommendation({hospital,department,chatRoute:route});
+    go('/?scene=reasons');
+  }
   function beforeSocialLogin(){
     const previous=readSocialReturn();
     const destination=AUTH_RETURN_ROUTES.includes(route)?route:(route==='/login'||route==='/auth/social/callback'?previous.route:'/mypage');
@@ -92,7 +125,7 @@ export default function App(){
     setSocialError('');
   }
   function completeLogin(result:AuthResult,destination?:string){
-    setToken(result.token);setUser(result.user);setAuthReady(true);setAuthMode(null);setSocialError('');setPreferredLogin(undefined);setWithdrawalReturn('');
+    setToken(result.token);setUser(result.user);setViewedRecommendation(undefined);setAuthReady(true);setAuthMode(null);setSocialError('');setPreferredLogin(undefined);setWithdrawalReturn('');
     queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});
     if(needsSocialProfile(result.user)){setToast('');go('/complete-profile');return;}
     let next=destination||(AUTH_RETURN_ROUTES.includes(route)?route:'/mypage');
@@ -111,11 +144,11 @@ export default function App(){
     setToken(result.token);setUser(result.user);
   }
   function completeWithdrawal(result:DeleteMemberResult){
-    clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);
+    clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);setViewedRecommendation(undefined);
     setAuthMode(null);setPreferredLogin(undefined);setSocialError('');setWithdrawalReturn('');
     queryClient.clear();go('/');setToast(result.message);
   }
-  async function logout(){try{await api('/auth/logout',{method:'POST'});}catch{/* Local session still ends. */}clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);setWithdrawalReturn('');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});go('/');setToast(profilePending?'가입을 중단했어요. 다시 진행하려면 소셜 로그인을 시작해 주세요.':'로그아웃했어요.');}
+  async function logout(){try{await api('/auth/logout',{method:'POST'});}catch{/* Local session still ends. */}clearToken();sessionStorage.removeItem(SOCIAL_RETURN);setUser(null);setBooking(null);setViewedRecommendation(undefined);setWithdrawalReturn('');queryClient.removeQueries({queryKey:['reservations']});queryClient.removeQueries({queryKey:['admin-members']});go('/');setToast(profilePending?'가입을 중단했어요. 다시 진행하려면 소셜 로그인을 시작해 주세요.':'로그아웃했어요.');}
   async function existingAccountLogin(provider:AuthProvider){
     const saved=readSocialReturn();
     await logout();
@@ -123,23 +156,23 @@ export default function App(){
     setPreferredLogin(provider);setSocialError('');setToast('');go('/login');setAuthMode('login');
   }
   const active = route.startsWith('/chat')?'chat':route.startsWith('/reservations')?'reservations':route==='/mypage'?'mypage':route==='/admin/members'?'members':route==='/admin'?'admin':route.startsWith('/search')?'search':'home';
-  return <><a className="skip-link" href="#main-content">본문으로 이동</a><header className="site-header"><div className="header-inner">
-    <a href="#/" className="brand" aria-label="병원예약도우미 홈"><span className="brand-mark"><Plus size={26} strokeWidth={3.3}/></span><span>병원예약<span className="brand-light">도우미</span><small>YOUR CARE, MADE SIMPLE</small></span></a>
+  return <><a className="skip-link" href="#main-content" onClick={e=>{e.preventDefault();document.getElementById('main-content')?.focus();}}>본문으로 이동</a><header className={homeVisible?'site-header home-header':'site-header'} inert={homeVisible&&headerHidden} aria-hidden={homeVisible&&headerHidden||undefined}><div className="header-inner">
+    <a href="#/" className="brand" aria-label="메디픽 홈"><span className="brand-mark" aria-hidden="true"><Plus size={26} strokeWidth={4}/></span><span>메디픽</span></a>
     <nav className={mobileMenu?'nav open':'nav'} aria-label="주 메뉴">{profilePending?<a href="#/complete-profile" className="active">가입 정보 입력</a>:<>
-      <a href="#/search" className={active==='search'?'active':''}>병원 찾기</a><a href="#/chat" className={active==='chat'?'active':''}>AI 상담 <span className="nav-ai">AI</span></a><a href="#/reservations" className={active==='reservations'?'active':''}>내 예약</a>
+      <a href="#/search" className={active==='search'?'active':''}>병원 찾기</a><a href="#/chat" className={active==='chat'?'active':''}>AI 상담</a><a href="#/reservations" className={active==='reservations'?'active':''}>내 예약</a>
       {user&&<a href="#/mypage" className={active==='mypage'?'active':''}>마이페이지</a>}{user?.role==='ADMIN'&&<><a href="#/admin" className={active==='admin'?'active':''}>일정 관리</a><a href="#/admin/members" className={active==='members'?'active':''}>회원목록</a></>}
     </>}</nav>
-    <div className="header-actions"><span className="prototype-pill">모의 예약 서비스</span>
+    <div className="header-actions">
       {profilePending?<><span className="user-name signup-header-status">가입 정보 입력 중</span><button className="icon-button logout" onClick={logout} aria-label="가입 인증 종료"><LogOut size={19}/></button></>:user?<><a href="#/mypage" className="user-name"><UserRound size={16}/>{user.name}님</a><button className="icon-button logout" onClick={logout} aria-label="로그아웃"><LogOut size={19}/></button></>:<button className="button small dark" onClick={()=>setAuthMode('login')}>로그인</button>}
       <button className="icon-button menu-button" aria-label={mobileMenu?'메뉴 닫기':'메뉴 열기'} aria-expanded={mobileMenu} onClick={()=>setMobileMenu(!mobileMenu)}>{mobileMenu?<X/>:<Menu/>}</button>
     </div>
   </div></header>
-    <main id="main-content">
+    <main id="main-content" tabIndex={-1}>
       {!authReady&&route!=='/auth/social/callback'?<div className="page-wrap"><Loading text="로그인 정보를 확인하고 있어요"/></div>:profilePending&&user?<SocialProfile key={user.id} user={user} onSuccess={completeSocialLogin} onCancel={logout} onExistingLogin={existingAccountLogin}/>:<>
-      {route==='/'&&<Home onBooking={startBooking} />}
+      {isHome&&<><MedipickHome recommendation={homeScene?viewedRecommendation:undefined} initialScene={homeScene} onBooking={(h,d,draft)=>startBooking(h,d,undefined,draft)} onAccount={()=>go('/mypage')}/><FeaturedHospitals onBooking={startBooking}/></>}
       {route.startsWith('/search')&&<SearchPage key={route} route={route} onBooking={startBooking}/>}
-      {route.startsWith('/chat')&&<ChatPage key={route} route={route} onBooking={startBooking}/>}
-      {route==='/booking'&&(booking?<BookingPage selection={booking} user={user} login={()=>setAuthMode('login')} onDone={()=>{setToast(booking.reservation?'예약 일정을 변경했어요.':'모의 예약이 완료되었어요.');queryClient.invalidateQueries({queryKey:['reservations']});go('/reservations');}}/>:<EmptyPage icon={<CalendarDays/>} title="예약할 병원을 먼저 선택해 주세요" body="병원을 검색하거나 AI 상담에서 안내받은 병원의 예약을 시작할 수 있어요." action="병원 찾기" onAction={()=>go('/search')}/>)}
+      {chatRoute&&<div hidden={!route.startsWith('/chat')}><ChatPage key={chatRoute} route={chatRoute} onBooking={startBooking} onExplore={showRecommendation}/></div>}
+      {route==='/booking'&&(booking?<BookingPage selection={booking} onDraft={(department,draft)=>setBooking(previous=>previous && {...previous,department,draft})} user={user} login={()=>setAuthMode('login')} onDone={()=>{setToast(booking.reservation?'예약 일정을 변경했어요.':'모의 예약이 완료되었어요.');queryClient.invalidateQueries({queryKey:['reservations']});go('/reservations');}}/>:<EmptyPage icon={<CalendarDays/>} title="예약할 병원을 먼저 선택해 주세요" body="병원을 검색하거나 AI 상담에서 안내받은 병원의 예약을 시작할 수 있어요." action="병원 찾기" onAction={()=>go('/search')}/>)}
       {route==='/reservations'&&<ReservationsPage user={user} ready={authReady} login={()=>setAuthMode('login')} onBooking={startBooking} notify={setToast}/>}
       {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')} withdrawalReturn={withdrawalReturn} onWithdrawalReturnHandled={()=>setWithdrawalReturn('')} onWithdrawn={completeWithdrawal} onPasswordChanged={completePasswordChange}/>}
       {route==='/admin'&&<AdminPage user={user} login={()=>setAuthMode('login')} notify={setToast}/>}
@@ -147,10 +180,10 @@ export default function App(){
       {route==='/auth/social/callback'&&<SocialLoginCallback onSuccess={completeSocialLogin} onRetry={()=>{go('/login');setAuthMode('login');}}/>}
       {route==='/login'&&<EmptyPage icon={<UserRound/>} title="로그인하고 시작하세요" body="아이디 또는 소셜 계정으로 예약 일정을 관리할 수 있어요." action="로그인하기" onAction={()=>setAuthMode('login')}/>}
       {route==='/complete-profile'&&!user&&<EmptyPage icon={<UserRound/>} title="로그인 후 가입을 이어서 진행해 주세요" body="소셜 계정으로 인증한 뒤 이름, 이메일, 전화번호를 입력할 수 있어요." action="로그인하기" onAction={()=>setAuthMode('login')}/>}
-      {!['/','/booking','/reservations','/mypage','/admin','/admin/members','/login','/auth/social/callback','/complete-profile'].includes(route)&&!route.startsWith('/search')&&!route.startsWith('/chat')&&<EmptyPage icon={<Search/>} title="페이지를 찾을 수 없어요" body="홈에서 다시 시작해 주세요." action="홈으로" onAction={()=>go('/')}/>}
+      {!isHome&&!['/booking','/reservations','/mypage','/admin','/admin/members','/login','/auth/social/callback','/complete-profile'].includes(route)&&!route.startsWith('/search')&&!route.startsWith('/chat')&&<EmptyPage icon={<Search/>} title="페이지를 찾을 수 없어요" body="홈에서 다시 시작해 주세요." action="홈으로" onAction={()=>go('/')}/>}
       </>}
     </main>
-    <footer className="site-footer"><div className="footer-inner"><div><strong><Plus size={19}/> 병원예약도우미</strong><p>나에게 맞는 진료를 찾는 가장 편안한 시작.</p></div><div className="footer-note"><span>백엔드 실무 프로젝트 · 김도형 · 박다윗</span><p>의료진·일정은 가상 데이터이며 실제 병원 예약으로 연결되지 않습니다.</p></div></div></footer>
+    <footer className="site-footer"><div className="footer-inner"><div><strong><Plus size={19}/> 메디픽</strong><p>내 증상과 진료 목적에 맞는 병원 찾기</p></div><div className="footer-note"><span>백엔드 실무 프로젝트 · 김도형 · 박다윗</span><p>의료진과 일정은 모의 예약을 위한 가상 데이터입니다.</p></div></div></footer>
     {toast&&<div className="toast" role="status"><CheckCircle2 size={19}/>{toast}<button className="icon-button" onClick={()=>setToast('')} aria-label="알림 닫기"><X size={16}/></button></div>}
     {authMode&&!profilePending&&<AuthDialog mode={authMode} setMode={setAuthMode} close={()=>{setAuthMode(null);setPreferredLogin(undefined);}} onSuccess={result=>completeLogin(result)} beforeSocialLogin={beforeSocialLogin} socialError={socialError} initialPreferredProvider={preferredLogin}/>}
     <div className="sr-only">AI 모델: {meta.data?.model || 'gpt-6.2-sol'}</div>
@@ -161,9 +194,8 @@ function Notice({children,tone='info'}:{children:ReactNode;tone?:'info'|'warning
 function Loading({text='불러오는 중이에요'}:{text?:string}){return <div className="loading" role="status"><LoaderCircle className="spin" size={25}/><span>{text}</span></div>;}
 function ErrorState({error,retry}:{error:unknown;retry?:()=>void}){return <div className="error-state" role="alert"><AlertCircle/><p>{error instanceof Error?error.message:'정보를 불러오지 못했어요.'}</p>{retry&&<button className="button secondary small" onClick={retry}><RefreshCw size={16}/>다시 시도</button>}</div>;}
 function EmptyPage({icon,title,body,action,onAction}:{icon:ReactNode;title:string;body:string;action:string;onAction:()=>void}){return <div className="page-wrap"><div className="empty-page"><div className="empty-icon">{icon}</div><h1>{title}</h1><p>{body}</p><button className="button primary" onClick={onAction}>{action}</button></div></div>;}
-function SectionHeading({eyebrow,title,description,children}:{eyebrow?:string;title:string;description?:string;children?:ReactNode}){return <div className="section-heading"><div>{eyebrow&&<span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2>{description&&<p>{description}</p>}</div>{children}</div>;}
 function SourceBadge({source}:{source:Hospital['source']}){return <span className={`source-badge ${source?.toLowerCase()}`}>{source==='LIVE'?'공공데이터':source==='CACHE'?'저장된 공공데이터':'시연용 샘플'}</span>;}
-function HospitalCard({hospital,onBooking,compact=false,department}:{hospital:Hospital;onBooking:(hospital:Hospital,department?:string)=>void;compact?:boolean;department?:string}){
+function HospitalCard({hospital,onBooking,onExplore,compact=false,department}:{hospital:Hospital;onExplore?:(hospital:Hospital,department?:string)=>void;onBooking:(hospital:Hospital,department?:string)=>void;compact?:boolean;department?:string}){
   const sources=safeRecommendationSources(hospital.recommendationSources);
   const distance=straightLineDistance(hospital.distanceKm);
   return <article className={`hospital-card ${compact?'compact':''}`}>
@@ -177,31 +209,40 @@ function HospitalCard({hospital,onBooking,compact=false,department}:{hospital:Ho
     {hospital.recommendationReason&&<p className="recommendation-reason"><Sparkles size={14}/>{hospital.recommendationReason}</p>}
     {sources.length>0&&<div className="recommendation-sources"><strong>추천에 참고한 자료</strong><p className="recommendation-source-note">AI가 검색 자료를 요약한 안내예요. 후기·SNS는 개인 경험이며 치료 성적을 보장하지 않아요.</p><ul>{sources.map(source=><li key={source.url}><div className="recommendation-source-link"><span className={`recommendation-source-kind ${(source.kind||'WEB').toLowerCase()}`}>{source.label}</span><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}<ExternalLink size={12}/></a></div><span>조회 · {fetchedLabel(source.checkedAt)}</span></li>)}</ul></div>}
     {hospital.notice&&<p className="hospital-notice">{hospital.notice}</p>}
-    <div className="hospital-card-bottom"><span><ShieldCheck size={14}/>{hospital.source==='SAMPLE'?'가상 병원 데이터':'심평원 제공 정보'}</span><button className="button outline small" onClick={()=>onBooking(hospital,department)}>상세·예약</button></div>
+    <div className="hospital-card-bottom"><span><ShieldCheck size={14}/>{hospital.source==='SAMPLE'?'가상 병원 데이터':'심평원 제공 정보'}</span><div className="hospital-card-actions">{onExplore&&<button className="button secondary small" onClick={()=>onExplore(hospital,department)}>추천 이유·지도 보기</button>}<button className="button outline small" onClick={()=>onBooking(hospital,department)}>상세·예약</button></div></div>
   </article>;
 }
 
-function Home({onBooking}:{onBooking:(hospital:Hospital,department?:string)=>void}){
-  const [symptom,setSymptom]=useState('');
-  const [search,setSearch]=useState('');
-  const hospitals = useQuery({queryKey:['hospitals','home'],queryFn:()=>api<HospitalResult>('/hospitals?region=수원'),staleTime:120_000});
-  function startChat(event:FormEvent){event.preventDefault();go(`/chat${symptom.trim()?`?message=${encodeURIComponent(symptom.trim())}`:''}`);}
-  return <><section className="hero"><div className="hero-inner"><div className="hero-copy"><div className="hero-kicker"><span className="mini-cross">+</span>병원 가는 길, 조금 더 쉽게</div><h1>어디가 불편하세요?<br/><span>함께 찾아볼게요.</span></h1><p className="hero-description">어떤 진료과로 가야 할지 고민될 때,<br/>평소 말하듯 알려주세요. 병원 찾기부터 예약까지 도와드려요.</p><form className="symptom-box" onSubmit={startChat}><label className="sr-only" htmlFor="home-symptom">불편한 증상</label><textarea id="home-symptom" value={symptom} onChange={e=>setSymptom(e.target.value)} placeholder="예) 어제부터 목이 붓고 열이 나요. 수원 영통 근처면 좋겠어요." maxLength={CHAT_MESSAGE_LIMIT} rows={2}/><div className="symptom-actions"><span><ShieldCheck size={16}/>상담 내용은 기본 저장하지 않아요</span><button className="button primary" type="submit"><Sparkles size={18}/>AI 상담 시작</button></div></form><div className="try-prompts"><span>이렇게 물어보세요</span>{['목이 붓고 아파요','허리가 불편해요','피부가 가려워요'].map(text=><button key={text} onClick={()=>setSymptom(text)}>{text}</button>)}</div></div><div className="hero-visual" aria-hidden="true"><div className="visual-orbit orbit-one"/><div className="visual-orbit orbit-two"/><div className="floating-label label-one"><HeartPulse size={22}/><span>나에게 맞는 진료</span></div><div className="care-card"><div className="care-card-title"><span className="care-icon"><Plus size={28} strokeWidth={3}/></span><span>당신의 건강한 하루를<br/><strong>함께 준비해요.</strong></span></div><div className="care-chat"><span className="care-avatar"><UserRound size={18}/></span><span>어떤 병원으로 가야 할까요?</span></div><div className="care-answer"><span className="answer-spark"><Sparkles size={18}/></span><div><strong>걱정은 조금 덜고,</strong><p>필요한 진료를 차근차근 찾아봐요.</p><div className="care-wave"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></div></div><div className="care-steps"><span><Check size={14}/>증상 정리</span><span><Check size={14}/>병원 찾기</span><span><CalendarCheck2 size={14}/>예약하기</span></div></div><div className="floating-label label-two"><span className="tiny-calendar"><CalendarDays size={22}/></span><div><strong>복잡한 검색은 줄이고</strong><small>내 일정에 맞는 선택</small></div></div><div className="decor-plus plus-one">+</div><div className="decor-plus plus-two">+</div></div></div></section>
-    <div className="content-wrap"><div className="service-strip"><div><ShieldCheck/><span><strong>확인 가능한 병원 정보</strong><small>공공데이터 기반 정보와 출처</small></span></div><div><MessageCircle/><span><strong>일상 언어로 편하게</strong><small>증상을 설명하면 진료과 안내</small></span></div><div><CalendarDays/><span><strong>일정 선택부터 관리까지</strong><small>예약 조회·변경·취소를 한곳에서</small></span></div></div>
-    <ScrollStory/><section className="home-search-section"><SectionHeading eyebrow="FIND YOUR CARE" title="찾는 병원이 있으신가요?" description="병원명이나 지역으로 바로 검색해 보세요."/><form className="quick-search" onSubmit={e=>{e.preventDefault();go(`/search?query=${encodeURIComponent(search)}`);}}><Search size={22}/><label htmlFor="quick-search" className="sr-only">병원명 또는 지역</label><input id="quick-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="병원명 또는 지역을 입력해 주세요"/><button className="button dark" type="submit">병원 검색</button></form><div className="department-grid">{DEPARTMENTS.map((dept,index)=><button key={dept.code} className="department-button" onClick={()=>go(`/search?department=${dept.code}`)}><span className={`department-icon dept-${index}`}>{index===0?<HeartPulse/>:index===1?<Activity/>:index===2?<Stethoscope/>:index===3?<Sparkles/>:index===4?<Heart/>:<HospitalIcon/>}</span><span>{dept.name}</span></button>)}</div></section>
-    <section className="home-hospitals"><SectionHeading title="병원 정보 살펴보기" description="수원 지역 병원을 먼저 살펴보고, 원하는 지역으로 검색해 보세요."><button className="text-button" onClick={()=>go('/search')}>전체 병원 찾기</button></SectionHeading>{hospitals.isLoading?<Loading text="병원 정보를 확인하고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}<div className="hospital-grid">{hospitals.data?.items.slice(0,3).map(h=><HospitalCard hospital={h} key={h.id} onBooking={onBooking}/>)}</div>{hospitals.data?.items.length===0&&<div className="empty-inline">조회된 병원이 없어요. 지역이나 병원명을 바꿔 검색해 주세요.</div>}</>}</section>
-    <div className="home-notice"><div className="notice-icon"><Info size={22}/></div><div><strong>이 서비스는 학습용 모의 예약 서비스예요.</strong><p>실제 병원 예약은 진행되지 않으며, AI 안내는 의사의 진단을 대신하지 않아요. 의료진과 시간표는 가상 데이터입니다.</p></div></div></div></>;
+function FeaturedHospitals({onBooking}:{onBooking:(hospital:Hospital,department?:string)=>void}){
+  const section=useRef<HTMLElement>(null);
+  const [visible,setVisible]=useState(false);
+  useEffect(()=>{
+    if(!section.current)return;
+    const observer=new IntersectionObserver(([entry])=>{
+      if(entry.isIntersecting){setVisible(true);observer.disconnect();}
+    },{rootMargin:'500px'});
+    observer.observe(section.current);
+    return ()=>observer.disconnect();
+  },[]);
+  const hospitals=useQuery({queryKey:['hospitals','home'],queryFn:()=>api<HospitalResult>('/hospitals?region=수원'),enabled:visible,staleTime:120_000});
+  return <section ref={section} className="featured-hospitals">
+    <div className="section-heading"><div><h2>수원 지역 병원</h2><p>다른 지역도 병원명이나 진료과로 찾아볼 수 있어요.</p></div><a className="text-button" href="#/search">전체 병원 찾기</a></div>
+    {!visible||hospitals.isLoading?<Loading text="병원 정보를 확인하고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>
+      {hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}
+      <div className="hospital-grid">{hospitals.data?.items.slice(0,3).map(h=><HospitalCard hospital={h} key={h.id} onBooking={onBooking}/>)}</div>
+      {hospitals.data?.items.length===0&&<p className="empty-inline">조회된 병원이 없어요. 다른 지역이나 병원명으로 찾아보세요.</p>}
+    </>}
+  </section>;
 }
-
 function SearchPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,department?:string)=>void}){
   const params = new URLSearchParams(route.split('?')[1]);
   const [query,setQuery]=useState(params.get('query')||''); const [region,setRegion]=useState(params.get('region')||''); const [department,setDepartment]=useState(params.get('department')||'');
   const [filters,setFilters]=useState({query:params.get('query')||'',region:params.get('region')||'',department:params.get('department')||''});
   const hospitals=useQuery({queryKey:['hospitals','search',filters],queryFn:()=>api<HospitalResult>(`/hospitals?${queryString(filters)}`)});
-  return <div className="page-wrap"><div className="page-heading"><span className="eyebrow">FIND A HOSPITAL</span><h1>나에게 맞는 병원 찾기</h1><p>병원명, 지역, 진료과를 선택해 원하는 병원을 찾아보세요.</p></div><form className="search-filters panel" onSubmit={e=>{e.preventDefault();setFilters({query,region,department});}}><label className="field search-query">병원명<div className="input-icon"><Search size={19}/><input placeholder="병원 이름을 입력해 주세요" value={query} onChange={e=>setQuery(e.target.value)}/></div></label><label className="field">희망 지역<div className="input-icon"><MapPin size={18}/><input placeholder="예) 수원, 영통" value={region} onChange={e=>setRegion(e.target.value)}/></div></label><label className="field">진료과<select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">전체 진료과</option>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><button className="button primary" type="submit"><Search size={18}/>검색</button></form><div className="search-results-heading"><h2>검색 결과 <span>{hospitals.data?.items.length ?? 0}</span></h2>{hospitals.data&&<SourceBadge source={hospitals.data.source}/>}</div>{hospitals.isLoading?<Loading text="조건에 맞는 병원을 찾고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}{hospitals.data?.items.length?<div className="hospital-grid">{hospitals.data.items.map(h=><HospitalCard key={h.id} hospital={h} onBooking={onBooking} department={filters.department}/>)}</div>:<div className="empty-inline"><Search size={32}/><h3>조건에 맞는 병원을 찾지 못했어요</h3><p>병원명 일부를 입력하거나 지역·진료과 조건을 줄여 보세요.</p></div>}</>}<p className="source-footnote">병원 정보는 건강보험심사평가원 제공 자료를 사용합니다. 실제 방문 전 진료 여부를 병원에 확인해 주세요.</p></div>;
+  return <div className="page-wrap"><div className="page-heading"><h1>나에게 맞는 병원 찾기</h1><p>병원명, 지역, 진료과를 선택해 원하는 병원을 찾아보세요.</p></div><form className="search-filters panel" onSubmit={e=>{e.preventDefault();setFilters({query,region,department});}}><label className="field search-query">병원명<div className="input-icon"><Search size={19}/><input placeholder="병원 이름을 입력해 주세요" value={query} onChange={e=>setQuery(e.target.value)}/></div></label><label className="field">희망 지역<div className="input-icon"><MapPin size={18}/><input placeholder="예) 수원, 영통" value={region} onChange={e=>setRegion(e.target.value)}/></div></label><label className="field">진료과<select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">전체 진료과</option>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><button className="button primary" type="submit"><Search size={18}/>검색</button></form><div className="search-results-heading"><h2>검색 결과 <span>{hospitals.data?.items.length ?? 0}</span></h2>{hospitals.data&&<SourceBadge source={hospitals.data.source}/>}</div>{hospitals.isLoading?<Loading text="조건에 맞는 병원을 찾고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}{hospitals.data?.items.length?<div className="hospital-grid">{hospitals.data.items.map(h=><HospitalCard key={h.id} hospital={h} onBooking={onBooking} department={filters.department}/>)}</div>:<div className="empty-inline"><Search size={32}/><h3>조건에 맞는 병원을 찾지 못했어요</h3><p>병원명 일부를 입력하거나 지역·진료과 조건을 줄여 보세요.</p></div>}</>}<p className="source-footnote">병원 정보는 건강보험심사평가원 제공 자료를 사용합니다. 실제 방문 전 진료 여부를 병원에 확인해 주세요.</p></div>;
 }
 
-function ChatPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,department?:string)=>void}){
+function ChatPage({route,onBooking,onExplore}:{route:string;onExplore:(hospital:Hospital,department?:string)=>void;onBooking:(hospital:Hospital,department?:string)=>void}){
   const initial = (new URLSearchParams(route.split('?')[1]).get('message')||'').slice(0,CHAT_MESSAGE_LIMIT);
   const [input,setInput]=useState(initial);
   const [messages,setMessages]=useState<Message[]>([]);
@@ -269,12 +310,12 @@ function ChatPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,d
     if(lastRequest.current)lastRequest.current=chatRequest(lastRequest.current.messages,null);
   }
   return <div className="page-wrap chat-page">
-    <div className="page-heading compact-heading"><div><span className="eyebrow">LET'S TALK ABOUT YOUR CARE</span><h1>편하게 이야기해 주세요</h1><p>증상과 진료 목적을 이야기하면, 필요한 진료 분야와 병원 후보를 함께 살펴봐요.</p></div><button className="button secondary small" onClick={reset} disabled={busy}><RefreshCw size={16}/>새 상담</button></div>
+    <div className="page-heading compact-heading"><div><h1>편하게 이야기해 주세요</h1><p>증상과 진료 목적을 이야기하면, 필요한 진료 분야와 병원 후보를 함께 살펴봐요.</p></div><button className="button secondary small" onClick={reset} disabled={busy}><RefreshCw size={16}/>새 상담</button></div>
     <Notice>AI 안내는 진단이 아닌 진료과 안내입니다. 증상이 위급하거나 응급 상황이면 119 또는 응급실을 이용해 주세요.</Notice>
     <div className="chat-layout"><section className="chat-panel panel">
       <div className="chat-panel-heading"><span className="assistant-icon"><Sparkles size={22}/></span><div><strong>AI 진료과 안내</strong><small>증상과 희망하는 진료에 맞춰 함께 찾아요</small></div><span className="model-label">6.2 Sol</span></div>
       <div className="messages" aria-live="polite" aria-busy={mutation.isPending}>
-        <div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble"><strong>안녕하세요. 병원예약도우미예요.</strong><p>어디가 불편하신가요? 증상이 언제 시작됐는지, 더 심해졌는지, 어떤 진료를 받고 싶은지 편하게 이야기해 주세요. 필요한 내용을 하나씩 여쭤볼게요.</p><p className="message-example">“사흘 전부터 속이 쓰려요. 어제보다 심해져서 처음 진료를 받아보려 해요.”</p></div></div>
+        <div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble"><strong>안녕하세요. 메디픽이에요.</strong><p>어디가 불편하신가요? 증상이 언제 시작됐는지, 더 심해졌는지, 어떤 진료를 받고 싶은지 편하게 이야기해 주세요. 필요한 내용을 하나씩 여쭤볼게요.</p><p className="message-example">“사흘 전부터 속이 쓰려요. 어제보다 심해져서 처음 진료를 받아보려 해요.”</p></div></div>
         {messages.map((message,i)=><div key={i} className={`message ${message.role}`}>{message.role==='assistant'&&<span className="message-avatar"><Plus size={20}/></span>}<div className="message-bubble">{message.content}</div></div>)}
         {mutation.isPending&&<div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble chat-working" role="status"><div className="thinking" aria-hidden="true"><span/><span/><span/></div><p>상담 내용을 살펴보고 있어요. 병원과 웹 출처를 찾는 경우에는 조금 더 걸릴 수 있어요.</p></div></div>}
         {mutation.isError&&<div className="chat-error"><Notice tone="error">{mutation.error.message}</Notice><button className="text-button" onClick={retry} disabled={busy}>같은 내용으로 다시 시도</button></div>}
@@ -290,31 +331,34 @@ function ChatPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,d
       {result?.notice&&<Notice tone={result.mode==='FALLBACK'?'warning':'info'}>{result.notice}</Notice>}
       {result?.mode==='FALLBACK'&&!result.notice&&<Notice tone="warning">AI 연결이 원활하지 않아 기본 안내를 표시하고 있어요. 직접 검색도 이용할 수 있어요.</Notice>}
       {result?.careGuidance&&<Notice tone={result.promptCare?'warning':'info'}>{result.careGuidance}</Notice>}
-      {emergency?<Notice tone="error">응급 상황이 의심되면 병원을 비교하거나 예약하기보다 즉시 도움을 요청하는 것이 우선이에요.</Notice>:recommendations.length>0?<><div className="chat-results-context">{result?.specialty&&<strong>상담 분야 · {result.specialty}</strong>}<p>{result?.carePreference==='NEARBY'?(location?'현재 위치와의 직선거리를 참고한 후보예요. 실제 이동 시간과 진료 가능 여부는 별도로 확인해 주세요.':'희망 지역의 병원 후보예요. 현재 위치를 사용하지 않아 가까운 순서와는 다를 수 있어요.'):'추천 이유와 출처를 함께 살펴보세요. 병원 간 우열이나 치료 결과를 보장하지 않아요.'}</p></div><div className="chat-hospital-list">{recommendations.map(h=><HospitalCard key={h.id} hospital={h} compact onBooking={onBooking} department={h.departmentCode}/>)}</div><p className="chat-booking-note">이 서비스의 의료진·예약 일정은 시연용이며 실제 병원 예약으로 연결되지 않아요.</p></>:<div className="recommendation-empty"><div className="recommendation-art"><HospitalIcon size={42}/><Search size={24}/></div><h3>{mutation.isPending?'상담에 맞는 안내를 준비하고 있어요':result?.needsMoreInfo?'조금만 더 알려주세요':result?'조건에 맞는 후보를 아직 찾지 못했어요':'이야기를 듣고 찾아드릴게요'}</h3><p>{mutation.isPending?'새로운 답변을 준비하는 동안 잠시 기다려 주세요.':result?.needsMoreInfo?'증상과 진료 선호를 확인한 뒤 병원 후보를 보여드려요.':'대화로 조건을 더 알려주시거나 직접 병원을 검색해 보세요.'}</p>{!mutation.isPending&&<button className="button outline small" onClick={()=>go('/search')}>직접 병원 찾기</button>}</div>}
+      {emergency?<Notice tone="error">응급 상황이 의심되면 병원을 비교하거나 예약하기보다 즉시 도움을 요청하는 것이 우선이에요.</Notice>:recommendations.length>0?<><div className="chat-results-context">{result?.specialty&&<strong>상담 분야 · {result.specialty}</strong>}<p>{result?.carePreference==='NEARBY'?(location?'현재 위치와의 직선거리를 참고한 후보예요. 실제 이동 시간과 진료 가능 여부는 별도로 확인해 주세요.':'희망 지역의 병원 후보예요. 현재 위치를 사용하지 않아 가까운 순서와는 다를 수 있어요.'):'추천 이유와 출처를 함께 살펴보세요. 병원 간 우열이나 치료 결과를 보장하지 않아요.'}</p></div><div className="chat-hospital-list">{recommendations.map(h=><HospitalCard key={h.id} hospital={h} compact onBooking={onBooking} onExplore={onExplore} department={h.departmentCode}/>)}</div><p className="chat-booking-note">이 서비스의 의료진·예약 일정은 시연용이며 실제 병원 예약으로 연결되지 않아요.</p></>:<div className="recommendation-empty"><div className="recommendation-art"><HospitalIcon size={42}/><Search size={24}/></div><h3>{mutation.isPending?'상담에 맞는 안내를 준비하고 있어요':result?.needsMoreInfo?'조금만 더 알려주세요':result?'조건에 맞는 후보를 아직 찾지 못했어요':'이야기를 듣고 찾아드릴게요'}</h3><p>{mutation.isPending?'새로운 답변을 준비하는 동안 잠시 기다려 주세요.':result?.needsMoreInfo?'증상과 진료 선호를 확인한 뒤 병원 후보를 보여드려요.':'대화로 조건을 더 알려주시거나 직접 병원을 검색해 보세요.'}</p>{!mutation.isPending&&<button className="button outline small" onClick={()=>go('/search')}>직접 병원 찾기</button>}</div>}
       {!emergency&&<div className="chat-tip"><ShieldCheck size={20}/><p>저장된 공공 병원 정보를 바탕으로 안내해요.<br/>전문 진료 후보에는 참고한 웹 출처와 조회 시각을 함께 표시해요.</p></div>}
     </aside></div>
   </div>;
 }
 
-function BookingPage({selection,user,login,onDone}:{selection:BookingSelection;user:User|null;login:()=>void;onDone:()=>void}){
+function BookingPage({selection,onDraft,user,login,onDone}:{selection:BookingSelection;onDraft:(department:string,draft:BookingDraft)=>void;user:User|null;login:()=>void;onDone:()=>void}){
   const queryClient=useQueryClient();
-  const [department,setDepartment]=useState(selection.department);
-  const [doctorId,setDoctorId]=useState(selection.reservation?.doctorId||'');
-  const [date,setDate]=useState(today(1));
-  const [slotId,setSlotId]=useState('');
+  const department=selection.department;
+  const doctorId=selection.draft?.doctorId??selection.reservation?.doctorId??'';
+  const date=selection.draft?.date||today(1);
+  const slotId=selection.draft?.slotId||'';
   const [confirmed,setConfirmed]=useState(false);
   const [idempotency,setIdempotency]=useState(crypto.randomUUID());
-  const [step,setStep]=useState(1);
+  const [step,setStep]=useState(selection.draft?.slotId?3:selection.draft?.doctorId?2:1);
   const hospitalQuery=useQuery({queryKey:['hospital',selection.hospital.id],queryFn:()=>api<Hospital>(`/hospitals/${encodeURIComponent(selection.hospital.id)}`)});
   const hospital=hospitalQuery.data || selection.hospital;
   const doctors=useQuery({queryKey:['doctors',hospital.id,department],queryFn:()=>api<{items:Doctor[]}>(`/hospitals/${encodeURIComponent(hospital.id)}/doctors?department=${encodeURIComponent(department)}`)});
   const slots=useQuery({queryKey:['slots',doctorId,date],queryFn:()=>api<{items:Slot[]}>(`/slots?${queryString({doctorId,date})}`),enabled:!!doctorId});
   const doctor=doctors.data?.items.find(d=>d.id===doctorId);
-  const slot=slots.data?.items.find(s=>s.id===slotId);
+  const slot=slots.data?.items.find(s=>s.id===slotId&&!s.closed&&s.remaining>0&&new Date(s.startAt)>new Date());
   const save=useMutation({mutationFn:()=>api<Reservation>(selection.reservation?`/reservations/${selection.reservation.id}`:'/reservations',{method:selection.reservation?'PATCH':'POST',headers:{'Idempotency-Key':idempotency},body:JSON.stringify({slotId})}),onSuccess:()=>{queryClient.invalidateQueries({queryKey:['slots']});onDone();},onError:()=>queryClient.invalidateQueries({queryKey:['slots',doctorId,date]})});
-  function selectSlot(id:string){setSlotId(id);setConfirmed(false);setIdempotency(crypto.randomUUID());save.reset();}
+  function changeDraft(nextDepartment:string,nextDoctorId:string,nextDate:string,nextSlotId?:string){
+    onDraft(nextDepartment,{doctorId:nextDoctorId,date:nextDate,slotId:nextSlotId});
+    setConfirmed(false);setIdempotency(crypto.randomUUID());save.reset();
+  }
   const departmentOptions=hospital.departments?.length?hospital.departments:DEPARTMENTS;
-  return <div className="page-wrap booking-page"><button className="back-link" onClick={()=>go('/search')}><ChevronLeft size={18}/>병원 목록</button><div className="booking-heading"><div><SourceBadge source={hospital.source}/><h1>{hospital.name}</h1><p className="icon-text"><MapPin size={17}/>{hospital.address}</p></div><span className="booking-mode"><CalendarCheck2 size={19}/>{selection.reservation?'예약 일정 변경':'모의 예약'}</span></div><Notice>선택하는 의료진과 진료 시간표는 가상 데이터입니다. 완료해도 실제 병원에는 예약되지 않아요.</Notice><div className="booking-layout"><div className="booking-main"><HospitalLocation hospital={hospital}/><div className="stepper" aria-label="예약 진행"><span className={step>=1?'current':''}><b>1</b>의료진 선택</span><ChevronRight size={16}/><span className={step>=2?'current':''}><b>2</b>일정 선택</span><ChevronRight size={16}/><span className={step>=3?'current':''}><b>3</b>최종 확인</span></div><section className="panel booking-section"><div className="section-title-row"><h2>진료과와 의료진을 선택해 주세요</h2><Stethoscope size={23}/></div><label className="field department-select">진료과<select value={department} onChange={e=>{setDepartment(e.target.value);setDoctorId('');selectSlot('');setStep(1);}}>{!departmentOptions.some(d=>d.code===department)&&<option value={department}>{departmentName(department)}</option>}{departmentOptions.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>{doctors.isLoading?<Loading/>:doctors.isError?<ErrorState error={doctors.error} retry={()=>doctors.refetch()}/>:<div className="doctor-grid">{doctors.data?.items.map((d,i)=><button key={d.id} className={`doctor-card ${doctorId===d.id?'selected':''}`} onClick={()=>{setDoctorId(d.id);selectSlot('');setStep(2);}}><span className={`doctor-avatar avatar-${i%3}`}><UserRound size={31}/></span><strong>{d.name}<small>가상 의료진</small></strong><span>{d.specialty||departmentName(d.departmentCode)}</span><span className="select-circle">{doctorId===d.id&&<Check size={14}/>}</span></button>)}</div>}{doctors.data?.items.length===0&&<p className="empty-inline">선택 가능한 의료진이 없어요.</p>}</section><section className="panel booking-section"><div className="section-title-row"><h2>편한 날짜와 시간을 골라 주세요</h2><CalendarDays size={23}/></div><label className="field date-field">진료 날짜<input type="date" min={today()} max={today(90)} value={date} onChange={e=>{setDate(e.target.value);selectSlot('');}}/></label><div className="date-shortcuts">{Array.from({length:7},(_,i)=>today(i+1)).map(day=><button key={day} className={date===day?'selected':''} onClick={()=>{setDate(day);selectSlot('');}}><span>{new Intl.DateTimeFormat('ko-KR',{weekday:'short'}).format(new Date(`${day}T12:00:00+09:00`))}</span><strong>{day.slice(8)}</strong></button>)}</div>{!doctorId?<div className="slot-placeholder"><Clock3 size={26}/><p>의료진을 선택하면 예약 가능한 시간이 보여요.</p></div>:slots.isLoading?<Loading text="시간대별 잔여 정원을 확인하고 있어요"/>:slots.isError?<ErrorState error={slots.error} retry={()=>slots.refetch()}/>:slots.data?.items.length?<div className="slot-grid">{slots.data.items.map(s=>{const unavailable=s.closed||s.remaining<=0||new Date(s.startAt)<new Date();return <button disabled={unavailable} key={s.id} className={`slot-button ${slotId===s.id?'selected':''}`} onClick={()=>{selectSlot(s.id);setStep(3);}}><strong>{timeLabel(s.startAt)}</strong><span>{s.closed?'휴진':s.remaining<=0?'예약 마감':new Date(s.startAt)<new Date()?'지난 시간':`잔여 ${s.remaining}명`}</span></button>;})}</div>:<div className="empty-inline">이 날짜에 등록된 진료 일정이 없어요. 다른 날짜를 선택해 주세요.</div>}</section><section className="panel evidence-panel"><h2><ShieldCheck size={20}/>병원 정보와 출처</h2>{hospital.tel&&<p className="icon-text"><Phone size={16}/><a href={`tel:${hospital.tel}`}>{hospital.tel}</a></p>}{hospitalQuery.isError&&<Notice tone="warning">상세 정보를 불러오지 못해 검색 결과의 기본 정보를 표시하고 있어요.</Notice>}{hospital.evidence?.length?<ul className="evidence-list">{hospital.evidence.map((e,i)=><li key={i}><strong>{e.label||e.kind}</strong><span>{typeof e.value==='string'?e.value:JSON.stringify(e.value)}</span>{e.sourceUrl&&<a href={e.sourceUrl} target="_blank" rel="noreferrer">출처 확인<ExternalLink size={13}/></a>}{e.basePeriod&&<small>기준: {e.basePeriod}</small>}</li>)}</ul>:<p className="muted">추가로 확인된 진료 근거가 없어요.</p>}<p className="source-footnote">조회 시각: {fetchedLabel(hospital.fetchedAt)} · {hospital.source==='SAMPLE'?'시연용 샘플 데이터':'건강보험심사평가원'}</p></section></div><aside className="booking-summary panel"><span className="eyebrow">YOUR APPOINTMENT</span><h2>{selection.reservation?'변경할 예약 정보':'예약 정보 확인'}</h2><dl><div><dt>병원</dt><dd>{hospital.name}</dd></div><div><dt>진료과</dt><dd>{departmentOptions.find(d=>d.code===department)?.name||departmentName(department)}</dd></div><div><dt>의료진</dt><dd>{doctor?`${doctor.name} (가상)`:'선택해 주세요'}</dd></div><div><dt>날짜</dt><dd>{slot?dateLabel(slot.startAt):'선택해 주세요'}</dd></div><div><dt>시간</dt><dd>{slot?timeLabel(slot.startAt):'선택해 주세요'}</dd></div><div><dt>예약자</dt><dd>{user?.name||'로그인 필요'}</dd></div></dl>{selection.reservation&&<div className="previous-booking">기존 일정<br/>{dateLabel(selection.reservation.startAt)} {timeLabel(selection.reservation.startAt)}</div>}<label className="check-label"><input type="checkbox" checked={confirmed} disabled={!slot} onChange={e=>setConfirmed(e.target.checked)}/><span>실제 예약이 아닌 모의 예약임을 확인했으며, 선택한 일정으로 진행할게요.</span></label>{save.isError&&<Notice tone="error">{save.error.message}</Notice>}{user?<button className="button primary full" disabled={!slotId||!confirmed||save.isPending} onClick={()=>save.mutate()}>{save.isPending?<><LoaderCircle size={18} className="spin"/>예약 처리 중</>:selection.reservation?'일정 변경 확정':'모의 예약 확정'}</button>:<button className="button primary full" onClick={login}>로그인하고 예약하기</button>}<p className="summary-note"><ShieldCheck size={15}/>예약 전 잔여 정원을 다시 확인해요.</p></aside></div></div>;
+  return <div className="page-wrap booking-page"><button className="back-link" onClick={()=>go('/search')}><ChevronLeft size={18}/>병원 목록</button><div className="booking-heading"><div><SourceBadge source={hospital.source}/><h1>{hospital.name}</h1><p className="icon-text"><MapPin size={17}/>{hospital.address}</p></div><span className="booking-mode"><CalendarCheck2 size={19}/>{selection.reservation?'예약 일정 변경':'모의 예약'}</span></div><Notice>선택하는 의료진과 진료 시간표는 가상 데이터입니다. 완료해도 실제 병원에는 예약되지 않아요.</Notice><div className="booking-layout"><div className="booking-main"><HospitalLocation hospital={hospital}/><div className="stepper" aria-label="예약 진행"><span className={step>=1?'current':''}><b>1</b>의료진 선택</span><ChevronRight size={16}/><span className={step>=2?'current':''}><b>2</b>일정 선택</span><ChevronRight size={16}/><span className={step>=3?'current':''}><b>3</b>최종 확인</span></div><section className="panel booking-section"><div className="section-title-row"><h2>진료과와 의료진을 선택해 주세요</h2><Stethoscope size={23}/></div><label className="field department-select">진료과<select value={department} onChange={e=>{changeDraft(e.target.value,'',date);setStep(1);}}>{!departmentOptions.some(d=>d.code===department)&&<option value={department}>{departmentName(department)}</option>}{departmentOptions.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>{doctors.isLoading?<Loading/>:doctors.isError?<ErrorState error={doctors.error} retry={()=>doctors.refetch()}/>:<div className="doctor-grid">{doctors.data?.items.map((d,i)=><button key={d.id} className={`doctor-card ${doctorId===d.id?'selected':''}`} onClick={()=>{changeDraft(department,d.id,date);setStep(2);}}><span className="doctor-portrait" aria-hidden="true"><DoctorPortrait index={i}/></span><strong>{d.name}<small>가상 의료진</small></strong><span>{d.specialty||departmentName(d.departmentCode)}</span><span className="select-circle">{doctorId===d.id&&<Check size={14}/>}</span></button>)}</div>}{doctors.data?.items.length===0&&<p className="empty-inline">선택 가능한 의료진이 없어요.</p>}</section><section className="panel booking-section"><div className="section-title-row"><h2>편한 날짜와 시간을 골라 주세요</h2><CalendarDays size={23}/></div><label className="field date-field">진료 날짜<input type="date" min={today()} max={today(90)} value={date} onChange={e=>{if(e.target.value&&e.target.validity.valid)changeDraft(department,doctorId,e.target.value);}}/></label><div className="date-shortcuts">{Array.from({length:7},(_,i)=>today(i+1)).map(day=><button key={day} className={date===day?'selected':''} onClick={()=>{changeDraft(department,doctorId,day);}}><span>{new Intl.DateTimeFormat('ko-KR',{weekday:'short'}).format(new Date(`${day}T12:00:00+09:00`))}</span><strong>{day.slice(8)}</strong></button>)}</div>{!doctorId?<div className="slot-placeholder"><Clock3 size={26}/><p>의료진을 선택하면 예약 가능한 시간이 보여요.</p></div>:slots.isLoading?<Loading text="시간대별 잔여 정원을 확인하고 있어요"/>:slots.isError?<ErrorState error={slots.error} retry={()=>slots.refetch()}/>:slots.data?.items.length?<div className="slot-grid">{slots.data.items.map(s=>{const unavailable=s.closed||s.remaining<=0||new Date(s.startAt)<new Date();return <button disabled={unavailable} key={s.id} className={`slot-button ${slotId===s.id?'selected':''}`} onClick={()=>{changeDraft(department,doctorId,date,s.id);setStep(3);}}><strong>{timeLabel(s.startAt)}</strong><span>{s.closed?'휴진':s.remaining<=0?'예약 마감':new Date(s.startAt)<new Date()?'지난 시간':`잔여 ${s.remaining}명`}</span></button>;})}</div>:<div className="empty-inline">이 날짜에 등록된 진료 일정이 없어요. 다른 날짜를 선택해 주세요.</div>}</section><section className="panel evidence-panel"><h2><ShieldCheck size={20}/>병원 정보와 출처</h2>{hospital.tel&&<p className="icon-text"><Phone size={16}/><a href={`tel:${hospital.tel}`}>{hospital.tel}</a></p>}{hospitalQuery.isError&&<Notice tone="warning">상세 정보를 불러오지 못해 검색 결과의 기본 정보를 표시하고 있어요.</Notice>}{hospital.evidence?.length?<ul className="evidence-list">{hospital.evidence.map((e,i)=><li key={i}><strong>{e.label||e.kind}</strong><span>{typeof e.value==='string'?e.value:JSON.stringify(e.value)}</span>{e.sourceUrl&&<a href={e.sourceUrl} target="_blank" rel="noreferrer">출처 확인<ExternalLink size={13}/></a>}{e.basePeriod&&<small>기준: {e.basePeriod}</small>}</li>)}</ul>:<p className="muted">추가로 확인된 진료 근거가 없어요.</p>}<p className="source-footnote">조회 시각: {fetchedLabel(hospital.fetchedAt)} · {hospital.source==='SAMPLE'?'시연용 샘플 데이터':'건강보험심사평가원'}</p></section></div><aside className="booking-summary panel"><div className="booking-date-stub" aria-hidden="true"><span>{date.slice(0,4)}년 {Number(date.slice(5,7))}월</span><b>{date.slice(8)}</b></div><h2>{selection.reservation?'변경할 예약 정보':'예약 정보 확인'}</h2><dl><div><dt>병원</dt><dd>{hospital.name}</dd></div><div><dt>진료과</dt><dd>{departmentOptions.find(d=>d.code===department)?.name||departmentName(department)}</dd></div><div><dt>의료진</dt><dd>{doctor?`${doctor.name} (가상)`:'선택해 주세요'}</dd></div><div><dt>날짜</dt><dd>{slot?dateLabel(slot.startAt):'선택해 주세요'}</dd></div><div><dt>시간</dt><dd>{slot?timeLabel(slot.startAt):'선택해 주세요'}</dd></div><div><dt>예약자</dt><dd>{user?.name||'로그인 필요'}</dd></div></dl>{selection.reservation&&<div className="previous-booking">기존 일정<br/>{dateLabel(selection.reservation.startAt)} {timeLabel(selection.reservation.startAt)}</div>}<label className="check-label"><input type="checkbox" checked={confirmed} disabled={!slot} onChange={e=>setConfirmed(e.target.checked)}/><span>실제 예약이 아닌 모의 예약임을 확인했으며, 선택한 일정으로 진행할게요.</span></label>{slotId&&slots.isSuccess&&!slot&&<Notice tone="warning">선택한 시간의 예약이 마감됐어요. 다른 일정을 골라 주세요.</Notice>}{save.isError&&<Notice tone="error">{save.error.message}</Notice>}{user?<button className="button primary full" disabled={!doctor||!slot||!confirmed||save.isPending} onClick={()=>save.mutate()}>{save.isPending?<><LoaderCircle size={18} className="spin"/>예약 처리 중</>:selection.reservation?'일정 변경 확정':'모의 예약 확정'}</button>:<button className="button primary full" onClick={login}>로그인하고 예약하기</button>}<p className="summary-note"><ShieldCheck size={15}/>예약 전 잔여 정원을 다시 확인해요.</p></aside></div></div>;
 }
 
 function ReservationsPage({user,ready,login,onBooking,notify}:{user:User|null;ready:boolean;login:()=>void;onBooking:(hospital:Hospital,department?:string,reservation?:Reservation)=>void;notify:(message:string)=>void}){
@@ -413,7 +457,7 @@ function MembershipWithdrawal({user,returnCode,onReturnHandled,onSuccess}:{user:
       <form className="auth-form withdrawal-form" onSubmit={submit}>
         {social?<>
           <Notice tone={verified?'success':'info'}>{verified?`${provider} 계정 확인을 마쳤어요. 아래 버튼을 누르면 회원 탈퇴가 완료돼요.`:`가입할 때 사용한 ${provider} 계정으로 다시 본인 확인을 진행해 주세요. 확인 후 마지막으로 탈퇴 여부를 선택할 수 있어요.`}</Notice>
-          <p className="withdrawal-help">병원예약도우미에서만 탈퇴하며 {provider} 계정 자체는 삭제되지 않아요.</p>
+          <p className="withdrawal-help">메디픽에서 탈퇴하며 {provider} 계정 자체는 삭제되지 않아요.</p>
         </>:<label className="field">현재 비밀번호<input name="currentPassword" type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} required maxLength={100} disabled={pending} placeholder="현재 비밀번호를 입력해 주세요"/></label>}
         {error&&<Notice tone="error">{error}</Notice>}
         <div className="dialog-actions withdrawal-actions">
