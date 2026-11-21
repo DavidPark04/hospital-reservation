@@ -5,7 +5,7 @@ import { MongoClient } from 'mongodb';
 // Local smoke only: no public API/AI calls and no real hospital reservations.
 const base = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:18081';
 const uri = process.env.SMOKE_MONGODB_URI || 'mongodb://127.0.0.1:27118/?replicaSet=hospital-rs';
-const databaseName = process.env.SMOKE_DATABASE || 'hospital_reservation';
+const databaseName = process.env.SMOKE_DATABASE || 'MediPick';
 const users = [];
 let passed = 0;
 
@@ -134,7 +134,7 @@ try {
   });
   assert.equal(repeatedMember.code, undefined);
   assert.equal(repeatedMember.existingAuthProvider, undefined);
-  assert.equal(repeatedMember.message, '이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.');
+  assert.equal(repeatedMember.message, '이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.');
   assert.ok(!/이름|연락처/.test(repeatedMember.message));
   assert.ok(!('token' in repeatedMember) && !('user' in repeatedMember));
   pass('duplicate phone rejected regardless of name and email');

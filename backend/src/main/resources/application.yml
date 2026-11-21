@@ -15,7 +15,7 @@ spring:
     name: hospital-reservation
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb://127.0.0.1:27118/hospital_reservation?replicaSet=hospital-rs}
+      uri: ${MONGODB_URI:mongodb://127.0.0.1:27118/MediPick?replicaSet=hospital-rs}
   jackson:
     serialization:
       write-dates-as-timestamps: false
