@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {root,loadLocalEnv} from './local-env.mjs';
-import {backendJar,inspectBackend,trackBackend,stopOwnedChildren,resolveJavaExecutable} from './backend-runtime.mjs';
+import {backendJar,createBackendJarCopy,inspectBackend,trackBackend,stopOwnedChildren,resolveJavaExecutable} from './backend-runtime.mjs';
 
 const env=loadLocalEnv();
 let javaExecutable;
@@ -27,14 +27,18 @@ if(healthy||['matching','mismatch','unverified'].includes(existing.status)) {
 }
 if(!fs.existsSync(backendJar)) {console.error('Build the backend first with scripts/build.ps1.');process.exit(1);}
 let stopping=false;
-const child=spawn(javaExecutable,['-Dfile.encoding=UTF-8','-jar',backendJar],{cwd:root,env,stdio:'inherit',windowsHide:true});
+let child,runtimeJar;
+try {
+  runtimeJar=createBackendJarCopy(env);
+  child=spawn(javaExecutable,['-Dfile.encoding=UTF-8','-jar',runtimeJar.jar],{cwd:root,env,stdio:'inherit',windowsHide:true});
+} catch(error) {runtimeJar?.cleanup();console.error(error.message);process.exit(1);}
 async function shutdown(code=0) {
   if(stopping)return;stopping=true;
   const deadline=setTimeout(()=>process.exit(code||1),3000);
   try {const stopped=await stopOwnedChildren([child]);process.exit(stopped?code:1);}
   finally {clearTimeout(deadline);}
 }
-trackBackend(child,env,{onError:()=>{console.error('Could not record backend process state.');shutdown(1);}});
+trackBackend(child,env,{runtimeJar,onError:()=>{console.error('Could not record backend process state.');shutdown(1);}});
 child.on('error',()=>{console.error('Could not start the backend process.');shutdown(1);});
 child.on('exit',code=>{if(!stopping)process.exit(code??1);});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>shutdown());

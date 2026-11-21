@@ -7,10 +7,12 @@ import ScrollStory from './ScrollStory';
 import HospitalLocation from './HospitalLocation';
 import PhoneInput from './PhoneInput';
 import PasswordChange from './PasswordChange';
+import {CHAT_MESSAGE_LIMIT, chatConversationLimit, chatFollowUpOptions, chatLocation, chatLocationSelection, chatRecommendations, chatRequest, isEmergencyResult, safeRecommendationSources, straightLineDistance} from './chatPresentation';
+import './chatRecommendations.css';
 import {formatPhone} from './phoneFormatting';
 import { loginMethod, SocialLoginButtons, SocialLoginCallback, socialErrorMessage } from './SocialLogin';
 import SocialProfile, { needsSocialProfile } from './SocialProfile';
-import type { AuthProvider, AuthResult, ChatResult, DeleteMemberResult, Doctor, Hospital, HospitalResult, Member, Message, Meta, Reservation, Slot, User } from './api';
+import type { AuthProvider, AuthResult, ChatLocation, ChatRequest, ChatResult, DeleteMemberResult, Doctor, Hospital, HospitalResult, Member, Message, Meta, Reservation, Slot, User } from './api';
 
 function currentRoute(){
   const hashRoute=window.location.hash.slice(1);
@@ -136,7 +138,7 @@ export default function App(){
       {!authReady&&route!=='/auth/social/callback'?<div className="page-wrap"><Loading text="로그인 정보를 확인하고 있어요"/></div>:profilePending&&user?<SocialProfile key={user.id} user={user} onSuccess={completeSocialLogin} onCancel={logout} onExistingLogin={existingAccountLogin}/>:<>
       {route==='/'&&<Home onBooking={startBooking} />}
       {route.startsWith('/search')&&<SearchPage key={route} route={route} onBooking={startBooking}/>}
-      {route.startsWith('/chat')&&<ChatPage route={route} onBooking={startBooking}/>}
+      {route.startsWith('/chat')&&<ChatPage key={route} route={route} onBooking={startBooking}/>}
       {route==='/booking'&&(booking?<BookingPage selection={booking} user={user} login={()=>setAuthMode('login')} onDone={()=>{setToast(booking.reservation?'예약 일정을 변경했어요.':'모의 예약이 완료되었어요.');queryClient.invalidateQueries({queryKey:['reservations']});go('/reservations');}}/>:<EmptyPage icon={<CalendarDays/>} title="예약할 병원을 먼저 선택해 주세요" body="병원을 검색하거나 AI 상담에서 안내받은 병원의 예약을 시작할 수 있어요." action="병원 찾기" onAction={()=>go('/search')}/>)}
       {route==='/reservations'&&<ReservationsPage user={user} ready={authReady} login={()=>setAuthMode('login')} onBooking={startBooking} notify={setToast}/>}
       {route==='/mypage'&&<MyPage user={user} ready={authReady} login={()=>setAuthMode('login')} withdrawalReturn={withdrawalReturn} onWithdrawalReturnHandled={()=>setWithdrawalReturn('')} onWithdrawn={completeWithdrawal} onPasswordChanged={completePasswordChange}/>}
@@ -161,14 +163,30 @@ function ErrorState({error,retry}:{error:unknown;retry?:()=>void}){return <div c
 function EmptyPage({icon,title,body,action,onAction}:{icon:ReactNode;title:string;body:string;action:string;onAction:()=>void}){return <div className="page-wrap"><div className="empty-page"><div className="empty-icon">{icon}</div><h1>{title}</h1><p>{body}</p><button className="button primary" onClick={onAction}>{action}</button></div></div>;}
 function SectionHeading({eyebrow,title,description,children}:{eyebrow?:string;title:string;description?:string;children?:ReactNode}){return <div className="section-heading"><div>{eyebrow&&<span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2>{description&&<p>{description}</p>}</div>{children}</div>;}
 function SourceBadge({source}:{source:Hospital['source']}){return <span className={`source-badge ${source?.toLowerCase()}`}>{source==='LIVE'?'공공데이터':source==='CACHE'?'저장된 공공데이터':'시연용 샘플'}</span>;}
-function HospitalCard({hospital,onBooking,compact=false,department}:{hospital:Hospital;onBooking:(hospital:Hospital,department?:string)=>void;compact?:boolean;department?:string}){return <article className={`hospital-card ${compact?'compact':''}`}><div className="hospital-card-top"><div className="hospital-symbol"><Building2 size={24}/></div><SourceBadge source={hospital.source}/></div><div className="hospital-category">{hospital.departmentName || hospital.departments?.slice(0,2).map(d=>d.name).join(' · ') || '진료과 정보 확인'}</div><h3>{hospital.name}</h3><p className="icon-text"><MapPin size={16}/><span>{hospital.address || '주소 정보 미제공'}</span></p>{hospital.tel&&<p className="icon-text"><Phone size={15}/><a href={`tel:${hospital.tel}`}>{hospital.tel}</a></p>}{hospital.recommendationReason&&<p className="recommendation-reason"><Sparkles size={14}/>{hospital.recommendationReason}</p>}{hospital.notice&&<p className="hospital-notice">{hospital.notice}</p>}<div className="hospital-card-bottom"><span><ShieldCheck size={14}/>{hospital.source==='SAMPLE'?'가상 병원 데이터':'심평원 제공 정보'}</span><button className="button outline small" onClick={()=>onBooking(hospital,department)}>상세·예약</button></div></article>;}
+function HospitalCard({hospital,onBooking,compact=false,department}:{hospital:Hospital;onBooking:(hospital:Hospital,department?:string)=>void;compact?:boolean;department?:string}){
+  const sources=safeRecommendationSources(hospital.recommendationSources);
+  const distance=straightLineDistance(hospital.distanceKm);
+  return <article className={`hospital-card ${compact?'compact':''}`}>
+    <div className="hospital-card-top"><div className="hospital-symbol"><Building2 size={24}/></div><SourceBadge source={hospital.source}/></div>
+    <div className="hospital-category">{hospital.departmentName || hospital.departments?.slice(0,2).map(d=>d.name).join(' · ') || '진료과 정보 확인'}</div>
+    <h3>{hospital.name}</h3>
+    {(hospital.hospitalType||hospital.specialty)&&<div className="hospital-care-tags">{hospital.hospitalType&&<span>{hospital.hospitalType}</span>}{hospital.specialty&&<span>상담 분야 · {hospital.specialty}</span>}</div>}
+    <p className="icon-text"><MapPin size={16}/><span>{hospital.address || '주소 정보 미제공'}</span></p>
+    {distance&&<p className="hospital-distance"><MapPin size={14}/><span>{distance}<small>이동 시간·실제 이동 거리와 달라요.</small></span></p>}
+    {hospital.tel&&<p className="icon-text"><Phone size={15}/><a href={`tel:${hospital.tel}`}>{hospital.tel}</a></p>}
+    {hospital.recommendationReason&&<p className="recommendation-reason"><Sparkles size={14}/>{hospital.recommendationReason}</p>}
+    {sources.length>0&&<div className="recommendation-sources"><strong>추천에 참고한 자료</strong><p className="recommendation-source-note">AI가 검색 자료를 요약한 안내예요. 후기·SNS는 개인 경험이며 치료 성적을 보장하지 않아요.</p><ul>{sources.map(source=><li key={source.url}><div className="recommendation-source-link"><span className={`recommendation-source-kind ${(source.kind||'WEB').toLowerCase()}`}>{source.label}</span><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}<ExternalLink size={12}/></a></div><span>조회 · {fetchedLabel(source.checkedAt)}</span></li>)}</ul></div>}
+    {hospital.notice&&<p className="hospital-notice">{hospital.notice}</p>}
+    <div className="hospital-card-bottom"><span><ShieldCheck size={14}/>{hospital.source==='SAMPLE'?'가상 병원 데이터':'심평원 제공 정보'}</span><button className="button outline small" onClick={()=>onBooking(hospital,department)}>상세·예약</button></div>
+  </article>;
+}
 
 function Home({onBooking}:{onBooking:(hospital:Hospital,department?:string)=>void}){
   const [symptom,setSymptom]=useState('');
   const [search,setSearch]=useState('');
   const hospitals = useQuery({queryKey:['hospitals','home'],queryFn:()=>api<HospitalResult>('/hospitals?region=수원'),staleTime:120_000});
   function startChat(event:FormEvent){event.preventDefault();go(`/chat${symptom.trim()?`?message=${encodeURIComponent(symptom.trim())}`:''}`);}
-  return <><section className="hero"><div className="hero-inner"><div className="hero-copy"><div className="hero-kicker"><span className="mini-cross">+</span>병원 가는 길, 조금 더 쉽게</div><h1>어디가 불편하세요?<br/><span>함께 찾아볼게요.</span></h1><p className="hero-description">어떤 진료과로 가야 할지 고민될 때,<br/>평소 말하듯 알려주세요. 병원 찾기부터 예약까지 도와드려요.</p><form className="symptom-box" onSubmit={startChat}><label className="sr-only" htmlFor="home-symptom">불편한 증상</label><textarea id="home-symptom" value={symptom} onChange={e=>setSymptom(e.target.value)} placeholder="예) 어제부터 목이 붓고 열이 나요. 수원 영통 근처면 좋겠어요." maxLength={2000} rows={2}/><div className="symptom-actions"><span><ShieldCheck size={16}/>상담 내용은 기본 저장하지 않아요</span><button className="button primary" type="submit"><Sparkles size={18}/>AI 상담 시작</button></div></form><div className="try-prompts"><span>이렇게 물어보세요</span>{['목이 붓고 아파요','허리가 불편해요','피부가 가려워요'].map(text=><button key={text} onClick={()=>setSymptom(text)}>{text}</button>)}</div></div><div className="hero-visual" aria-hidden="true"><div className="visual-orbit orbit-one"/><div className="visual-orbit orbit-two"/><div className="floating-label label-one"><HeartPulse size={22}/><span>나에게 맞는 진료</span></div><div className="care-card"><div className="care-card-title"><span className="care-icon"><Plus size={28} strokeWidth={3}/></span><span>당신의 건강한 하루를<br/><strong>함께 준비해요.</strong></span></div><div className="care-chat"><span className="care-avatar"><UserRound size={18}/></span><span>어떤 병원으로 가야 할까요?</span></div><div className="care-answer"><span className="answer-spark"><Sparkles size={18}/></span><div><strong>걱정은 조금 덜고,</strong><p>필요한 진료를 차근차근 찾아봐요.</p><div className="care-wave"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></div></div><div className="care-steps"><span><Check size={14}/>증상 정리</span><span><Check size={14}/>병원 찾기</span><span><CalendarCheck2 size={14}/>예약하기</span></div></div><div className="floating-label label-two"><span className="tiny-calendar"><CalendarDays size={22}/></span><div><strong>복잡한 검색은 줄이고</strong><small>내 일정에 맞는 선택</small></div></div><div className="decor-plus plus-one">+</div><div className="decor-plus plus-two">+</div></div></div></section>
+  return <><section className="hero"><div className="hero-inner"><div className="hero-copy"><div className="hero-kicker"><span className="mini-cross">+</span>병원 가는 길, 조금 더 쉽게</div><h1>어디가 불편하세요?<br/><span>함께 찾아볼게요.</span></h1><p className="hero-description">어떤 진료과로 가야 할지 고민될 때,<br/>평소 말하듯 알려주세요. 병원 찾기부터 예약까지 도와드려요.</p><form className="symptom-box" onSubmit={startChat}><label className="sr-only" htmlFor="home-symptom">불편한 증상</label><textarea id="home-symptom" value={symptom} onChange={e=>setSymptom(e.target.value)} placeholder="예) 어제부터 목이 붓고 열이 나요. 수원 영통 근처면 좋겠어요." maxLength={CHAT_MESSAGE_LIMIT} rows={2}/><div className="symptom-actions"><span><ShieldCheck size={16}/>상담 내용은 기본 저장하지 않아요</span><button className="button primary" type="submit"><Sparkles size={18}/>AI 상담 시작</button></div></form><div className="try-prompts"><span>이렇게 물어보세요</span>{['목이 붓고 아파요','허리가 불편해요','피부가 가려워요'].map(text=><button key={text} onClick={()=>setSymptom(text)}>{text}</button>)}</div></div><div className="hero-visual" aria-hidden="true"><div className="visual-orbit orbit-one"/><div className="visual-orbit orbit-two"/><div className="floating-label label-one"><HeartPulse size={22}/><span>나에게 맞는 진료</span></div><div className="care-card"><div className="care-card-title"><span className="care-icon"><Plus size={28} strokeWidth={3}/></span><span>당신의 건강한 하루를<br/><strong>함께 준비해요.</strong></span></div><div className="care-chat"><span className="care-avatar"><UserRound size={18}/></span><span>어떤 병원으로 가야 할까요?</span></div><div className="care-answer"><span className="answer-spark"><Sparkles size={18}/></span><div><strong>걱정은 조금 덜고,</strong><p>필요한 진료를 차근차근 찾아봐요.</p><div className="care-wave"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></div></div><div className="care-steps"><span><Check size={14}/>증상 정리</span><span><Check size={14}/>병원 찾기</span><span><CalendarCheck2 size={14}/>예약하기</span></div></div><div className="floating-label label-two"><span className="tiny-calendar"><CalendarDays size={22}/></span><div><strong>복잡한 검색은 줄이고</strong><small>내 일정에 맞는 선택</small></div></div><div className="decor-plus plus-one">+</div><div className="decor-plus plus-two">+</div></div></div></section>
     <div className="content-wrap"><div className="service-strip"><div><ShieldCheck/><span><strong>확인 가능한 병원 정보</strong><small>공공데이터 기반 정보와 출처</small></span></div><div><MessageCircle/><span><strong>일상 언어로 편하게</strong><small>증상을 설명하면 진료과 안내</small></span></div><div><CalendarDays/><span><strong>일정 선택부터 관리까지</strong><small>예약 조회·변경·취소를 한곳에서</small></span></div></div>
     <ScrollStory/><section className="home-search-section"><SectionHeading eyebrow="FIND YOUR CARE" title="찾는 병원이 있으신가요?" description="병원명이나 지역으로 바로 검색해 보세요."/><form className="quick-search" onSubmit={e=>{e.preventDefault();go(`/search?query=${encodeURIComponent(search)}`);}}><Search size={22}/><label htmlFor="quick-search" className="sr-only">병원명 또는 지역</label><input id="quick-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="병원명 또는 지역을 입력해 주세요"/><button className="button dark" type="submit">병원 검색</button></form><div className="department-grid">{DEPARTMENTS.map((dept,index)=><button key={dept.code} className="department-button" onClick={()=>go(`/search?department=${dept.code}`)}><span className={`department-icon dept-${index}`}>{index===0?<HeartPulse/>:index===1?<Activity/>:index===2?<Stethoscope/>:index===3?<Sparkles/>:index===4?<Heart/>:<HospitalIcon/>}</span><span>{dept.name}</span></button>)}</div></section>
     <section className="home-hospitals"><SectionHeading title="병원 정보 살펴보기" description="수원 지역 병원을 먼저 살펴보고, 원하는 지역으로 검색해 보세요."><button className="text-button" onClick={()=>go('/search')}>전체 병원 찾기</button></SectionHeading>{hospitals.isLoading?<Loading text="병원 정보를 확인하고 있어요"/>:hospitals.isError?<ErrorState error={hospitals.error} retry={()=>hospitals.refetch()}/>:<>{hospitals.data?.message&&<Notice tone={hospitals.data.source==='SAMPLE'?'warning':'info'}>{hospitals.data.message}</Notice>}<div className="hospital-grid">{hospitals.data?.items.slice(0,3).map(h=><HospitalCard hospital={h} key={h.id} onBooking={onBooking}/>)}</div>{hospitals.data?.items.length===0&&<div className="empty-inline">조회된 병원이 없어요. 지역이나 병원명을 바꿔 검색해 주세요.</div>}</>}</section>
@@ -184,16 +202,98 @@ function SearchPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital
 }
 
 function ChatPage({route,onBooking}:{route:string;onBooking:(hospital:Hospital,department?:string)=>void}){
-  const initial = new URLSearchParams(route.split('?')[1]).get('message')||'';
+  const initial = (new URLSearchParams(route.split('?')[1]).get('message')||'').slice(0,CHAT_MESSAGE_LIMIT);
   const [input,setInput]=useState(initial);
   const [messages,setMessages]=useState<Message[]>([]);
   const [result,setResult]=useState<ChatResult|null>(null);
+  const [location,setLocation]=useState<ChatLocation|null>(null);
+  const [locationPending,setLocationPending]=useState(false);
+  const [locationMessage,setLocationMessage]=useState('');
+  const [conversationNotice,setConversationNotice]=useState('');
   const endRef = useRef<HTMLDivElement>(null);
-  const mutation=useMutation({mutationFn:(history:Message[])=>api<ChatResult>('/chat',{method:'POST',body:JSON.stringify({messages:history})}),onSuccess:data=>{setResult(data);setMessages(prev=>[...prev,{role:'assistant',content:data.reply}]);}});
-  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth',block:'nearest'});},[messages,mutation.isPending]);
-  function send(event:FormEvent){event.preventDefault();if(!input.trim()||mutation.isPending)return;const history:Message[]=[...messages,{role:'user',content:input.trim()}];setMessages(history);setInput('');mutation.mutate(history);}
-  function reset(){setMessages([]);setResult(null);setInput('');mutation.reset();}
-  return <div className="page-wrap chat-page"><div className="page-heading compact-heading"><div><span className="eyebrow">LET'S TALK ABOUT YOUR CARE</span><h1>편하게 이야기해 주세요</h1><p>불편한 증상과 희망 지역을 알려주시면, 진료과와 병원을 함께 찾아드릴게요.</p></div><button className="button secondary small" onClick={reset} disabled={mutation.isPending}><RefreshCw size={16}/>새 상담</button></div><Notice>AI 안내는 진단이 아닌 진료과 안내입니다. 증상이 위급하거나 응급 상황이면 119 또는 응급실을 이용해 주세요.</Notice><div className="chat-layout"><section className="chat-panel panel"><div className="chat-panel-heading"><span className="assistant-icon"><Sparkles size={22}/></span><div><strong>AI 진료과 안내</strong><small>확인된 병원 정보와 함께 안내해요</small></div><span className="model-label">6.2 Sol</span></div><div className="messages" aria-live="polite"><div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble"><strong>안녕하세요. 병원예약도우미예요.</strong><p>어디가 불편하신가요? 증상이 시작된 때와 병원을 찾고 싶은 지역을 알려주세요.</p><p className="message-example">“어제부터 목이 붓고 아파요. 수원 영통 근처로 찾아주세요.”</p></div></div>{messages.map((message,i)=><div key={i} className={`message ${message.role}`}>{message.role==='assistant'&&<span className="message-avatar"><Plus size={20}/></span>}<div className="message-bubble">{message.content}</div></div>)}{mutation.isPending&&<div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble thinking"><span/><span/><span/><span className="sr-only">증상과 병원 정보를 확인 중입니다</span></div></div>}{mutation.isError&&<div className="chat-error"><Notice tone="error">{mutation.error.message}</Notice><button className="text-button" onClick={()=>mutation.mutate(messages)}>같은 내용으로 다시 시도</button></div>}<div ref={endRef}/></div><form className="chat-compose" onSubmit={send}><label htmlFor="chat-input" className="sr-only">상담 메시지</label><textarea id="chat-input" rows={2} maxLength={2000} placeholder="증상과 희망 지역을 입력해 주세요" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send(e);}}}/><button className="button primary send-button" disabled={!input.trim()||mutation.isPending} type="submit" aria-label="메시지 보내기">{mutation.isPending?<LoaderCircle className="spin" size={20}/>:<Send size={20}/>}</button></form><p className="chat-privacy"><ShieldCheck size={14}/>증상 원문은 서버에 기본 저장하지 않아요.</p></section><aside className="chat-results"><div className="chat-results-title"><HospitalIcon size={21}/><h2>함께 살펴볼 병원</h2>{result?.hospitals.length? <span className="count-pill">{result.hospitals.length}</span>:null}</div>{result?.notice&&<Notice tone={result.mode==='FALLBACK'?'warning':'info'}>{result.notice}</Notice>}{result?.mode==='FALLBACK'&&!result.notice&&<Notice tone="warning">AI 연결이 원활하지 않아 기본 안내를 표시하고 있어요. 직접 검색도 이용할 수 있어요.</Notice>}{result?.emergency&&<Notice tone="error">응급 상황이 의심되면 예약보다 즉시 도움을 요청하는 것이 우선이에요.</Notice>}{result?.hospitals.length?<div className="chat-hospital-list">{result.hospitals.map(h=><HospitalCard key={h.id} hospital={h} compact onBooking={onBooking} department={result.departmentCode}/>)}</div>:<div className="recommendation-empty"><div className="recommendation-art"><HospitalIcon size={42}/><Search size={24}/></div><h3>{result?.needsMoreInfo?'조금만 더 알려주세요':'이야기를 듣고 찾아드릴게요'}</h3><p>증상과 희망 지역을 알려주시면<br/>확인된 병원 정보를 여기에 보여드려요.</p><button className="button outline small" onClick={()=>go('/search')}>직접 병원 찾기</button></div>}<div className="chat-tip"><ShieldCheck size={20}/><p>AI가 병원을 임의로 만들지 않아요.<br/>공공데이터에서 조회한 병원과 근거를 사용합니다.</p></div></aside></div></div>;
+  const lastRequest=useRef<ChatRequest|null>(null);
+  const active=useRef(true);
+  const mutation=useMutation({
+    mutationFn:(request:ChatRequest)=>api<ChatResult>('/chat',{method:'POST',body:JSON.stringify(request)}),
+    onSuccess:(data,request)=>{
+      if(!active.current)return;
+      setResult(data);
+      setMessages([...request.messages,{role:'assistant',content:data.reply}]);
+    }
+  });
+  const emergency=isEmergencyResult(result);
+  const recommendations=chatRecommendations(result);
+  const options=mutation.isPending?[]:chatFollowUpOptions(result);
+  const busy=mutation.isPending||locationPending;
+  const capacityNotice=chatConversationLimit(messages,input)||conversationNotice;
+  useEffect(()=>{active.current=true;return()=>{active.current=false;};},[]);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth',block:'nearest'});},[messages,mutation.isPending,result,capacityNotice]);
+  function sendText(text:string,nextLocation:ChatLocation|null=location){
+    const content=text.trim();
+    if(!content||content.length>CHAT_MESSAGE_LIMIT||busy)return;
+    const limit=chatConversationLimit(messages,content);
+    if(limit){setConversationNotice(limit);return;}
+    const request=chatRequest([...messages,{role:'user',content}],nextLocation);
+    setMessages(request.messages);setResult(null);setInput('');setConversationNotice('');
+    lastRequest.current=request;mutation.mutate(request);
+  }
+  function send(event:FormEvent){event.preventDefault();sendText(input);}
+  function retry(){
+    if(!lastRequest.current||busy)return;
+    setResult(null);mutation.mutate(lastRequest.current);
+  }
+  function reset(){
+    setMessages([]);setResult(null);setInput('');setLocation(null);setLocationMessage('');setConversationNotice('');
+    lastRequest.current=null;mutation.reset();
+  }
+  function useCurrentLocation(){
+    if(busy)return;
+    if(!navigator.geolocation){setLocationMessage('이 브라우저에서는 위치를 사용할 수 없어요. 원하는 시·구·동을 직접 입력해 주세요.');return;}
+    setLocationPending(true);setLocationMessage('브라우저에서 위치 사용을 허용하면 가까운 병원을 찾는 데 사용해요.');
+    navigator.geolocation.getCurrentPosition(position=>{
+      if(!active.current)return;
+      setLocationPending(false);
+      const nextLocation=chatLocation(position.coords.latitude,position.coords.longitude);
+      if(!nextLocation){setLocationMessage('국내 병원만 안내할 수 있어요. 원하는 국내 지역을 직접 입력해 주세요.');return;}
+      const selection=chatLocationSelection(result);
+      setLocation(nextLocation);setLocationMessage(selection.message);
+      if(selection.reply)sendText(selection.reply,nextLocation);
+    },error=>{
+      if(!active.current)return;
+      setLocationPending(false);
+      setLocationMessage(error.code===1?'위치 사용을 허용하지 않았어요. 원하는 시·구·동을 직접 입력해 주세요.':'위치를 가져오지 못했어요. 다시 시도하거나 원하는 지역을 직접 입력해 주세요.');
+    },{enableHighAccuracy:false,maximumAge:300000,timeout:10000});
+  }
+  function removeLocation(){
+    setLocation(null);setResult(null);setLocationMessage('현재 위치 사용을 해제했어요. 원하는 지역을 직접 입력해 주세요.');
+    if(lastRequest.current)lastRequest.current=chatRequest(lastRequest.current.messages,null);
+  }
+  return <div className="page-wrap chat-page">
+    <div className="page-heading compact-heading"><div><span className="eyebrow">LET'S TALK ABOUT YOUR CARE</span><h1>편하게 이야기해 주세요</h1><p>증상과 진료 목적을 이야기하면, 필요한 진료 분야와 병원 후보를 함께 살펴봐요.</p></div><button className="button secondary small" onClick={reset} disabled={busy}><RefreshCw size={16}/>새 상담</button></div>
+    <Notice>AI 안내는 진단이 아닌 진료과 안내입니다. 증상이 위급하거나 응급 상황이면 119 또는 응급실을 이용해 주세요.</Notice>
+    <div className="chat-layout"><section className="chat-panel panel">
+      <div className="chat-panel-heading"><span className="assistant-icon"><Sparkles size={22}/></span><div><strong>AI 진료과 안내</strong><small>증상과 희망하는 진료에 맞춰 함께 찾아요</small></div><span className="model-label">6.2 Sol</span></div>
+      <div className="messages" aria-live="polite" aria-busy={mutation.isPending}>
+        <div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble"><strong>안녕하세요. 병원예약도우미예요.</strong><p>어디가 불편하신가요? 증상이 언제 시작됐는지, 더 심해졌는지, 어떤 진료를 받고 싶은지 편하게 이야기해 주세요. 필요한 내용을 하나씩 여쭤볼게요.</p><p className="message-example">“사흘 전부터 속이 쓰려요. 어제보다 심해져서 처음 진료를 받아보려 해요.”</p></div></div>
+        {messages.map((message,i)=><div key={i} className={`message ${message.role}`}>{message.role==='assistant'&&<span className="message-avatar"><Plus size={20}/></span>}<div className="message-bubble">{message.content}</div></div>)}
+        {mutation.isPending&&<div className="message assistant"><span className="message-avatar"><Plus size={20}/></span><div className="message-bubble chat-working" role="status"><div className="thinking" aria-hidden="true"><span/><span/><span/></div><p>상담 내용을 살펴보고 있어요. 병원과 웹 출처를 찾는 경우에는 조금 더 걸릴 수 있어요.</p></div></div>}
+        {mutation.isError&&<div className="chat-error"><Notice tone="error">{mutation.error.message}</Notice><button className="text-button" onClick={retry} disabled={busy}>같은 내용으로 다시 시도</button></div>}
+        {options.length>0&&<div className="chat-follow-up"><span>선택하거나 아래에 자유롭게 답해 주세요.</span><div>{options.map(option=><button key={option} type="button" className="chat-choice" disabled={busy} onClick={()=>sendText(option)}>{option}<ChevronRight size={14}/></button>)}</div></div>}
+        {capacityNotice&&<div className="chat-conversation-limit"><Notice tone="warning">{capacityNotice} 현재 대화와 입력은 그대로 남아 있어요. 새 상담에서는 증상과 진료 목적을 다시 알려주세요.</Notice><button type="button" className="button secondary small" onClick={reset} disabled={busy}><RefreshCw size={14}/>새 상담 시작</button></div>}
+        <div ref={endRef}/>
+      </div>
+      {!emergency&&<div className="chat-location-control"><div><button type="button" className="text-button" disabled={busy} onClick={useCurrentLocation}>{locationPending?<LoaderCircle className="spin" size={14}/>:<MapPin size={14}/>} {location?'현재 위치 다시 확인':result?.carePreference==='SPECIALIST'?'내 위치를 거리 표시 기준으로 사용':'내 위치로 가까운 병원 찾기'}</button>{location&&<button type="button" className="text-button location-clear" onClick={removeLocation} disabled={busy}>위치 해제</button>}</div><p role="status">{locationMessage||'위치 사용은 선택이에요. 원하는 지역을 직접 입력해도 돼요.'}</p></div>}
+      <form className="chat-compose" onSubmit={send}><label htmlFor="chat-input" className="sr-only">상담 메시지</label><textarea id="chat-input" rows={2} maxLength={CHAT_MESSAGE_LIMIT} placeholder="증상, 달라진 점, 원하는 진료를 편하게 이야기해 주세요" value={input} onChange={e=>{setInput(e.target.value);setConversationNotice('');}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send(e);}}}/><button className="button primary send-button" disabled={!input.trim()||busy||!!capacityNotice} type="submit" aria-label="메시지 보내기">{mutation.isPending?<LoaderCircle className="spin" size={20}/>:<Send size={20}/>}</button></form>
+      <p className="chat-privacy"><ShieldCheck size={14}/>증상 원문과 현재 위치는 서버에 기본 저장하지 않아요.</p>
+    </section><aside className="chat-results">
+      <div className="chat-results-title"><HospitalIcon size={21}/><h2>함께 살펴볼 병원</h2>{recommendations.length>0&&<span className="count-pill">{recommendations.length}</span>}</div>
+      {result?.notice&&<Notice tone={result.mode==='FALLBACK'?'warning':'info'}>{result.notice}</Notice>}
+      {result?.mode==='FALLBACK'&&!result.notice&&<Notice tone="warning">AI 연결이 원활하지 않아 기본 안내를 표시하고 있어요. 직접 검색도 이용할 수 있어요.</Notice>}
+      {result?.careGuidance&&<Notice tone={result.promptCare?'warning':'info'}>{result.careGuidance}</Notice>}
+      {emergency?<Notice tone="error">응급 상황이 의심되면 병원을 비교하거나 예약하기보다 즉시 도움을 요청하는 것이 우선이에요.</Notice>:recommendations.length>0?<><div className="chat-results-context">{result?.specialty&&<strong>상담 분야 · {result.specialty}</strong>}<p>{result?.carePreference==='NEARBY'?(location?'현재 위치와의 직선거리를 참고한 후보예요. 실제 이동 시간과 진료 가능 여부는 별도로 확인해 주세요.':'희망 지역의 병원 후보예요. 현재 위치를 사용하지 않아 가까운 순서와는 다를 수 있어요.'):'추천 이유와 출처를 함께 살펴보세요. 병원 간 우열이나 치료 결과를 보장하지 않아요.'}</p></div><div className="chat-hospital-list">{recommendations.map(h=><HospitalCard key={h.id} hospital={h} compact onBooking={onBooking} department={h.departmentCode}/>)}</div><p className="chat-booking-note">이 서비스의 의료진·예약 일정은 시연용이며 실제 병원 예약으로 연결되지 않아요.</p></>:<div className="recommendation-empty"><div className="recommendation-art"><HospitalIcon size={42}/><Search size={24}/></div><h3>{mutation.isPending?'상담에 맞는 안내를 준비하고 있어요':result?.needsMoreInfo?'조금만 더 알려주세요':result?'조건에 맞는 후보를 아직 찾지 못했어요':'이야기를 듣고 찾아드릴게요'}</h3><p>{mutation.isPending?'새로운 답변을 준비하는 동안 잠시 기다려 주세요.':result?.needsMoreInfo?'증상과 진료 선호를 확인한 뒤 병원 후보를 보여드려요.':'대화로 조건을 더 알려주시거나 직접 병원을 검색해 보세요.'}</p>{!mutation.isPending&&<button className="button outline small" onClick={()=>go('/search')}>직접 병원 찾기</button>}</div>}
+      {!emergency&&<div className="chat-tip"><ShieldCheck size={20}/><p>저장된 공공 병원 정보를 바탕으로 안내해요.<br/>전문 진료 후보에는 참고한 웹 출처와 조회 시각을 함께 표시해요.</p></div>}
+    </aside></div>
+  </div>;
 }
 
 function BookingPage({selection,user,login,onDone}:{selection:BookingSelection;user:User|null;login:()=>void;onDone:()=>void}){
