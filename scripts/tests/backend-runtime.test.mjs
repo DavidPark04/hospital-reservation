@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 import {configurationFingerprint,createBackendJarCopy,readBackendState,trackBackend} from '../backend-runtime.mjs';
+import {loadLocalEnv,readLocalConfig} from '../local-env.mjs';
 
 function fixture(t) {
   const temporaryRoot=fs.realpathSync(os.tmpdir());
@@ -19,6 +20,21 @@ function fixture(t) {
   fs.writeFileSync(source,'first complete build');
   return {directory,source,copies:path.join(directory,'runtime-jars'),state:path.join(directory,'process.json')};
 }
+
+test('local AI key source is explicit and preserves ordinary environment overrides', t=>{
+  const {directory}=fixture(t);
+  const notes=path.join(directory,'api.txt');
+  const config=path.join(directory,'.env');
+  fs.writeFileSync(notes,'OpenAI\nsk-project-fixture-key\n');
+  fs.writeFileSync(config,`HOSPITAL_API_FILE=${notes}\nHOSPITAL_OPENAI_KEY_SOURCE=api-file\nJWT_SECRET=test-fixture\n`);
+  const parent={OPENAI_API_KEY:'sk-system-fixture-key'};
+  assert.equal(loadLocalEnv(readLocalConfig(config,parent)).OPENAI_API_KEY,'sk-project-fixture-key');
+  const ordinary=readLocalConfig(config,{...parent,HOSPITAL_OPENAI_KEY_SOURCE:'environment'});
+  assert.equal(loadLocalEnv(ordinary).OPENAI_API_KEY,parent.OPENAI_API_KEY);
+  assert.equal(loadLocalEnv({...ordinary,OPENAI_API_KEY:''}).OPENAI_API_KEY,'sk-project-fixture-key');
+  fs.writeFileSync(notes,'HIRA key only\n');
+  assert.throws(()=>loadLocalEnv(readLocalConfig(config,parent)),/must contain the project OpenAI API key/);
+});
 
 test('a rebuilt source cannot replace the artifact read by an existing JVM',t=>{
   const files=fixture(t);
