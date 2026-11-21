@@ -227,18 +227,17 @@ public class AuthService {
         return false;
     }
     private void requireAvailableContacts(String normalizedName, String phone, String normalizedEmail) {
-        Document existing = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("phone").is(phone)), Document.class, "users");
-        if (existing != null) throw contactConflict(existing, normalizedName, phone);
-        existing = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("emailNormalized").is(normalizedEmail)), Document.class, "users");
-        if (existing != null) throw contactConflict(existing, normalizedName, phone);
-    }
-    private static ApiException contactConflict(Document existing, String normalizedName, String phone) {
-        String existingName = existing.get("name") instanceof String name ? MemberIdentity.normalizedName(name) : "";
-        String existingPhone = existing.get("phone") instanceof String value ? MemberIdentity.normalizedPhone(value) : "";
-        if (normalizedName.equals(existingName) && phone.equals(existingPhone)) {
-            return new MemberIdentityConflict(existing.getString("authProvider"));
+        Document phoneMember = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("phone").is(phone)), Document.class, "users");
+        if (hasMatchingName(phoneMember, normalizedName)) throw new MemberIdentityConflict(phoneMember.getString("authProvider"));
+        Document emailMember = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("emailNormalized").is(normalizedEmail)), Document.class, "users");
+        if (hasMatchingName(emailMember, normalizedName)) throw new MemberIdentityConflict(emailMember.getString("authProvider"));
+        if (phoneMember != null || emailMember != null) {
+            throw new ApiException(409, "이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.");
         }
-        return new ApiException(409, "이미 가입된 정보가 있어요. 입력 정보를 확인해 주세요.");
+    }
+    private static boolean hasMatchingName(Document member, String normalizedName) {
+        return member != null && member.get("name") instanceof String name
+                && normalizedName.equals(MemberIdentity.normalizedName(name));
     }
     private static String text(Map<String, Object> body, String key) {
         Object value = body.get(key);
