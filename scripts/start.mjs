@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {root,loadLocalEnv,DEFAULT_MONGODB_URI} from './local-env.mjs';
-import {backendJar,inspectBackend,trackBackend,stopOwnedChildren,resolveJavaExecutable} from './backend-runtime.mjs';
+import {backendJar,createBackendJarCopy,inspectBackend,trackBackend,stopOwnedChildren,resolveJavaExecutable} from './backend-runtime.mjs';
 
 const env=loadLocalEnv();
 const children=[];
@@ -55,8 +55,11 @@ try {
         if(!mongoReady)throw new Error('MongoDB could not start. Check the messages above.');
       }
     }
-    const backend=launch(javaExecutable,['-Dfile.encoding=UTF-8','-jar',backendJar]);
-    trackBackend(backend,env,{onError:()=>{console.error('Could not record backend process state.');shutdown(1);}});
+    const runtimeJar=createBackendJarCopy(env);
+    let backend;
+    try {backend=launch(javaExecutable,['-Dfile.encoding=UTF-8','-jar',runtimeJar.jar]);}
+    catch(error) {runtimeJar.cleanup();throw error;}
+    trackBackend(backend,env,{runtimeJar,onError:()=>{console.error('Could not record backend process state.');shutdown(1);}});
     await waitFor('http://127.0.0.1:18081/api/health',60);
   }
   if(!await alive('http://127.0.0.1:5174'))launch(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5174'],path.join(root,'frontend'));
