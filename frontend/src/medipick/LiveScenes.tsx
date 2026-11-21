@@ -162,7 +162,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
     <section className="sc-pane sc-map-stage" data-film-page="map" inert={phase!==3} aria-label="선택한 병원의 지도와 길찾기">
       <div className="ls-map">
         {hospital ? <>
-          {phase===3 && <HospitalLocation hospital={hospital}/>}
+          {phase>=2 && phase<=4 && <HospitalLocation hospital={hospital}/>}
           <div className="ls-map-controls">{candidates()}<button type="button" className="ls-link" onClick={()=>goToChapter(4)}>가상 의료진 보기 <ArrowRight size={15}/></button></div>
         </> : <div className="ls-map-empty"><MapPin size={31}/><QueryStatus loading={pending} error={error} retry={()=>list.refetch()} message={statusText}/><button type="button" className="ls-link" onClick={()=>goToChapter(2)}>병원 찾기 <ArrowRight size={15}/></button></div>}
       </div>
