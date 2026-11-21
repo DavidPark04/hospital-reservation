@@ -8,7 +8,7 @@ export const DEPARTMENTS = Object.freeze({'01':'내과','02':'신경과','03':'�
   '05':'정형외과','06':'신경외과','10':'산부인과','11':'소아청소년과','12':'안과','13':'이비인후과',
   '14':'피부과','15':'비뇨의학과','21':'재활의학과','23':'가정의학과','49':'치과','80':'한방내과'});
 const SOURCE = 'https://www.data.go.kr/data/15001698/openapi.do';
-const COLLECTION = 'hospitalBasicCatalog';
+const COLLECTION = 'hospitals';
 
 export class SyncError extends Error {
   constructor(code) { super(code); this.name='SyncError'; this.code=code; }
@@ -103,6 +103,7 @@ function emit(event,fields={}) { console.log(JSON.stringify({event,...fields}));
 
 export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),progress=emit,heartbeatMs=30_000}={}) {
   const {manifest,documents}=snapshot;
+  if(await db.listCollections({name:'hospitalBasicCatalog'},{nameOnly:true}).hasNext())throw new SyncError('hospital_collection_migration_required');
   const catalog=db.collection(COLLECTION),runs=db.collection('hospitalImportRuns');
   const runId=crypto.randomUUID(),owner=crypto.randomUUID(),lockId='hospital-basic-sync-lock';
   let locked=false,started=false,heartbeatTimer=null,heartbeat=Promise.resolve(),lockFailure=null;
@@ -132,6 +133,11 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
         if(!incoming||new Date(incoming.firstFetchedAt)<new Date(times.firstFetchedAt)||new Date(incoming.lastFetchedAt)<new Date(times.lastFetchedAt))throw new SyncError('snapshot_older_than_started_generation');
       }
     }
+    const current=new Map();
+    for await(const row of catalog.find({},{projection:{_id:1,provider:1,active:1,basicSourceHash:1,catalogHash:1}})) {
+      if(row.provider!=='HIRA'||typeof row.basicSourceHash!=='string'||typeof row.catalogHash!=='string')throw new SyncError('hospital_collection_migration_required');
+      current.set(row._id,row);
+    }
     if(apply) {
       await renewLock();
       // This marker survives failed/partial applies, so an older snapshot cannot
@@ -140,8 +146,6 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
         firstFetchedAt:new Date(manifest.firstFetchedAt),lastFetchedAt:new Date(manifest.lastFetchedAt),
         scopeTimes:manifest.scopeTimes,sourceHash:manifest.sha256}},{upsert:true});
     }
-    const current=new Map();
-    for await(const row of catalog.find({provider:'HIRA'},{projection:{_id:1,active:1,basicSourceHash:1,catalogHash:1}}))current.set(row._id,row);
     const missing=[...current.values()].filter(row=>row.active!==false&&!documents.has(row._id)).map(row=>row._id);
     assertReasonableRemoval([...current.values()].filter(row=>row.active!==false).length,missing.length);
     const totals={rows:documents.size,inserted:0,updated:0,reactivated:0,unchanged:0,retired:missing.length};

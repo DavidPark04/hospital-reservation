@@ -101,18 +101,18 @@ test('Mongo integration: unchanged sync writes no hospital records; missing/retu
     const snapshot={manifest,documents:new Map([[a._id,a],[b._id,b]])};
     const initial=await applySnapshot(db,snapshot,{apply:true,progress:()=>{}});
     assert.equal(initial.inserted,2);
-    await db.collection('hospitals').insertOne({_id:'preserved',departments:[{code:'01'}]});
+    await db.collection('hospitalDetails').insertOne({_id:'preserved',departments:[{code:'01'}]});
     await db.collection('users').insertOne({_id:'preserved'});
-    const before=await db.collection('hospitalBasicCatalog').find({}).sort({_id:1}).toArray();
+    const before=await db.collection('hospitals').find({}).sort({_id:1}).toArray();
     const repeated=await applySnapshot(db,snapshot,{apply:true,progress:()=>{}});
     assert.equal(repeated.unchanged,2);
     assert.equal(repeated.updated,0);
-    assert.deepEqual(await db.collection('hospitalBasicCatalog').find({}).sort({_id:1}).toArray(),before);
+    assert.deepEqual(await db.collection('hospitals').find({}).sort({_id:1}).toArray(),before);
     const one={manifest:{...manifest,rows:1},documents:new Map([[a._id,a]])};
     assert.equal((await applySnapshot(db,one,{apply:true,progress:()=>{}})).retired,1);
-    assert.equal((await db.collection('hospitalBasicCatalog').findOne({_id:b._id})).active,false);
+    assert.equal((await db.collection('hospitals').findOne({_id:b._id})).active,false);
     assert.equal((await applySnapshot(db,snapshot,{apply:true,progress:()=>{}})).reactivated,1);
-    assert.equal(await db.collection('hospitals').countDocuments({}),1);
+    assert.deepEqual(await db.collection('hospitalDetails').findOne({_id:'preserved'}),{_id:'preserved',departments:[{code:'01'}]});
     assert.equal(await db.collection('users').countDocuments({}),1);
     assert.equal((await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-current'})).expectedRows,2);
     const older={...snapshot,manifest:{...manifest,lastFetchedAt:'2026-11-20T00:00:00Z'}};
@@ -121,9 +121,55 @@ test('Mongo integration: unchanged sync writes no hospital records; missing/retu
     await db.collection('hospitalImportRuns').insertOne({_id:'hospital-basic-sync-lock',owner:'other-run',expiresAt:new Date(Date.now()+60000)});
     await assert.rejects(applySnapshot(db,snapshot,{apply:true,progress:()=>{}}),/catalog_sync_already_running/);
     await db.collection('hospitalImportRuns').deleteOne({_id:'hospital-basic-sync-lock',owner:'other-run'});
-    await db.collection('hospitalBasicCatalog').updateOne({_id:a._id},{$set:{'apiFields.addr':'corrupted content'}});
+    await db.collection('hospitals').updateOne({_id:a._id},{$set:{'apiFields.addr':'corrupted content'}});
     await assert.rejects(applySnapshot(db,snapshot,{apply:true,progress:()=>{}}),/database_catalog_verification_failed/);
     assert.equal((await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-current'})).expectedRows,2);
+  }finally{await db.dropDatabase();await client.close();}
+});
+
+test('legacy and interrupted collection renames block sync; completed rename retains IDs and details', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  const {MongoClient}=await import('mongodb');
+  const client=new MongoClient(process.env.MONGODB_TEST_URI);
+  await client.connect();
+  const db=client.db('catalog_sync_test_'+crypto.randomUUID().replaceAll('-',''));
+  try {
+    const basic=normalizeRow(row());
+    const detail={_id:basic._id,provider:'HIRA',externalId:basic.externalId,departments:[{code:'01'}],detailFetchedAt:new Date(time)};
+    const snapshot={manifest:{rows:1,sha256:'source',scopeCounts:{basic:1},scopeTimes:scopeTimes(),firstFetchedAt:time,lastFetchedAt:time},documents:new Map([[basic._id,basic]])};
+    await db.collection('hospitalBasicCatalog').insertOne(basic);
+    await db.collection('hospitals').insertOne(detail);
+    for(const apply of [false,true])await assert.rejects(applySnapshot(db,snapshot,{apply,progress:()=>{}}),/hospital_collection_migration_required/);
+    assert.deepEqual(await db.collection('hospitals').findOne({_id:basic._id}),detail);
+    assert.deepEqual(await db.collection('hospitalBasicCatalog').findOne({_id:basic._id}),basic);
+    assert.equal(await db.collection('hospitalImportRuns').countDocuments({}),0);
+    await db.collection('hospitals').rename('hospitalDetails');
+    await assert.rejects(applySnapshot(db,snapshot,{apply:true,progress:()=>{}}),/hospital_collection_migration_required/);
+    assert.equal(await db.listCollections({name:'hospitals'},{nameOnly:true}).hasNext(),false);
+    await db.collection('hospitalBasicCatalog').rename('hospitals');
+    const result=await applySnapshot(db,snapshot,{apply:true,progress:()=>{}});
+    assert.equal(result.unchanged,1);
+    assert.equal(result.inserted,0);
+    assert.equal(result.updated,0);
+    assert.deepEqual(await db.collection('hospitals').findOne({_id:basic._id}),basic);
+    assert.deepEqual(await db.collection('hospitalDetails').findOne({_id:basic._id}),detail);
+    assert.equal(await db.listCollections({name:'hospitalBasicCatalog'},{nameOnly:true}).hasNext(),false);
+  }finally{await db.dropDatabase();await client.close();}
+});
+
+test('detailed hospital records in the basic target stop sync before hospital or generation writes', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  const {MongoClient}=await import('mongodb');
+  const client=new MongoClient(process.env.MONGODB_TEST_URI);
+  await client.connect();
+  const db=client.db('catalog_sync_test_'+crypto.randomUUID().replaceAll('-',''));
+  try {
+    const basic=normalizeRow(row());
+    const detail={_id:'legacy-detail',provider:'HIRA',externalId:'legacy-hospital',departments:[{code:'01'}]};
+    await db.collection('hospitals').insertMany([basic,detail]);
+    const before=await db.collection('hospitals').find({}).sort({_id:1}).toArray();
+    const snapshot={manifest:{rows:1,sha256:'source',scopeCounts:{basic:1},scopeTimes:scopeTimes(),firstFetchedAt:time,lastFetchedAt:time},documents:new Map([[basic._id,basic]])};
+    for(const apply of [false,true])await assert.rejects(applySnapshot(db,snapshot,{apply,progress:()=>{}}),/hospital_collection_migration_required/);
+    assert.deepEqual(await db.collection('hospitals').find({}).sort({_id:1}).toArray(),before);
+    assert.equal(await db.collection('hospitalImportRuns').countDocuments({}),0);
   }finally{await db.dropDatabase();await client.close();}
 });
 
@@ -139,8 +185,8 @@ test('failed newer apply keeps a high-water mark, including department collectio
     await applySnapshot(db,old,{apply:true,progress:()=>{}});
     const changed=normalizeRow(row({apiFields:{...raw,addr:'newer address'},fetchedAt:later}));
     const newer={manifest:{...manifest,sha256:'new',scopeTimes:scopeTimes(later),firstFetchedAt:later,lastFetchedAt:later},documents:new Map([[changed._id,changed]])};
-    const catalog=db.collection('hospitalBasicCatalog');
-    const interrupted={stats:()=>db.stats(),collection:name=>name!=='hospitalBasicCatalog'?db.collection(name):new Proxy(catalog,{get(target,key){
+    const catalog=db.collection('hospitals');
+    const interrupted={listCollections:(...args)=>db.listCollections(...args),stats:()=>db.stats(),collection:name=>name!=='hospitals'?db.collection(name):new Proxy(catalog,{get(target,key){
       if(key==='bulkWrite')return async(...args)=>{await target.bulkWrite(...args);throw new Error('simulated_write_interruption');};
       return typeof target[key]==='function'?target[key].bind(target):target[key];
     }})};
@@ -162,8 +208,8 @@ test('heartbeat covers slow pre-write work and lock loss prevents publication', 
   try {
     const doc=normalizeRow(row());
     const snapshot={manifest:{rows:1,sha256:'source',scopeCounts:{basic:1},scopeTimes:scopeTimes(),firstFetchedAt:time,lastFetchedAt:time},documents:new Map([[doc._id,doc]])};
-    const runs=db.collection('hospitalImportRuns'),catalog=db.collection('hospitalBasicCatalog');
-    const slow={collection:name=>db.collection(name),stats:async()=>{
+    const runs=db.collection('hospitalImportRuns'),catalog=db.collection('hospitals');
+    const slow={listCollections:(...args)=>db.listCollections(...args),collection:name=>db.collection(name),stats:async()=>{
       await runs.updateOne({_id:'hospital-basic-sync-lock'},{$set:{expiresAt:new Date(Date.now()+100)}});
       await new Promise(resolve=>setTimeout(resolve,180));
       assert.ok((await runs.findOne({_id:'hospital-basic-sync-lock'})).expiresAt>new Date(Date.now()+60000));
@@ -171,7 +217,7 @@ test('heartbeat covers slow pre-write work and lock loss prevents publication', 
     }};
     await applySnapshot(slow,snapshot,{apply:true,progress:()=>{},heartbeatMs:10});
     const latest=await runs.findOne({_id:'hospital-basic-current'});
-    const stolen={stats:()=>db.stats(),collection:name=>name!=='hospitalBasicCatalog'?db.collection(name):new Proxy(catalog,{get(target,key){
+    const stolen={listCollections:(...args)=>db.listCollections(...args),stats:()=>db.stats(),collection:name=>name!=='hospitals'?db.collection(name):new Proxy(catalog,{get(target,key){
       if(key==='find')return (filter,options)=>options?target.find(filter,options):{async *[Symbol.asyncIterator](){
         for await(const entry of target.find(filter))yield entry;
         await runs.updateOne({_id:'hospital-basic-sync-lock'},{$set:{owner:'replacement-owner'}});

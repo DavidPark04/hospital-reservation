@@ -48,7 +48,7 @@ class BookingMongoIntegrationTest {
         mongo.insert(new Document("_id", "test-hospital").append("name", "시험용 가상 병원")
                 .append("address", "테스트 주소").append("tel", "000-0000-0000")
                 .append("source", "SAMPLE").append("departmentCode", "01")
-                .append("departments", List.of(new Document("code", "01").append("name", "내과"))), "hospitals");
+                .append("departments", List.of(new Document("code", "01").append("name", "내과"))), "hospitalDetails");
         booking = new BookingService(mongo, new MongoTransactionManager(factory));
         doctors = booking.doctors("test-hospital", "01");
         LocalDate next = LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1);
@@ -233,7 +233,7 @@ class BookingMongoIntegrationTest {
         List<Document> assigned = booking.doctors("catalog-only", "01");
         assertEquals(3, assigned.size());
         assertEquals(assigned, booking.doctors("catalog-only", "01"));
-        assertNull(mongo.findById("catalog-only", Document.class, "hospitals"));
+        assertNull(mongo.findById("catalog-only", Document.class, "hospitalDetails"));
     }
 
     @Test
@@ -244,7 +244,7 @@ class BookingMongoIntegrationTest {
         assertEquals("갱신된 병원", reservation.getString("hospitalName"));
         Document saved = mongo.findById(reservation.getString("id"), Document.class, "reservations");
         assertEquals("서울 갱신 주소", saved.get("snapshot", Document.class).getString("address"));
-        assertEquals("시험용 가상 병원", mongo.findById("test-hospital", Document.class, "hospitals").getString("name"));
+        assertEquals("시험용 가상 병원", mongo.findById("test-hospital", Document.class, "hospitalDetails").getString("name"));
     }
 
     @Test
