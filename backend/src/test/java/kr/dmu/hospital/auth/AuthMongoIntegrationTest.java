@@ -207,10 +207,10 @@ class AuthMongoIntegrationTest {
     void demoModeSeedsOnlyHospitalsAndNeverRecreatesUsers() {
         DefaultApplicationArguments arguments = new DefaultApplicationArguments(new String[0]);
         new DemoData(mongo, false).run(arguments);
-        assertEquals(0, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
         new DemoData(mongo, true).run(arguments);
         new DemoData(mongo, true).run(arguments);
-        assertEquals(6, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(6, mongo.getCollection("hospitalDetails").countDocuments());
         assertEquals(6, mongo.getCollection("hospitalEvidence").countDocuments());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }

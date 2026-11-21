@@ -76,7 +76,7 @@ class HospitalCacheMongoTest {
         assertEquals("1970-01-01T00:00:00Z", hospital.get("fetchedAt"));
         assertFalse(hospital.containsKey("apiFields"));
         assertFalse(hospital.containsKey("externalId"));
-        assertEquals(0, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
         verifyNoInteractions(hira);
     }
 
@@ -87,13 +87,13 @@ class HospitalCacheMongoTest {
         assertEquals(30, items.size());
         assertEquals("병원00", ((Map<?, ?>) items.getFirst()).get("name"));
         assertEquals("병원29", ((Map<?, ?>) items.getLast()).get("name"));
-        assertEquals(0, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
         verifyNoInteractions(hira);
     }
 
     @Test
     void missingSearchDoesNotCallApiOrFallBackToAnOldRealHospital() {
-        mongo.insert(basic("old", "이전 병원", "서울", "01").append("source", "LIVE"), "hospitals");
+        mongo.insert(basic("old", "이전 병원", "서울", "01").append("source", "LIVE"), "hospitalDetails");
         assertTrue(((List<?>) service.search("", "", "").get("items")).isEmpty());
         assertEquals(404, assertThrows(ApiException.class, () -> service.detail(id("old"))).getStatus());
         verifyNoInteractions(hira);
@@ -124,14 +124,18 @@ class HospitalCacheMongoTest {
 
     @Test
     void firstDetailMaterializesOnlyThatHospitalAndRepeatedReadDoesNotRewriteIt() {
-        insert(basic("opened", "선택 병원", "서울", "01"));
+        Document originalBasic = basic("opened", "선택 병원", "서울", "01");
+        mongo.insert(originalBasic, "hospitals");
         insert(basic("other", "미선택 병원", "부산", "01"));
         assertEquals("선택 병원", service.detail(id("opened")).get("name"));
         Document before = cached("opened");
-        assertEquals(1, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(1, mongo.getCollection("hospitalDetails").countDocuments());
+        assertEquals(2, mongo.getCollection("hospitals").countDocuments());
+        assertEquals(originalBasic, mongo.findById(id("opened"), Document.class, "hospitals"));
         assertEquals(1, mongo.getCollection("hospitalEvidence").countDocuments());
         service.detail(id("opened"));
         assertEquals(before, cached("opened"));
+        assertEquals(originalBasic, mongo.findById(id("opened"), Document.class, "hospitals"));
         verify(hira, never()).search(anyString(), anyString(), anyString());
         verify(hira, never()).detail(anyString(), anyString());
     }
@@ -144,7 +148,7 @@ class HospitalCacheMongoTest {
                 .append("latitude", 37.0).append("longitude", 127.0)
                 .append("location", new Document("latitude", 37.0).append("longitude", 127.0))
                 .append("detailFetchedAt", detailTime).append("detailComplete", true)
-                .append("evidence", List.of(fact(id("cached"), "SPECIAL", "투석", detailTime))), "hospitals");
+                .append("evidence", List.of(fact(id("cached"), "SPECIAL", "투석", detailTime))), "hospitalDetails");
         Map<String, Object> view = service.detail(id("cached"));
         assertEquals("새 병원명", view.get("name"));
         assertEquals("새 주소", view.get("address"));
@@ -179,7 +183,7 @@ class HospitalCacheMongoTest {
     void slowPartialDetailCannotOverwriteConcurrentCatalogUpdateOrDropExistingFacts() throws Exception {
         insert(basic("race", "이전 병원명", "이전 주소", "01"));
         mongo.insert(basic("race", "이전 병원명", "이전 주소", "01")
-                .append("detailFetchedAt", new Date(0)).append("evidence", List.of(fact(id("race"), "SPECIAL", "이전 특수진료", new Date(0)))), "hospitals");
+                .append("detailFetchedAt", new Date(0)).append("evidence", List.of(fact(id("race"), "SPECIAL", "이전 특수진료", new Date(0)))), "hospitalDetails");
         when(hira.detailsConfigured()).thenReturn(true);
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch finish = new CountDownLatch(1);
@@ -224,7 +228,7 @@ class HospitalCacheMongoTest {
     @Test
     void retiredHospitalCannotBeOpenedAndItsExistingCacheRemains() {
         insert(basic("retired", "종료 병원", "서울", "01").append("active", false));
-        mongo.insert(basic("retired", "종료 병원", "서울", "01"), "hospitals");
+        mongo.insert(basic("retired", "종료 병원", "서울", "01"), "hospitalDetails");
         assertEquals(410, assertThrows(ApiException.class, () -> service.detail(id("retired"))).getStatus());
         assertTrue(((List<?>) service.search("", "", "").get("items")).isEmpty());
         assertNotNull(cached("retired"));
@@ -233,7 +237,7 @@ class HospitalCacheMongoTest {
 
     @Test
     void samplesAppearOnlyWhenDemoIsEnabledAndCatalogIsEmpty() {
-        mongo.insert(basic("sample", "체험 병원", "서울", "01").append("source", "SAMPLE"), "hospitals");
+        mongo.insert(basic("sample", "체험 병원", "서울", "01").append("source", "SAMPLE"), "hospitalDetails");
         assertTrue(((List<?>) service.search("체험", "", "").get("items")).isEmpty());
         ReflectionTestUtils.setField(service, "demoEnabled", true);
         assertEquals("SAMPLE", service.search("체험", "", "").get("source"));
@@ -257,7 +261,7 @@ class HospitalCacheMongoTest {
     }
 
     private void insert(Document row) { mongo.insert(row, HospitalCatalog.COLLECTION); }
-    private Document cached(String external) { return mongo.findById(id(external), Document.class, "hospitals"); }
+    private Document cached(String external) { return mongo.findById(id(external), Document.class, "hospitalDetails"); }
     private static String id(String external) { return UUID.nameUUIDFromBytes(("HIRA:" + external).getBytes(StandardCharsets.UTF_8)).toString(); }
     private static Document fact(String id, String kind, String value, Date time) {
         return new Document("_id", id + kind).append("hospitalId", id).append("kind", kind)

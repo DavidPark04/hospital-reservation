@@ -44,13 +44,15 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 ## 병원 기본 목록 일일 갱신
 
-[Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 매일 `15:00 UTC`, 한국 시간 `00:00`에 실행하도록 예약합니다. 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 `hospitalBasicCatalog`에서 추가·변경·비활성화할 문서만 적용합니다. 상세 3종은 이 작업에서 수집하지 않으며 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
+[Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 매일 `15:00 UTC`, 한국 시간 `00:00`에 실행하도록 예약합니다. 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 `hospitals`에서 추가·변경·비활성화할 문서만 적용합니다. 상세 3종은 이 작업에서 수집하지 않으며 `hospitalDetails`에 저장하는 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
 
 Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API를 호출하거나 매일 재배포하지 않습니다. 일반 검색·AI 후보 조회는 기본 카탈로그를 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다.
 
 GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각 완료를 보장하지 않습니다. 공개 저장소가 60일간 비활성 상태면 스케줄이 중지될 수 있습니다. Actions에서 다시 활성화하거나 **Run workflow → main**으로 실행하고 실제 완료 건수를 확인합니다. [GitHub 예약 실행 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
 처음 배포하기 전에 기본 카탈로그 적재를 완료하고, 일일 워크플로의 성공 결과를 별도로 확인합니다. 수동 수집·계획 확인·적용 명령과 실패 복구는 [병원 목록 운영 안내](../docs/hospital-catalog.md)를 따릅니다. 아직 실행되지 않은 워크플로나 문서 추가를 운영 갱신 완료로 기록하지 않습니다.
+
+이전 DB의 `hospitalBasicCatalog`·`hospitals`를 새 버전의 `hospitals`·`hospitalDetails`로 전환할 때는 [컬렉션 이름 전환 절차](../docs/hospital-catalog.md#기존-컬렉션-이름-전환)를 따릅니다. 운영 트래픽과 같은 DB의 쓰기 작업을 중지한 구간에 이름 전환·새 버전 배포를 모두 완료하며, 기존 요청과 일일 수집이 실행 중인 상태에서는 전환하지 않습니다.
 
 ## Production 환경변수
 
