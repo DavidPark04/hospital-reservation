@@ -44,11 +44,15 @@ public class HospitalService {
     }
 
     public Map<String, Object> search(String query, String region, String department) {
+        return search(query, region, department, false);
+    }
+
+    public Map<String, Object> search(String query, String region, String department, boolean exactName) {
         query = clean(query, 80);
         region = clean(region, 80);
         department = clean(department, 2);
         if (!department.isBlank() && !Departments.contains(department)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
-        List<Criteria> filters = searchFilters(query, region);
+        List<Criteria> filters = searchFilters(query, region, exactName);
         filters.add(Criteria.where("provider").is("HIRA"));
         filters.add(Criteria.where("active").is(true));
         if (!department.isBlank()) filters.add(Criteria.where("departmentCodes").is(department));
@@ -58,7 +62,7 @@ public class HospitalService {
         List<Map<String, Object>> items = new ArrayList<>();
         for (Document row : rows) items.add(publicHospital(HospitalCatalog.combine(row, null), "CACHE"));
         if (items.isEmpty() && demoEnabled && !mongo.exists(new Query(), HospitalCatalog.COLLECTION)) {
-            List<Criteria> sampleFilters = searchFilters(query, region);
+            List<Criteria> sampleFilters = searchFilters(query, region, exactName);
             sampleFilters.add(Criteria.where("source").is("SAMPLE"));
             if (!department.isBlank()) sampleFilters.add(Criteria.where("departments.code").is(department));
             List<Document> samples = mongo.find(Query.query(new Criteria().andOperator(sampleFilters.toArray(Criteria[]::new)))
@@ -70,9 +74,12 @@ public class HospitalService {
                 : "매일 갱신해 저장한 병원 기본 정보입니다.");
     }
 
-    private List<Criteria> searchFilters(String name, String region) {
+    private List<Criteria> searchFilters(String name, String region, boolean exactName) {
         List<Criteria> filters = new ArrayList<>();
-        if (!name.isBlank()) filters.add(Criteria.where("name").regex(Pattern.quote(name), "i"));
+        if (!name.isBlank()) {
+            Criteria field = Criteria.where("name");
+            filters.add(exactName ? field.is(name) : field.regex(Pattern.quote(name), "i"));
+        }
         if (!region.isBlank()) {
             for (String token : region.split("\\s+")) filters.add(Criteria.where("address").regex(regionPattern(token), "i"));
         }

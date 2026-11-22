@@ -12,8 +12,9 @@ public class HospitalController {
     public HospitalController(HospitalService hospitals) { this.hospitals = hospitals; }
     @GetMapping("/api/hospitals")
     public Map<String, Object> search(@RequestParam(defaultValue = "") String query,
-            @RequestParam(defaultValue = "") String region, @RequestParam(defaultValue = "") String department) {
-        return hospitals.search(query, region, department);
+            @RequestParam(defaultValue = "") String region, @RequestParam(defaultValue = "") String department,
+            @RequestParam(defaultValue = "false") boolean exactName) {
+        return hospitals.search(query, region, department, exactName);
     }
     @GetMapping("/api/hospitals/{id}")
     public Map<String, Object> detail(@PathVariable String id) { return hospitals.detail(id); }

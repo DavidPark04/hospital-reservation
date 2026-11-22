@@ -102,12 +102,12 @@ function ClinicStages({hospital,department,phase,goToChapter,onBooking,onAccount
 }
 
 export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recommendation}:LiveProps) {
-  const [filters,setFilters] = useState(HOME_HOSPITAL_FILTERS)
+  const [browseFilters,setBrowseFilters] = useState<{query:string;region:string;department:string}>()
+  const filters = browseFilters || HOME_HOSPITAL_FILTERS
   const [region,setRegion] = useState(HOME_HOSPITAL_FILTERS.region)
   const [departmentFilter,setDepartmentFilter] = useState(HOME_HOSPITAL_FILTERS.department)
-  const [browse,setBrowse] = useState(false)
   const [hospitalId,setHospitalId] = useState('')
-  const consultation = !browse && recommendation
+  const consultation = !browseFilters && recommendation
   const list = useQuery({
     queryKey:['hospitals','search',filters],
     queryFn:()=>api<HospitalResult>('/hospitals?'+queryString(filters)),
@@ -115,7 +115,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
     staleTime:120_000
   })
   const results = list.data?.items||[]
-  const items = consultation ? [consultation.hospital] : browse ? results : results.filter(h=>h.name===HOME_HOSPITAL_FILTERS.query && h.source!=='SAMPLE')
+  const items = consultation ? [consultation.hospital] : browseFilters ? results : results.filter(h=>h.name===HOME_HOSPITAL_FILTERS.query && h.source!=='SAMPLE')
   const hospital = items.find(h=>h.id===hospitalId)||items[0]
   const department = (consultation ? consultation.department : filters.department)||hospital?.departmentCode||hospital?.departments?.[0]?.code||''
   const departmentLabel = hospital?.departments?.find(d=>d.code===department)?.name || DEPARTMENTS.find(d=>d.code===department)?.name || hospital?.departmentName
@@ -124,9 +124,8 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
   const pending = !consultation && list.isLoading
   const error = !consultation ? list.error : null
   function browseHospitals() {
-    setBrowse(true)
     setHospitalId('')
-    setFilters({query:'',region:region.trim(),department:departmentFilter})
+    setBrowseFilters({query:'',region:region.trim(),department:departmentFilter})
   }
   function candidates() {
     if (!items.length) return null

@@ -16,6 +16,7 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
@@ -28,6 +29,9 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** No external API calls; only an explicitly configured local replica set is used. */
 @EnabledIfEnvironmentVariable(named = "MONGODB_TEST_URI",
@@ -76,6 +80,28 @@ class HospitalCacheMongoTest {
         assertEquals("1970-01-01T00:00:00Z", hospital.get("fetchedAt"));
         assertFalse(hospital.containsKey("apiFields"));
         assertFalse(hospital.containsKey("externalId"));
+        assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
+        verifyNoInteractions(hira);
+    }
+
+    @Test
+    void exactNameUsesTheFullCatalogNameAndStillAppliesRegionAndDepartment() throws Exception {
+        String name = "서울대학교병원";
+        String address = "서울특별시 종로구";
+        insert(basic("main", name, address, "05"));
+        insert(basic("branch", name + " 분원", address, "05"));
+        insert(basic("other-region", name, "경기도 성남시", "05"));
+        insert(basic("other-department", name, address, "01"));
+        insert(basic("retired", name, address, "05").append("active", false));
+        insert(basic("other-provider", name, address, "05").append("provider", "OTHER"));
+
+        var mvc = MockMvcBuilders.standaloneSetup(new HospitalController(service)).build();
+        mvc.perform(get("/api/hospitals").param("query", name).param("region", "서울특별시").param("department", "05"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(2));
+        mvc.perform(get("/api/hospitals").param("query", name).param("region", "서울특별시").param("department", "05")
+                        .param("exactName", "true"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.source").value("CACHE"))
+                .andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.items[0].id").value(id("main")));
         assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
         verifyNoInteractions(hira);
     }
@@ -241,8 +267,11 @@ class HospitalCacheMongoTest {
         assertTrue(((List<?>) service.search("체험", "", "").get("items")).isEmpty());
         ReflectionTestUtils.setField(service, "demoEnabled", true);
         assertEquals("SAMPLE", service.search("체험", "", "").get("source"));
+        assertTrue(((List<?>) service.search("체험", "", "", true).get("items")).isEmpty());
+        assertEquals("SAMPLE", service.search("체험 병원", "서울", "01", true).get("source"));
         insert(basic("real", "실제 병원", "서울", "01"));
         assertTrue(((List<?>) service.search("체험", "", "").get("items")).isEmpty());
+        assertTrue(((List<?>) service.search("체험 병원", "", "", true).get("items")).isEmpty());
         verifyNoInteractions(hira);
     }
 
