@@ -1,0 +1,464 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1650" viewBox="0 0 2200 1650">
+<title>MediPick MongoDB ERD</title>
+<rect width="100%" height="100%" fill="#25272b"/>
+<text x="70" y="77.25999999999999" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="43" font-weight="700" fill="#f2f3f5">MediPick</text>
+<text x="296" y="72.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#afb5c0">DATABASE RELATIONSHIP DIAGRAM</text>
+<text x="72" y="122.22" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="21" font-weight="400" fill="#afb5c0">핵심 5개 컬렉션  ·  현재 운영 구조의 주요 필드  ·  2026.11.22</text>
+<polyline points="70,152 2130,152" fill="none" stroke="#454952" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="620,330.0 730,330.0 730,364.0 820,364.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="630.0,337.0 630.0,323.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="646.0" cy="330.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="820,364.0 805.0,371.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="820,364.0 805.0,364.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="820,364.0 805.0,357.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="794.0" cy="364.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="1560,330.0 1460,330.0 1460,432.0 1360,432.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="1550.0,323.0 1550.0,337.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,432.0 1375.0,425.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,432.0 1375.0,432.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,432.0 1375.0,439.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="1386.0" cy="432.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="2100,330.0 2150,330.0 2150,1114.0 2100,1114.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="2110.0,337.0 2110.0,323.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="2100,1114.0 2115.0,1107.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="2100,1114.0 2115.0,1114.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="2100,1114.0 2115.0,1121.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="2126.0" cy="1114.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="1560,1080.0 1495,1080.0 1495,1114.0 1360,1114.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="1550.0,1073.0 1550.0,1087.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,1114.0 1375.0,1107.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,1114.0 1375.0,1114.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,1114.0 1375.0,1121.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="1386.0" cy="1114.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="820,1080.0 767,1080.0 767,398.0 820,398.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="810.0,1073.0 810.0,1087.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="820,398.0 805.0,405.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="820,398.0 805.0,398.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="820,398.0 805.0,391.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="794.0" cy="398.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<polyline points="1560,1080.0 1425,1080.0 1425,466.0 1360,466.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="1550.0,1073.0 1550.0,1087.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,466.0 1375.0,459.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,466.0 1375.0,466.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1360,466.0 1375.0,473.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="1386.0" cy="466.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<rect x="85" y="226" width="540" height="607" fill="#1c1e22" stroke="none" stroke-width="1"/>
+<rect x="80" y="220" width="540" height="607" fill="#303238" stroke="#191b20" stroke-width="2"/>
+<rect x="80" y="220" width="540" height="64" fill="#181a1e" stroke="none" stroke-width="1"/>
+<text x="95" y="248.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">users</text>
+<text x="95" y="272.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">회원</text>
+<rect x="80" y="284" width="540" height="29" fill="#24272d" stroke="none" stroke-width="1"/>
+<text x="92" y="299.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">KEY</text>
+<text x="174" y="299.66" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="13" font-weight="700" fill="#afb5c0">FIELD</text>
+<text x="504" y="298.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">BSON TYPE</text>
+<rect x="80" y="313" width="540" height="34" fill="#443725" stroke="none" stroke-width="1"/>
+<polyline points="80,347 620,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,313 162,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,313 490,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="333.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#f4cb62">PK</text>
+<text x="174" y="334.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">_id</text>
+<text x="504" y="334.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="347" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,381 620,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,347 162,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,347 490,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="367.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef">UK</text>
+<text x="174" y="368.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">loginId</text>
+<text x="504" y="368.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="381" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="80,415 620,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,381 162,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,381 490,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="401.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="402.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">name</text>
+<text x="504" y="402.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="415" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,449 620,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,415 162,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,415 490,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="435.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef">UK*</text>
+<text x="174" y="436.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">phone</text>
+<text x="504" y="436.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="449" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="80,483 620,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,449 162,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,449 490,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="469.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="470.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">email</text>
+<text x="504" y="470.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="483" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,517 620,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,483 162,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,483 490,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="503.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef">UK*</text>
+<text x="174" y="504.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">emailNormalized</text>
+<text x="504" y="504.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="517" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="80,551 620,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,517 162,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,517 490,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="537.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="538.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">passwordHash</text>
+<text x="504" y="538.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="551" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,585 620,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,551 162,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,551 490,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="571.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="572.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">authProvider</text>
+<text x="504" y="572.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="585" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="80,619 620,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,585 162,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,585 490,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="605.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef">UK*</text>
+<text x="174" y="606.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">socialIdentity</text>
+<text x="504" y="606.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="619" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,653 620,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,619 162,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,619 490,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="639.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="640.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">role</text>
+<text x="504" y="640.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="80" y="653" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="80,687 620,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,653 162,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,653 490,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="673.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="674.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">memberIdentityClaimed</text>
+<text x="504" y="674.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">bool</text>
+<rect x="80" y="687" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="80,721 620,721" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="162,687 162,721" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="490,687 490,721" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="90" y="707.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="174" y="708.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">createdAt</text>
+<text x="504" y="708.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<text x="93" y="742.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK: loginId</text>
+<text x="93" y="765.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK*: phone / emailNormalized / socialIdentity (각각)</text>
+<text x="93" y="788.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">* 전화·이메일: memberIdentityClaimed=true + 빈 string 제외</text>
+<text x="93" y="811.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">* 소셜: socialIdentity가 string인 문서</text>
+<rect x="825" y="226" width="540" height="493" fill="#1c1e22" stroke="none" stroke-width="1"/>
+<rect x="820" y="220" width="540" height="493" fill="#303238" stroke="#191b20" stroke-width="2"/>
+<rect x="820" y="220" width="540" height="64" fill="#181a1e" stroke="none" stroke-width="1"/>
+<text x="835" y="248.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">reservations</text>
+<text x="835" y="272.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">예약</text>
+<rect x="820" y="284" width="540" height="29" fill="#24272d" stroke="none" stroke-width="1"/>
+<text x="832" y="299.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">KEY</text>
+<text x="914" y="299.66" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="13" font-weight="700" fill="#afb5c0">FIELD</text>
+<text x="1244" y="298.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">BSON TYPE</text>
+<rect x="820" y="313" width="540" height="34" fill="#443725" stroke="none" stroke-width="1"/>
+<polyline points="820,347 1360,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,313 902,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,313 1230,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="333.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#f4cb62">PK</text>
+<text x="914" y="334.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">_id</text>
+<text x="1244" y="334.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="347" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,381 1360,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,347 902,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,347 1230,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="367.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="914" y="368.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">userId</text>
+<text x="1244" y="368.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="381" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,415 1360,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,381 902,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,381 1230,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="401.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="914" y="402.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">slotId</text>
+<text x="1244" y="402.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="415" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,449 1360,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,415 902,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,415 1230,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="435.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="914" y="436.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">hospitalId</text>
+<text x="1244" y="436.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="449" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,483 1360,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,449 902,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,449 1230,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="469.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="914" y="470.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">doctorId</text>
+<text x="1244" y="470.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="483" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,517 1360,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,483 902,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,483 1230,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="503.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="504.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">startAt</text>
+<text x="1244" y="504.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<rect x="820" y="517" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,551 1360,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,517 902,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,517 1230,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="537.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="538.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">status</text>
+<text x="1244" y="538.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="551" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,585 1360,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,551 902,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,551 1230,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="571.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="572.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">snapshot</text>
+<text x="1244" y="572.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">object</text>
+<rect x="820" y="585" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,619 1360,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,585 902,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,585 1230,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="605.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="606.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">createdAt</text>
+<text x="1244" y="606.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<rect x="820" y="619" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,653 1360,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,619 902,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,619 1230,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="639.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="640.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">updatedAt</text>
+<text x="1244" y="640.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<text x="833" y="674.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK*: (userId, startAt) — RESERVED 상태만</text>
+<text x="833" y="697.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">탈퇴해도 예약 이력은 보관</text>
+<rect x="1565" y="226" width="540" height="504" fill="#1c1e22" stroke="none" stroke-width="1"/>
+<rect x="1560" y="220" width="540" height="504" fill="#303238" stroke="#191b20" stroke-width="2"/>
+<rect x="1560" y="220" width="540" height="64" fill="#181a1e" stroke="none" stroke-width="1"/>
+<text x="1575" y="248.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">hospitals</text>
+<text x="1575" y="272.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">병원 기본정보</text>
+<rect x="1560" y="284" width="540" height="29" fill="#24272d" stroke="none" stroke-width="1"/>
+<text x="1572" y="299.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">KEY</text>
+<text x="1654" y="299.66" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="13" font-weight="700" fill="#afb5c0">FIELD</text>
+<text x="1984" y="298.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">BSON TYPE</text>
+<rect x="1560" y="313" width="540" height="34" fill="#443725" stroke="none" stroke-width="1"/>
+<polyline points="1560,347 2100,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,313 1642,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,313 1970,347" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="333.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#f4cb62">PK</text>
+<text x="1654" y="334.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">_id</text>
+<text x="1984" y="334.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="347" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,381 2100,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,347 1642,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,347 1970,381" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="367.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="368.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">provider</text>
+<text x="1984" y="368.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="381" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,415 2100,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,381 1642,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,381 1970,415" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="401.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="402.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">externalId</text>
+<text x="1984" y="402.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="415" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,449 2100,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,415 1642,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,415 1970,449" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="435.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="436.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">name</text>
+<text x="1984" y="436.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="449" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,483 2100,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,449 1642,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,449 1970,483" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="469.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="470.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">address</text>
+<text x="1984" y="470.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="483" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,517 2100,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,483 1642,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,483 1970,517" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="503.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="504.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">tel</text>
+<text x="1984" y="504.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="517" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,551 2100,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,517 1642,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,517 1970,551" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="537.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="538.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">departmentCodes</text>
+<text x="1984" y="538.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">array</text>
+<rect x="1560" y="551" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,585 2100,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,551 1642,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,551 1970,585" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="571.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="572.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">departments</text>
+<text x="1984" y="572.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">array</text>
+<rect x="1560" y="585" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,619 2100,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,585 1642,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,585 1970,619" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="605.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="606.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">location</text>
+<text x="1984" y="606.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">object</text>
+<rect x="1560" y="619" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,653 2100,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,619 1642,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,619 1970,653" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="639.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="640.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">active</text>
+<text x="1984" y="640.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">bool</text>
+<rect x="1560" y="653" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,687 2100,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,653 1642,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,653 1970,687" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="673.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="674.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">lastChangedAt</text>
+<text x="1984" y="674.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<text x="1573" y="708.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK: (provider, externalId)</text>
+<rect x="825" y="976" width="540" height="425" fill="#1c1e22" stroke="none" stroke-width="1"/>
+<rect x="820" y="970" width="540" height="425" fill="#303238" stroke="#191b20" stroke-width="2"/>
+<rect x="820" y="970" width="540" height="64" fill="#181a1e" stroke="none" stroke-width="1"/>
+<text x="835" y="998.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">timeSlots</text>
+<text x="835" y="1022.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">예약 가능 시간</text>
+<rect x="820" y="1034" width="540" height="29" fill="#24272d" stroke="none" stroke-width="1"/>
+<text x="832" y="1049.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">KEY</text>
+<text x="914" y="1049.66" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="13" font-weight="700" fill="#afb5c0">FIELD</text>
+<text x="1244" y="1048.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">BSON TYPE</text>
+<rect x="820" y="1063" width="540" height="34" fill="#443725" stroke="none" stroke-width="1"/>
+<polyline points="820,1097 1360,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1063 902,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1063 1230,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1083.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#f4cb62">PK</text>
+<text x="914" y="1084.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">_id</text>
+<text x="1244" y="1084.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="1097" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,1131 1360,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1097 902,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1097 1230,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1117.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="914" y="1118.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">doctorId</text>
+<text x="1244" y="1118.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="820" y="1131" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,1165 1360,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1131 902,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1131 1230,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1151.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1152.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">startAt</text>
+<text x="1244" y="1152.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<rect x="820" y="1165" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,1199 1360,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1165 902,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1165 1230,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1185.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1186.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">capacity</text>
+<text x="1244" y="1186.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">int</text>
+<rect x="820" y="1199" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,1233 1360,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1199 902,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1199 1230,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1219.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1220.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">reservedCount</text>
+<text x="1244" y="1220.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">int</text>
+<rect x="820" y="1233" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,1267 1360,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1233 902,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1233 1230,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1253.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1254.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">closed</text>
+<text x="1244" y="1254.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">bool</text>
+<rect x="820" y="1267" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="820,1301 1360,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1267 902,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1267 1230,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1287.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1288.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">isVirtual</text>
+<text x="1244" y="1288.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">bool</text>
+<rect x="820" y="1301" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="820,1335 1360,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="902,1301 902,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1230,1301 1230,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="830" y="1321.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="914" y="1322.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">createdAt</text>
+<text x="1244" y="1322.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<text x="833" y="1356.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK: (doctorId, startAt)</text>
+<text x="833" y="1379.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">0 ≤ reservedCount ≤ capacity</text>
+<rect x="1565" y="976" width="540" height="425" fill="#1c1e22" stroke="none" stroke-width="1"/>
+<rect x="1560" y="970" width="540" height="425" fill="#303238" stroke="#191b20" stroke-width="2"/>
+<rect x="1560" y="970" width="540" height="64" fill="#181a1e" stroke="none" stroke-width="1"/>
+<text x="1575" y="998.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">doctors</text>
+<text x="1575" y="1022.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">의료진 · 가상 데이터</text>
+<rect x="1560" y="1034" width="540" height="29" fill="#24272d" stroke="none" stroke-width="1"/>
+<text x="1572" y="1049.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">KEY</text>
+<text x="1654" y="1049.66" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="13" font-weight="700" fill="#afb5c0">FIELD</text>
+<text x="1984" y="1048.84" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="12" font-weight="700" fill="#afb5c0">BSON TYPE</text>
+<rect x="1560" y="1063" width="540" height="34" fill="#443725" stroke="none" stroke-width="1"/>
+<polyline points="1560,1097 2100,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1063 1642,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1063 1970,1097" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1083.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#f4cb62">PK</text>
+<text x="1654" y="1084.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">_id</text>
+<text x="1984" y="1084.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1097" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,1131 2100,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1097 1642,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1097 1970,1131" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1117.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#e5a9bc">REF</text>
+<text x="1654" y="1118.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">hospitalId</text>
+<text x="1984" y="1118.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1131" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,1165 2100,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1131 1642,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1131 1970,1165" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1151.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1152.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">departmentCode</text>
+<text x="1984" y="1152.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1165" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,1199 2100,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1165 1642,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1165 1970,1199" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1185.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1186.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">sampleCode</text>
+<text x="1984" y="1186.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1199" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,1233 2100,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1199 1642,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1199 1970,1233" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1219.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1220.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">name</text>
+<text x="1984" y="1220.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1233" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,1267 2100,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1233 1642,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1233 1970,1267" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1253.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1254.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">specialty</text>
+<text x="1984" y="1254.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">string</text>
+<rect x="1560" y="1267" width="540" height="34" fill="#303238" stroke="none" stroke-width="1"/>
+<polyline points="1560,1301 2100,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1267 1642,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1267 1970,1301" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1287.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1288.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">isVirtual</text>
+<text x="1984" y="1288.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">bool</text>
+<rect x="1560" y="1301" width="540" height="34" fill="#2c2f34" stroke="none" stroke-width="1"/>
+<polyline points="1560,1335 2100,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1642,1301 1642,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="1970,1301 1970,1335" fill="none" stroke="#191b20" stroke-width="1" stroke-linejoin="round"/>
+<text x="1570" y="1321.48" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="14" font-weight="700" fill="#a7c6ef"></text>
+<text x="1654" y="1322.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="400" fill="#f2f3f5">createdAt</text>
+<text x="1984" y="1322.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">date</text>
+<text x="1573" y="1356.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">UK: (hospitalId, departmentCode, sampleCode)</text>
+<text x="1573" y="1379.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">현재 의료진은 예약 시연용 가상 데이터</text>
+<text x="80" y="1018.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">그림 읽는 법</text>
+<text x="80" y="1057.76" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="18" font-weight="700" fill="#f4cb62">PK  고유 식별키 (_id)</text>
+<text x="80" y="1089.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#a7c6ef">UK  중복 금지  /  UK*  조건부 중복 금지</text>
+<text x="80" y="1122.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#e5a9bc">REF  다른 문서의 ID를 담은 논리 참조</text>
+<text x="80" y="1160.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">괄호 안 필드는 조합 전체가 하나의 유일키예요.</text>
+<text x="80" y="1191.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">MongoDB 외래키 제약은 없으며 코드에서 연결을 관리해요.</text>
+<polyline points="88,1232 235,1232" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="98.0,1239.0 98.0,1225.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="235,1232 220.0,1239.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="235,1232 220.0,1232.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="235,1232 220.0,1225.0" fill="none" stroke="#e5a9bc" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="209.0" cy="1232.0" r="5" fill="#25272b" stroke="#e5a9bc" stroke-width="2"/>
+<text x="263" y="1233.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">하나 → 0개 이상 (1 : N)</text>
+<text x="80" y="1284.12" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="16" font-weight="400" fill="#afb5c0">전화번호·이메일은 PK가 아니라 각각 중복 방지키예요.</text>
+<text x="80" y="1418.04" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="22" font-weight="700" fill="#f2f3f5">핵심 흐름</text>
+<text x="80" y="1456.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#afb5c0">회원이 병원·의료진·시간을 선택하면 예약을 저장해요.</text>
+<text x="80" y="1489.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#afb5c0">보조 컬렉션 11개는 전체 관계도에서 볼 수 있어요.</text>
+<text x="80" y="1522.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#afb5c0">의료진·시간표는 현재 시연용 가상 데이터예요.</text>
+<text x="80" y="1555.94" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="17" font-weight="400" fill="#afb5c0">실제 병원 기준 연결이며 SAMPLE 예외는 전체도에 표시했어요.</text>
+<text x="80" y="1604.3" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif" font-size="15" font-weight="400" fill="#afb5c0">MediPick  /  MongoDB  /  핵심 관계도</text>
+</svg>
