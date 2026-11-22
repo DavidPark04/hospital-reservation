@@ -69,7 +69,7 @@ PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. �
 
 ## 병원·상담
 
-검색 파라미터는 `query`, `region`, `department`입니다. 응답은 `{items,source,message?,fetchedAt?}`이며 병원 기본 목록은 `hospitals`의 활성 자료를 이름·ID 순서로 최대 30건 반환합니다. `department`는 일일 수집에서 확인한 `departmentCodes` 소속을 검색합니다. 검색 요청은 기본 공공 API를 호출하지 않으며 저장된 자료의 `source`는 `CACHE`입니다. 응답 메시지는 "매일 갱신해 저장한 병원 기본 정보입니다."입니다. 기본 목록이 비어 있고 `DEMO_ENABLED=true`인 경우에만 `hospitalDetails`의 샘플 검색을 허용하며 `SAMPLE`로 표시합니다.
+검색 파라미터는 `query`, `region`, `department`, `exactName`입니다. 기본 병원명 검색은 부분 일치이며, `exactName=true`이면 입력한 병원명 전체가 대소문자까지 일치하는 자료를 조회합니다. 응답은 `{items,source,message?,fetchedAt?}`이며 병원 기본 목록은 `hospitals`의 활성 자료를 이름·ID 순서로 최대 30건 반환합니다. `department`는 일일 수집에서 확인한 `departmentCodes` 소속을 검색합니다. 검색 요청은 기본 공공 API를 호출하지 않으며 저장된 자료의 `source`는 `CACHE`입니다. 응답 메시지는 "매일 갱신해 저장한 병원 기본 정보입니다."입니다. 기본 목록이 비어 있고 `DEMO_ENABLED=true`인 경우에만 `hospitalDetails`의 샘플 검색을 허용하며 `SAMPLE`로 표시합니다.
 
 상세는 현재 기본 카탈로그에 저장된 병원의 최신 기본 필드와 상세 캐시를 합칩니다. 상세 3종(진료과·특수진료·전문병원 지정)은 기존처럼 필요할 때 조회하고 완전한 결과를 1시간 캐시합니다. 이때 성공한 외부 상세 조회는 `LIVE`, 저장된 상세 재사용은 `CACHE`이며, 근거마다 출처·조회 시점을 포함합니다. 기본 카탈로그에 없는 ID는 404, 비활성화된 병원은 410입니다. 명시된 샘플 병원 상세는 `SAMPLE`을 유지합니다. 의료진은 `isVirtual:true`인 저장된 가상 자료입니다.
 

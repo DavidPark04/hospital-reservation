@@ -1,2 +1,26 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1.0" /><meta name="theme-color" content="#ffffff" /><meta name="description" content="메디픽에서 증상과 원하는 진료를 이야기하고, 추천 이유와 출처를 확인해 내게 맞는 병원을 찾아보세요." /><title>메디픽 | 내게 맞는 병원 찾기</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="description" content="메디픽에서 증상과 원하는 진료를 이야기하고, 추천 이유와 출처를 확인해 내게 맞는 병원을 찾아보세요." />
+  <title>메디픽 | 내게 맞는 병원 찾기</title>
+  <script>
+    if (location.pathname === '/' && (!location.hash || location.hash === '#/' || location.hash.startsWith('#/?'))) {
+      const hero = document.createElement('link');
+      hero.rel = 'preload';
+      hero.as = 'image';
+      hero.href = '/medipick/hero.webp';
+      hero.fetchPriority = 'high';
+      document.head.append(hero);
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&amp;display=swap" media="print" onload="this.media='all'" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

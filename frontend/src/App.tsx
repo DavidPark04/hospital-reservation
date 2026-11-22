@@ -62,7 +62,7 @@ export default function App(){
   const [toast,setToast]=useState('');
   const [withdrawalReturn,setWithdrawalReturn]=useState(()=>window.location.pathname==='/mypage'?new URLSearchParams(window.location.search).get('withdrawal')||'':'');
   const profilePending=needsSocialProfile(user);
-  const homeVisible=isHome&&authReady&&!profilePending;
+  const homeVisible=isHome&&!profilePending;
   const chatRoute=route.startsWith('/chat')?route:(homeScene&&viewedRecommendation?viewedRecommendation.chatRoute:undefined);
   useLayoutEffect(()=>{
     if(homeScene)return;
@@ -164,12 +164,12 @@ export default function App(){
       {user&&<a href="#/mypage" className={active==='mypage'?'active':''}>마이페이지</a>}{user?.role==='ADMIN'&&<><a href="#/admin" className={active==='admin'?'active':''}>일정 관리</a><a href="#/admin/members" className={active==='members'?'active':''}>회원목록</a></>}
     </>}</nav>
     <div className="header-actions">
-      {profilePending?<><span className="user-name signup-header-status">가입 정보 입력 중</span><button className="icon-button logout" onClick={logout} aria-label="가입 인증 종료"><LogOut size={19}/></button></>:user?<><a href="#/mypage" className="user-name"><UserRound size={16}/>{user.name}님</a><button className="icon-button logout" onClick={logout} aria-label="로그아웃"><LogOut size={19}/></button></>:<button className="button small dark" onClick={()=>setAuthMode('login')}>로그인</button>}
+      {profilePending?<><span className="user-name signup-header-status">가입 정보 입력 중</span><button className="icon-button logout" onClick={logout} aria-label="가입 인증 종료"><LogOut size={19}/></button></>:user?<><a href="#/mypage" className="user-name"><UserRound size={16}/>{user.name}님</a><button className="icon-button logout" onClick={logout} aria-label="로그아웃"><LogOut size={19}/></button></>:<button className="button small dark" disabled={!authReady} onClick={()=>setAuthMode('login')}>{authReady?'로그인':'로그인 확인 중'}</button>}
       <button className="icon-button menu-button" aria-label={mobileMenu?'메뉴 닫기':'메뉴 열기'} aria-expanded={mobileMenu} onClick={()=>setMobileMenu(!mobileMenu)}>{mobileMenu?<X/>:<Menu/>}</button>
     </div>
   </div></header>
     <main id="main-content" tabIndex={-1}>
-      {!authReady&&route!=='/auth/social/callback'?<div className="page-wrap"><Loading text="로그인 정보를 확인하고 있어요"/></div>:profilePending&&user?<SocialProfile key={user.id} user={user} onSuccess={completeSocialLogin} onCancel={logout} onExistingLogin={existingAccountLogin}/>:<>
+      {!authReady&&!isHome&&route!=='/auth/social/callback'?<div className="page-wrap"><Loading text="로그인 정보를 확인하고 있어요"/></div>:profilePending&&user?<SocialProfile key={user.id} user={user} onSuccess={completeSocialLogin} onCancel={logout} onExistingLogin={existingAccountLogin}/>:<>
       {isHome&&<><MedipickHome recommendation={homeScene?viewedRecommendation:undefined} initialScene={homeScene} onBooking={(h,d,draft)=>startBooking(h,d,undefined,draft)} onAccount={()=>go('/mypage')}/><FeaturedHospitals onBooking={startBooking}/></>}
       {route.startsWith('/search')&&<SearchPage key={route} route={route} onBooking={startBooking}/>}
       {chatRoute&&<div hidden={!route.startsWith('/chat')}><ChatPage key={chatRoute} route={chatRoute} onBooking={startBooking} onExplore={showRecommendation}/></div>}
@@ -186,7 +186,7 @@ export default function App(){
     </main>
     <footer className="site-footer"><div className="footer-inner"><div><strong><Plus size={19}/> 메디픽</strong><p>내 증상과 진료 목적에 맞는 병원 찾기</p></div><div className="footer-note"><span>백엔드 실무 프로젝트 · 김도형 · 박다윗</span><p>의료진과 일정은 모의 예약을 위한 가상 데이터입니다.</p></div></div></footer>
     {toast&&<div className="toast" role="status"><CheckCircle2 size={19}/>{toast}<button className="icon-button" onClick={()=>setToast('')} aria-label="알림 닫기"><X size={16}/></button></div>}
-    {authMode&&!profilePending&&<AuthDialog mode={authMode} setMode={setAuthMode} close={()=>{setAuthMode(null);setPreferredLogin(undefined);}} onSuccess={result=>completeLogin(result)} beforeSocialLogin={beforeSocialLogin} socialError={socialError} initialPreferredProvider={preferredLogin}/>}
+    {authMode&&authReady&&!profilePending&&<AuthDialog mode={authMode} setMode={setAuthMode} close={()=>{setAuthMode(null);setPreferredLogin(undefined);}} onSuccess={result=>completeLogin(result)} beforeSocialLogin={beforeSocialLogin} socialError={socialError} initialPreferredProvider={preferredLogin}/>}
     <div className="sr-only">AI 모델: {meta.data?.model || 'gpt-6.2-sol'}</div>
   </>;
 }

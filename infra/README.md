@@ -16,6 +16,7 @@ GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형
 | 배포 구성 | 저장소 루트 [vercel.json](../vercel.json)의 `services` |
 | frontend service | `frontend/`, Vite, `npm ci`, `npm run build`, `dist` |
 | backend service | `backend/`, Container Runtime, [Dockerfile](../backend/Dockerfile) |
+| 백엔드 실행 지역 | 서울 `icn1`. MongoDB Atlas도 AWS 서울(`ap-northeast-2`)에 있어 병원 조회·인증이 같은 지역에서 처리됩니다. |
 | 운영 주소 | `https://medi-pick.vercel.app` |
 
 `frontend/vercel.json`만 읽는 기존 Root Directory 설정을 유지하면 Java 백엔드가 함께 배포되지 않습니다. 루트 설정은 API·OAuth·OpenAPI 경로를 backend, 나머지 경로를 frontend로 전달합니다. `/auth/social/callback`과 화면 직접 접속·새로고침은 SPA 진입점으로 처리합니다.
