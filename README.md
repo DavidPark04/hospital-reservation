@@ -69,7 +69,7 @@ flowchart LR
     BE --> AI[OpenAI]
 ```
 
-상세 설계는 [아키텍처](docs/architecture.md), [API 계약](docs/api-contract.md), [DB 설계](docs/database.md)를 함께 갱신합니다. 전국 기본 목록 수집·DB 적용·재실행 방법은 [병원 목록 운영 안내](docs/hospital-catalog.md)를 참고합니다.
+상세 설계는 [아키텍처](docs/architecture.md), [API 계약](docs/api-contract.md), [DB 구조와 필드 설명](docs/database.md)를 함께 갱신합니다. 전국 기본 목록 수집·DB 적용·재실행 방법은 [병원 목록 운영 안내](docs/hospital-catalog.md)를 참고합니다.
 
 ## 5. 계획서와 발표자료
 
