@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {DEPARTMENTS,hospitalId,normalizeRow,updateFor,assertReasonableRemoval,validateSnapshot,applySnapshot} from '../sync-hospital-catalog.mjs';
+import {DEPARTMENTS,REGION_CODES,hospitalId,normalizeRow,updateFor,assertReasonableRemoval,assertReasonableRegionalRemoval,validateSnapshot,applySnapshot} from '../sync-hospital-catalog.mjs';
 
 const time='2026-11-21T00:00:00.000Z';
 const raw={ykiho:'fixture-hospital',yadmNm:'가상 테스트 병원',addr:'경기도 수원시',telno:'031-000-0000',XPos:'127.01',YPos:'37.21',customField:'보존'};
@@ -50,6 +50,23 @@ test('unexpected large missing sets stop retirement before writes',()=>{
   assert.throws(()=>assertReasonableRemoval(80000,10000),/unexpected_large_catalog_reduction/);
 });
 
+test('regional retirement guard catches missing small regions and permits hospitals moving regions',()=>{
+  const current=Array.from({length:1000},(_,index)=>({_id:String(index),apiFields:{sidoCd:index<20?'410000':'110000'},active:true}));
+  const documents=new Map(current.map(value=>[value._id,value]));
+  for(let index=0;index<20;index++)documents.delete(String(index));
+  assert.doesNotThrow(()=>assertReasonableRemoval(current.length,20));
+  assert.throws(()=>assertReasonableRegionalRemoval(current,documents),/unexpected_large_regional_reduction/);
+  for(let index=0;index<20;index++)documents.set(String(index),{...current[index],apiFields:{sidoCd:'310000'}});
+  assert.doesNotThrow(()=>assertReasonableRegionalRemoval(current,documents));
+  for(let index=0;index<5;index++)documents.delete(String(index));
+  assert.doesNotThrow(()=>assertReasonableRegionalRemoval(current,documents));
+  documents.delete('5');
+  assert.throws(()=>assertReasonableRegionalRemoval(current,documents),/unexpected_large_regional_reduction/);
+  const small=[{_id:'only',apiFields:{sidoCd:'410000'},active:true}];
+  assert.throws(()=>assertReasonableRegionalRemoval(small,new Map()),/unexpected_large_regional_reduction/);
+  assert.doesNotThrow(()=>assertReasonableRegionalRemoval([{...small[0],active:false}],new Map()));
+});
+
 async function fixture(directory,values=[row()]) {
   const payload=values.map(value=>JSON.stringify(value)+'\n').join('');
   const scopeCounts={basic:values.length,...Object.fromEntries(Object.keys(DEPARTMENTS).map(code=>[code,values.filter(value=>value.departmentCodes.includes(code)).length]))};
@@ -90,6 +107,137 @@ test('snapshot integrity checks raw bytes, duplicate IDs and department complete
   }
 });
 
+async function withRegionalSnapshot(check) {
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'hospital-regional-test-'));
+  try { await check(directory); }
+  finally {
+    const target=path.resolve(directory);
+    assert.equal(path.dirname(target),path.resolve(os.tmpdir()));
+    assert.ok(path.basename(target).startsWith('hospital-regional-test-'));
+    await fs.rm(target,{recursive:true,force:true});
+  }
+}
+async function regionalFixture(directory) {
+  const values=REGION_CODES.map((region,index)=>row({apiFields:{...raw,ykiho:'fixture-'+region,sidoCd:region},departmentCodes:index%2?[]:['01']}));
+  const manifest=await fixture(directory,values);
+  manifest.schemaVersion=2;
+  manifest.regionScopes=Object.fromEntries(REGION_CODES.map(region=>{
+    const rows=values.filter(value=>value.apiFields.sidoCd===region);
+    return [region,{scopeCounts:{basic:rows.length,...Object.fromEntries(Object.keys(DEPARTMENTS).map(code=>[code,rows.filter(value=>value.departmentCodes.includes(code)).length]))},scopeTimes:scopeTimes()}];
+  }));
+  await writeManifest(directory,manifest);
+  return {manifest,values};
+}
+async function writeManifest(directory,manifest) {
+  await fs.writeFile(path.join(directory,'catalog-manifest.json'),JSON.stringify(manifest));
+}
+async function rewriteRegionalRows(directory,manifest,values) {
+  const payload=values.map(value=>JSON.stringify(value)+'\n').join('');
+  manifest.sha256=crypto.createHash('sha256').update(payload).digest('hex');
+  await fs.writeFile(path.join(directory,'catalog.jsonl'),payload);
+  await writeManifest(directory,manifest);
+}
+
+test('all 17 regional scopes validate without changing hospital fields, identities or update behavior',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    const {manifest}=await regionalFixture(directory);
+    const regional=await validateSnapshot(directory,new Date(time));
+    assert.equal(regional.documents.size,17);
+    manifest.schemaVersion=1;
+    await writeManifest(directory,manifest);
+    await assert.rejects(validateSnapshot(directory,new Date(time)),/incomplete_catalog_snapshot/);
+    delete manifest.regionScopes;
+    await writeManifest(directory,manifest);
+    const legacy=await validateSnapshot(directory,new Date(time));
+    assert.deepEqual(regional.documents,legacy.documents);
+    for(const [id,doc] of regional.documents)assert.equal(updateFor(legacy.documents.get(id),doc,new Date()),null);
+  });
+});
+
+test('a regional snapshot must include every region and department even when totals were adjusted',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    for(const change of [
+      manifest=>{delete manifest.regionScopes;},
+      manifest=>{const removed=manifest.regionScopes['110000'];delete manifest.regionScopes['110000'];manifest.rows--;for(const [code,count] of Object.entries(removed.scopeCounts))manifest.scopeCounts[code]-=count;},
+      manifest=>{manifest.regionScopes['990000']=manifest.regionScopes['110000'];},
+      manifest=>{delete manifest.regionScopes['110000'].scopeCounts['80'];},
+      manifest=>{delete manifest.regionScopes['110000'].scopeTimes['80'];},
+    ]) {
+      const {manifest}=await regionalFixture(directory);
+      change(manifest);
+      await writeManifest(directory,manifest);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),/incomplete_regional_scopes/);
+    }
+  });
+});
+
+test('a verified zero-count region is valid when every regional scope is present',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    const {manifest,values}=await regionalFixture(directory);
+    const region='240000';
+    const removed=manifest.regionScopes[region].scopeCounts;
+    for(const code of Object.keys(removed)) {
+      manifest.scopeCounts[code]-=removed[code];
+      removed[code]=0;
+    }
+    manifest.rows--;
+    await rewriteRegionalRows(directory,manifest,values.filter(value=>value.apiFields.sidoCd!==region));
+    assert.equal((await validateSnapshot(directory,new Date(time))).documents.size,16);
+  });
+});
+
+test('regional counts are checked against both national totals and actual rows',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    const cases=[
+      [manifest=>{manifest.regionScopes['110000'].scopeCounts.basic=0;},/invalid_regional_scope_count/],
+      [manifest=>{manifest.regionScopes['110000'].scopeCounts['01']=2;},/invalid_regional_scope_count/],
+      [manifest=>{manifest.regionScopes['110000'].scopeCounts.basic=2;},/regional_scope_count_mismatch/],
+      [manifest=>{manifest.regionScopes['110000'].scopeCounts['01']=0;manifest.regionScopes['210000'].scopeCounts['01']=1;},/regional_catalog_count_mismatch/],
+    ];
+    for(const [change,error] of cases) {
+      const {manifest}=await regionalFixture(directory);
+      change(manifest);
+      await writeManifest(directory,manifest);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),error);
+    }
+    for(const change of [
+      values=>{values[0].apiFields.sidoCd='990000';},
+      values=>{delete values[0].apiFields.sidoCd;},
+    ]) {
+      const {manifest,values}=await regionalFixture(directory);
+      change(values);
+      await rewriteRegionalRows(directory,manifest,values);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),/invalid_hospital_region/);
+    }
+    const {manifest,values}=await regionalFixture(directory);
+    values[1].apiFields.sidoCd=values[0].apiFields.sidoCd;
+    await rewriteRegionalRows(directory,manifest,values);
+    await assert.rejects(validateSnapshot(directory,new Date(time)),/regional_catalog_count_mismatch/);
+  });
+});
+
+test('regional time bounds and per-row regional collection times must agree',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    for(const [change,error] of [
+      [manifest=>{manifest.regionScopes['110000'].scopeTimes.basic.firstFetchedAt='invalid';},/invalid_regional_scope_times/],
+      [manifest=>{manifest.regionScopes['110000'].scopeTimes.basic.firstFetchedAt='2026-11-20T23:59:59.000Z';},/regional_scope_time_bounds_mismatch/],
+    ]) {
+      const {manifest}=await regionalFixture(directory);
+      change(manifest);
+      await writeManifest(directory,manifest);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),error);
+    }
+    const {manifest}=await regionalFixture(directory);
+    const later='2026-11-21T00:00:01.000Z';
+    manifest.regionScopes['110000'].scopeTimes.basic={firstFetchedAt:later,lastFetchedAt:later};
+    manifest.scopeTimes.basic.lastFetchedAt=later;
+    manifest.lastFetchedAt=later;
+    manifest.completedAt=later;
+    await writeManifest(directory,manifest);
+    await assert.rejects(validateSnapshot(directory,new Date(later)),/row_time_outside_regional_collection/);
+  });
+});
+
 test('Mongo integration: unchanged sync writes no hospital records; missing/returning entries retain identity', {skip:!process.env.MONGODB_TEST_URI},async()=>{
   const {MongoClient}=await import('mongodb');
   const client=new MongoClient(process.env.MONGODB_TEST_URI);
@@ -124,6 +272,32 @@ test('Mongo integration: unchanged sync writes no hospital records; missing/retu
     await db.collection('hospitals').updateOne({_id:a._id},{$set:{'apiFields.addr':'corrupted content'}});
     await assert.rejects(applySnapshot(db,snapshot,{apply:true,progress:()=>{}}),/database_catalog_verification_failed/);
     assert.equal((await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-current'})).expectedRows,2);
+  }finally{await db.dropDatabase();await client.close();}
+});
+
+test('regional apply rejects a missing small region before changing hospitals or generation markers', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  const {MongoClient}=await import('mongodb');
+  const client=new MongoClient(process.env.MONGODB_TEST_URI);
+  await client.connect();
+  const db=client.db('catalog_sync_test_'+crypto.randomUUID().replaceAll('-',''));
+  try {
+    const seoul=normalizeRow(row({apiFields:{...raw,ykiho:'seoul-fixture',sidoCd:'110000'}}));
+    const sejong=normalizeRow(row({apiFields:{...raw,ykiho:'sejong-fixture',sidoCd:'410000'}}));
+    const manifest={schemaVersion:1,rows:2,sha256:'regional-test-source',scopeCounts:{basic:2},scopeTimes:scopeTimes(),firstFetchedAt:time,lastFetchedAt:time};
+    const snapshot={manifest,documents:new Map([[seoul._id,seoul],[sejong._id,sejong]])};
+    await applySnapshot(db,snapshot,{apply:true,progress:()=>{}});
+    const before=await db.collection('hospitals').find({}).sort({_id:1}).toArray();
+    const highWater=await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-high-water'});
+    const incomplete={manifest:{...manifest,schemaVersion:2,rows:1},documents:new Map([[seoul._id,seoul]])};
+    await assert.rejects(applySnapshot(db,incomplete,{apply:true,progress:()=>{}}),/unexpected_large_regional_reduction/);
+    assert.deepEqual(await db.collection('hospitals').find({}).sort({_id:1}).toArray(),before);
+    assert.deepEqual(await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-high-water'}),highWater);
+    assert.equal(await db.collection('hospitalImportRuns').countDocuments({status:'FAILED'}),0);
+    assert.equal(await db.collection('hospitalImportRuns').countDocuments({_id:'hospital-basic-sync-lock'}),0);
+    const repeated=await applySnapshot(db,{...snapshot,manifest:{...manifest,schemaVersion:2}},{apply:true,progress:()=>{}});
+    assert.equal(repeated.unchanged,2);
+    assert.equal(repeated.updated,0);
+    assert.deepEqual(await db.collection('hospitals').find({}).sort({_id:1}).toArray(),before);
   }finally{await db.dropDatabase();await client.close();}
 });
 

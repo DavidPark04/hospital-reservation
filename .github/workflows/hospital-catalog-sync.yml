@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
       - name: Install MongoDB client
         run: npm ci --ignore-scripts
-      - name: Collect and validate complete basic snapshot
+      - name: Collect every region and validate complete basic snapshot
         env:
           HIRA_HOSPITAL_KEY: ${{ secrets.HIRA_HOSPITAL_KEY }}
         run: python scripts/collect-hospital-catalog.py --directory .runtime/hospital-catalog --page-size 1000 --timeout 120 --workers 2 --maximum-calls 10000
@@ -47,8 +47,13 @@ jobs:
           import json, os
           from pathlib import Path
           result = json.loads(Path('.runtime/hospital-catalog/sync-result.json').read_text())
+          manifest = json.loads(Path('.runtime/hospital-catalog/catalog-manifest.json').read_text())
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
-              output.write('Hospital basic catalog refreshed. Detailed API caching is unchanged.\n\n')
+              regions = manifest['regionScopes']
+              output.write(f'Hospital basic catalog refreshed: {len(regions)}/17 region codes verified. Detailed API caching is unchanged.\n\n')
               for field in ('rows', 'inserted', 'updated', 'reactivated', 'retired', 'unchanged', 'verified'):
                   output.write(f'- {field}: {result[field]}\n')
+              output.write('\nRegional basic counts:\n\n')
+              for code, region in regions.items():
+                  output.write(f"- {code}: {region['scopeCounts']['basic']}\n")
           PY

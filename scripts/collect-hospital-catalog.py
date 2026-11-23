@@ -1,4 +1,4 @@
-"""Collect the complete HIRA basic catalogue without calling detailed-information APIs."""
+"""Collect the complete HIRA basic catalogue by region, without detailed-information APIs."""
 
 import argparse
 import concurrent.futures
@@ -24,6 +24,12 @@ DEPARTMENTS = {'01': '내과', '02': '신경과', '03': '정신건강의학과',
                '05': '정형외과', '06': '신경외과', '10': '산부인과', '11': '소아청소년과',
                '12': '안과', '13': '이비인후과', '14': '피부과', '15': '비뇨의학과',
                '21': '재활의학과', '23': '가정의학과', '49': '치과', '80': '한방내과'}
+# HIRA province codes, not the two-digit administrative address codes.
+REGIONS = {'110000': '서울', '210000': '부산', '220000': '인천', '230000': '대구',
+           '240000': '광주', '250000': '대전', '260000': '울산', '310000': '경기',
+           '320000': '강원', '330000': '충북', '340000': '충남', '350000': '전북',
+           '360000': '전남광주', '370000': '경북', '380000': '경남', '390000': '제주',
+           '410000': '세종'}
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -153,11 +159,13 @@ class Client:
             if saved.get('dateKst') == self.budget_date:
                 self.calls = int(saved.get('calls', 0))
 
-    def page(self, code, number, size):
+    def page(self, code, number, size, region):
+        if region not in REGIONS:
+            raise CollectionError('invalid_region_code')
         can_split = size > 100 and size % 100 == 0
         if not (can_split and self.small_pages):
             try:
-                return self._request_page(code, number, size)
+                return self._request_page(code, number, size, region)
             except CollectionError as error:
                 if str(error) != 'upstream_transport_failed' or not can_split:
                     raise
@@ -169,12 +177,12 @@ class Client:
         part_size = 100
         first_page = (number - 1) * size // part_size + 1
         combined, total, fetched_at = [], None, None
-        emit('smaller_page_retry', scope=code or 'basic', page=number, requestedSize=size, transportSize=part_size)
+        emit('smaller_page_retry', region=region, scope=code or 'basic', page=number, requestedSize=size, transportSize=part_size)
         for offset in range(size // part_size):
-            part = self._request_page(code, first_page + offset, part_size)
+            part = self._request_page(code, first_page + offset, part_size, region)
             if total is None:
                 total = part['total']
-            validate_page(part, first_page + offset, part_size, total)
+            validate_page(part, first_page + offset, part_size, total, region)
             combined.extend(part['rows'])
             fetched_at = part['fetchedAt']
             if (first_page + offset) * part_size >= total:
@@ -182,11 +190,13 @@ class Client:
         result = {'page': number, 'requestedSize': size, 'reportedSize': size,
                   'total': total, 'fetchedAt': fetched_at, 'rows': combined,
                   'transportPageSize': part_size}
-        validate_page(result, number, size, total)
+        validate_page(result, number, size, total, region)
         return result
 
-    def _request_page(self, code, number, size):
-        parameters = {'serviceKey': self.key, 'pageNo': number, 'numOfRows': size}
+    def _request_page(self, code, number, size, region):
+        if region not in REGIONS:
+            raise CollectionError('invalid_region_code')
+        parameters = {'serviceKey': self.key, 'pageNo': number, 'numOfRows': size, 'sidoCd': region}
         if code:
             parameters['dgsbjtCd'] = code
         url = ENDPOINT + '?' + urllib.parse.urlencode(parameters)
@@ -212,12 +222,12 @@ class Client:
             except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError):
                 pass
             if attempt < 2:
-                emit('request_retry', scope=code or 'basic', page=number, attempt=attempt + 1)
+                emit('request_retry', region=region, scope=code or 'basic', page=number, attempt=attempt + 1)
                 time.sleep(attempt + 1)
         raise CollectionError('upstream_transport_failed')
 
 
-def validate_page(document, page, size, total):
+def validate_page(document, page, size, total, region=None):
     if document.get('page') != page or document.get('requestedSize') != size or document.get('reportedSize') != size:
         raise CollectionError('page_parameters_mismatch')
     if document.get('total') != total:
@@ -231,30 +241,39 @@ def validate_page(document, page, size, total):
             raise CollectionError('invalid_saved_row')
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in row.items()):
             raise CollectionError('invalid_saved_fields')
+        if region is not None and row.get('sidoCd') != region:
+            raise CollectionError('hospital_region_mismatch')
         if row['ykiho'] in identities:
             raise CollectionError('duplicate_hospital_in_page')
         identities.add(row['ykiho'])
 
 
-def collect_scope(client, directory, code, initial_size, workers):
+def collect_scope(client, directory, code, initial_size, workers, region):
+    if region not in REGIONS:
+        raise CollectionError('invalid_region_code')
     scope = code or 'basic'
-    folder = directory / scope
+    folder = directory / 'regions' / region / scope
     folder.mkdir(parents=True, exist_ok=True)
     manifest_path = folder / 'manifest.json'
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-        if manifest.get('scope') != scope:
+        if manifest.get('scope') != scope or manifest.get('region') != region:
             raise CollectionError('scope_mismatch')
     else:
-        first = client.page(code, 1, initial_size)
+        for attempt in range(3):
+            first = client.page(code, 1, initial_size, region)
+            if code or first['total'] > 0:
+                break
+            validate_page(first, 1, initial_size, 0, region)
+            if attempt < 2:
+                emit('empty_basic_retry', region=region, attempt=attempt + 1)
+                time.sleep(attempt + 1)
         size = initial_size
         if first['rows'] and len(first['rows']) < min(first['total'], size):
             size = len(first['rows'])
-            first = client.page(code, 1, size)
-        if not code and first['total'] < 1:
-            raise CollectionError('empty_nationwide_catalog')
-        validate_page(first, 1, size, first['total'])
-        manifest = {'scope': scope, 'size': size, 'total': first['total'], 'pages': {}, 'startedAt': timestamp()}
+            first = client.page(code, 1, size, region)
+        validate_page(first, 1, size, first['total'], region)
+        manifest = {'region': region, 'scope': scope, 'size': size, 'total': first['total'], 'pages': {}, 'startedAt': timestamp()}
         atomic_json(manifest_path, manifest)
         path = folder / 'page-1.json'
         manifest['pages']['1'] = atomic_json(path, first)
@@ -275,7 +294,7 @@ def collect_scope(client, directory, code, initial_size, workers):
         if str(page) in manifest['pages'] and manifest['pages'][str(page)] != digest:
             raise CollectionError('page_checksum_mismatch')
         document = json.loads(payload)
-        validate_page(document, page, size, total)
+        validate_page(document, page, size, total, region)
         observed_times.append(document['fetchedAt'])
         for row in document['rows']:
             if row['ykiho'] in data:
@@ -291,13 +310,13 @@ def collect_scope(client, directory, code, initial_size, workers):
         for _ in range(workers):
             page = next(iterator, None)
             if page is not None:
-                pending[pool.submit(client.page, code, page, size)] = page
+                pending[pool.submit(client.page, code, page, size, region)] = page
         while pending:
             finished, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
             for future in finished:
                 page = pending.pop(future)
                 document = future.result()
-                validate_page(document, page, size, total)
+                validate_page(document, page, size, total, region)
                 observed_times.append(document['fetchedAt'])
                 for row in document['rows']:
                     if row['ykiho'] in data:
@@ -306,12 +325,12 @@ def collect_scope(client, directory, code, initial_size, workers):
                     times[row['ykiho']] = document['fetchedAt']
                 manifest['pages'][str(page)] = atomic_json(folder / f'page-{page}.json', document)
                 atomic_json(manifest_path, manifest)
-                emit('page_saved', scope=scope, page=page, pages=page_count, rows=len(data), total=total)
+                emit('page_saved', region=region, scope=scope, page=page, pages=page_count, rows=len(data), total=total)
             while len(pending) < workers:
                 page = next(iterator, None)
                 if page is None:
                     break
-                pending[pool.submit(client.page, code, page, size)] = page
+                pending[pool.submit(client.page, code, page, size, region)] = page
     except BaseException:
         client.cancel.set()
         for future in pending:
@@ -323,9 +342,11 @@ def collect_scope(client, directory, code, initial_size, workers):
         raise CollectionError('scope_count_mismatch')
     scope_times = scope_time_range(observed_times)
     # A changed source total makes deletion unsafe; keep the last good DB instead.
-    if client.page(code, 1, 1)['total'] != total:
+    confirmation = client.page(code, 1, 1, region)
+    if confirmation['total'] != total:
         raise CollectionError('source_total_changed_after_collection')
-    emit('scope_complete', scope=scope, rows=total)
+    validate_page(confirmation, 1, 1, total, region)
+    emit('scope_complete', region=region, scope=scope, rows=total)
     return data, times, scope_times
 
 
@@ -357,13 +378,97 @@ def import_basic_cache(folder):
     return data, times
 
 
-def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times):
+def collect_regional_catalog(client, directory, page_size, workers, basic_cache=None):
+    data, times, memberships, region_scopes = {}, {}, {}, {}
+    cached_regions = None
+    if basic_cache is not None:
+        cached_data, cached_times = import_basic_cache(basic_cache)
+        cached_regions = {region: {} for region in REGIONS}
+        for identity, row in cached_data.items():
+            region = row.get('sidoCd')
+            if region not in REGIONS:
+                raise CollectionError('basic_cache_invalid_region')
+            cached_regions[region][identity] = row
+        if not cached_data:
+            raise CollectionError('empty_regional_catalog')
+
+    for completed_regions, region in enumerate(REGIONS, 1):
+        emit('region_started', region=region, name=REGIONS[region], completed=completed_regions - 1, total=len(REGIONS))
+        if cached_regions is None:
+            basic, fetched, basic_times = collect_scope(client, directory, '', page_size, workers, region)
+        else:
+            basic = cached_regions[region]
+            fetched = {identity: cached_times[identity] for identity in basic}
+            confirmation = client.page('', 1, 1, region)
+            if confirmation['total'] != len(basic):
+                raise CollectionError('basic_cache_source_total_changed')
+            validate_page(confirmation, 1, 1, len(basic), region)
+            basic_times = scope_time_range(fetched.values() if fetched else [confirmation['fetchedAt']])
+        if any(identity in data for identity in basic):
+            raise CollectionError('duplicate_hospital_across_regions')
+        data.update(basic)
+        times.update(fetched)
+        memberships.update({identity: set() for identity in basic})
+        region_counts = {'basic': len(basic)}
+        region_times = {'basic': basic_times}
+        for code in DEPARTMENTS:
+            department_rows, _, department_times = collect_scope(client, directory, code, page_size, workers, region)
+            for identity in department_rows:
+                if identity not in basic:
+                    raise CollectionError('department_hospital_missing_from_regional_basic_snapshot')
+                memberships[identity].add(code)
+            region_counts[code] = len(department_rows)
+            region_times[code] = department_times
+        region_scopes[region] = {'scopeCounts': region_counts, 'scopeTimes': region_times}
+        emit('region_complete', region=region, name=REGIONS[region], completed=completed_regions,
+             total=len(REGIONS), rows=len(basic), collectedRows=len(data))
+
+    if not data:
+        raise CollectionError('empty_regional_catalog')
+    # Never reintroduce an unfiltered national count query for final validation.
+    for region, summary in region_scopes.items():
+        confirmation = client.page('', 1, 1, region)
+        expected = summary['scopeCounts']['basic']
+        if confirmation['total'] != expected:
+            raise CollectionError('regional_total_changed_during_classification')
+        validate_page(confirmation, 1, 1, expected, region)
+    scopes = ['basic', *DEPARTMENTS]
+    scope_counts = {code: sum(summary['scopeCounts'][code] for summary in region_scopes.values()) for code in scopes}
+    scope_times = {code: scope_time_range([value for summary in region_scopes.values()
+                                         for value in summary['scopeTimes'][code].values()]) for code in scopes}
+    return data, times, memberships, scope_counts, scope_times, region_scopes
+
+
+def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times, region_scopes):
     if set(scope_times) != {'basic', *DEPARTMENTS}:
         raise CollectionError('incomplete_scope_times')
     checked_times = {}
     for code, values in scope_times.items():
         checked_times[code] = scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']])
     all_times = scope_time_range([value for timespan in checked_times.values() for value in timespan.values()])
+    if set(region_scopes) != set(REGIONS) or not data:
+        raise CollectionError('incomplete_region_scopes')
+    actual_counts = {region: {code: 0 for code in checked_times} for region in REGIONS}
+    for identity, row in data.items():
+        region = row.get('sidoCd')
+        if region not in REGIONS or identity != row.get('ykiho'):
+            raise CollectionError('invalid_regional_hospital_identity')
+        actual_counts[region]['basic'] += 1
+        for code in memberships[identity]:
+            if code not in DEPARTMENTS:
+                raise CollectionError('invalid_department_membership')
+            actual_counts[region][code] += 1
+    for region, summary in region_scopes.items():
+        if set(summary.get('scopeTimes', {})) != set(checked_times) or summary.get('scopeCounts') != actual_counts[region]:
+            raise CollectionError('incomplete_region_scopes')
+        for values in summary['scopeTimes'].values():
+            scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']])
+    for code in checked_times:
+        total = sum(summary['scopeCounts'][code] for summary in region_scopes.values())
+        combined_times = scope_time_range([value for summary in region_scopes.values()
+                                          for value in summary['scopeTimes'][code].values()])
+        if total != scope_counts.get(code) or combined_times != checked_times[code]:
+            raise CollectionError('regional_scope_summary_mismatch')
     destination = directory / 'catalog.jsonl'
     temporary = directory / 'catalog.jsonl.tmp'
     digest = hashlib.sha256()
@@ -376,10 +481,10 @@ def export_catalog(directory, data, times, memberships, scope_counts, calls, sco
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, destination)
-    manifest = {'schemaVersion': 1, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
+    manifest = {'schemaVersion': 2, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
                 'scope': 'nationwide-with-department-memberships', 'rows': len(data),
                 'departments': DEPARTMENTS, 'scopeCounts': scope_counts, 'requestCount': calls,
-                **all_times, 'scopeTimes': checked_times,
+                **all_times, 'scopeTimes': checked_times, 'regionScopes': region_scopes,
                 'completedAt': timestamp(), 'sha256': digest.hexdigest()}
     atomic_json(directory / 'catalog-manifest.json', manifest)
     emit('catalog_complete', rows=len(data), requests=calls, sha256=manifest['sha256'])
@@ -402,27 +507,9 @@ def main():
         raise CollectionError('missing_hospital_api_key')
     with directory_lock(args.directory):
         client = Client(key, args.directory, args.timeout, args.maximum_calls)
-        if args.basic_cache:
-            data, times = import_basic_cache(args.basic_cache)
-            basic_times = scope_time_range(times.values())
-        else:
-            data, times, basic_times = collect_scope(client, args.directory, '', args.page_size, args.workers)
-        if args.basic_cache and client.page('', 1, 1)['total'] != len(data):
-            raise CollectionError('basic_cache_source_total_changed')
-        memberships = {identity: set() for identity in data}
-        scope_counts = {'basic': len(data)}
-        scope_times = {'basic': basic_times}
-        for code in DEPARTMENTS:
-            department_rows, _, department_times = collect_scope(client, args.directory, code, args.page_size, args.workers)
-            for identity in department_rows:
-                if identity not in memberships:
-                    raise CollectionError('department_hospital_missing_from_basic_snapshot')
-                memberships[identity].add(code)
-            scope_counts[code] = len(department_rows)
-            scope_times[code] = department_times
-        if client.page('', 1, 1)['total'] != len(data):
-            raise CollectionError('nationwide_total_changed_during_classification')
-        export_catalog(args.directory, data, times, memberships, scope_counts, client.calls, scope_times)
+        data, times, memberships, scope_counts, scope_times, region_scopes = collect_regional_catalog(
+            client, args.directory, args.page_size, args.workers, args.basic_cache)
+        export_catalog(args.directory, data, times, memberships, scope_counts, client.calls, scope_times, region_scopes)
 
 
 if __name__ == '__main__':

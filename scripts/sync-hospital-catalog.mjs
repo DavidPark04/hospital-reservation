@@ -7,6 +7,9 @@ import { pathToFileURL } from 'node:url';
 export const DEPARTMENTS = Object.freeze({'01':'내과','02':'신경과','03':'정신건강의학과','04':'외과',
   '05':'정형외과','06':'신경외과','10':'산부인과','11':'소아청소년과','12':'안과','13':'이비인후과',
   '14':'피부과','15':'비뇨의학과','21':'재활의학과','23':'가정의학과','49':'치과','80':'한방내과'});
+export const REGION_CODES = Object.freeze(['110000','210000','220000','230000','240000','250000','260000',
+  '310000','320000','330000','340000','350000','360000','370000','380000','390000','410000']);
+const SCOPES = Object.freeze(['basic',...Object.keys(DEPARTMENTS)]);
 const SOURCE = 'https://www.data.go.kr/data/15001698/openapi.do';
 const COLLECTION = 'hospitals';
 
@@ -60,6 +63,18 @@ export function updateFor(previous,document,now) {
 export function assertReasonableRemoval(existingActive,missing) {
   if(missing>Math.max(100,Math.floor(existingActive*.05)))throw new SyncError('unexpected_large_catalog_reduction');
 }
+export function assertReasonableRegionalRemoval(current,documents) {
+  const counts=Object.fromEntries(REGION_CODES.map(region=>[region,{active:0,missing:0}]));
+  for(const previous of current) {
+    const region=previous.apiFields?.sidoCd;
+    if(previous.active===false||!Object.hasOwn(counts,region))continue;
+    counts[region].active++;
+    if(!documents.has(previous._id))counts[region].missing++;
+  }
+  for(const {active,missing} of Object.values(counts)) {
+    if(missing>0&&(missing===active||missing>Math.max(5,Math.floor(active*.05))))throw new SyncError('unexpected_large_regional_reduction');
+  }
+}
 async function* readRows(filename) {
   const input=readline.createInterface({input:fs.createReadStream(filename,{encoding:'utf8'}),crlfDelay:Infinity});
   for await(const line of input)if(line.trim())yield JSON.parse(line);
@@ -69,34 +84,76 @@ async function fileHash(filename) {
   for await(const data of fs.createReadStream(filename))hash.update(data);
   return hash.digest('hex');
 }
+function hasExactKeys(value,keys) {
+  return value!==null&&typeof value==='object'&&!Array.isArray(value)&&
+    Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+}
+function validateRegionalScopes(manifest) {
+  if(!hasExactKeys(manifest.regionScopes,REGION_CODES))throw new SyncError('incomplete_regional_scopes');
+  const totals=Object.fromEntries(SCOPES.map(code=>[code,0]));
+  const bounds=Object.fromEntries(SCOPES.map(code=>[code,{first:Infinity,last:-Infinity}]));
+  for(const region of REGION_CODES) {
+    const entry=manifest.regionScopes[region];
+    if(!entry||!hasExactKeys(entry.scopeCounts,SCOPES)||!hasExactKeys(entry.scopeTimes,SCOPES))throw new SyncError('incomplete_regional_scopes');
+    for(const code of SCOPES) {
+      const count=entry.scopeCounts[code];
+      if(!Number.isSafeInteger(count)||count<0||count>entry.scopeCounts.basic)throw new SyncError('invalid_regional_scope_count');
+      totals[code]+=count;
+      const times=entry.scopeTimes[code],start=new Date(times?.firstFetchedAt),end=new Date(times?.lastFetchedAt);
+      if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||start>end)throw new SyncError('invalid_regional_scope_times');
+      bounds[code].first=Math.min(bounds[code].first,start.getTime());
+      bounds[code].last=Math.max(bounds[code].last,end.getTime());
+    }
+  }
+  for(const code of SCOPES) {
+    if(totals[code]!==manifest.scopeCounts[code])throw new SyncError('regional_scope_count_mismatch');
+    if(bounds[code].first!==new Date(manifest.scopeTimes[code].firstFetchedAt).getTime()||
+       bounds[code].last!==new Date(manifest.scopeTimes[code].lastFetchedAt).getTime())throw new SyncError('regional_scope_time_bounds_mismatch');
+  }
+}
 export async function validateSnapshot(directory,now=new Date()) {
   const manifest=JSON.parse(fs.readFileSync(path.join(directory,'catalog-manifest.json'),'utf8'));
   const filename=path.join(directory,'catalog.jsonl');
-  if(manifest.schemaVersion!==1||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!=='nationwide-with-department-memberships'||!Number.isInteger(manifest.rows)||manifest.rows<1)throw new SyncError('incomplete_catalog_snapshot');
+  if(![1,2].includes(manifest.schemaVersion)||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!=='nationwide-with-department-memberships'||!Number.isInteger(manifest.rows)||manifest.rows<1)throw new SyncError('incomplete_catalog_snapshot');
+  if(manifest.schemaVersion===1&&Object.hasOwn(manifest,'regionScopes'))throw new SyncError('incomplete_catalog_snapshot');
   if(canonical(manifest.departments||{})!==canonical(DEPARTMENTS)||manifest.scopeCounts?.basic!==manifest.rows)throw new SyncError('incomplete_department_scopes');
   for(const code of Object.keys(DEPARTMENTS))if(!Number.isInteger(manifest.scopeCounts[code])||manifest.scopeCounts[code]<0)throw new SyncError('incomplete_department_scopes');
   const first=new Date(manifest.firstFetchedAt),last=new Date(manifest.lastFetchedAt),completed=new Date(manifest.completedAt);
   if(![first,last,completed].every(value=>Number.isFinite(value.getTime()))||now-first>48*3600_000||first>last||last>completed||completed-now>300_000)throw new SyncError('stale_or_invalid_snapshot_time');
   const scopeDates=[];
-  for(const code of ['basic',...Object.keys(DEPARTMENTS)]) {
+  for(const code of SCOPES) {
     const times=manifest.scopeTimes?.[code],start=new Date(times?.firstFetchedAt),end=new Date(times?.lastFetchedAt);
     if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||start>end||start<first||end>last)throw new SyncError('invalid_scope_times');
     scopeDates.push(start.getTime(),end.getTime());
   }
   if(Math.min(...scopeDates)!==first.getTime()||Math.max(...scopeDates)!==last.getTime())throw new SyncError('scope_time_bounds_mismatch');
+  const regional=manifest.schemaVersion===2;
+  if(regional)validateRegionalScopes(manifest);
   const checksum=await fileHash(filename);
   if(checksum!==manifest.sha256)throw new SyncError('snapshot_checksum_mismatch');
   const documents=new Map();
   const departmentCounts=Object.fromEntries(Object.keys(DEPARTMENTS).map(code=>[code,0]));
+  const regionCounts=Object.fromEntries(REGION_CODES.map(region=>[region,Object.fromEntries(SCOPES.map(code=>[code,0]))]));
   for await(const row of readRows(filename)) {
     const doc=normalizeRow(row);
     if(documents.has(doc._id))throw new SyncError('duplicate_catalog_identity');
     if(doc.basicFetchedAt<new Date(manifest.scopeTimes.basic.firstFetchedAt)||doc.basicFetchedAt>new Date(manifest.scopeTimes.basic.lastFetchedAt))throw new SyncError('row_time_outside_collection');
+    if(regional) {
+      const region=doc.apiFields.sidoCd;
+      if(!Object.hasOwn(regionCounts,region))throw new SyncError('invalid_hospital_region');
+      const times=manifest.regionScopes[region].scopeTimes.basic;
+      if(doc.basicFetchedAt<new Date(times.firstFetchedAt)||doc.basicFetchedAt>new Date(times.lastFetchedAt))throw new SyncError('row_time_outside_regional_collection');
+      regionCounts[region].basic++;
+      for(const code of doc.departmentCodes)regionCounts[region][code]++;
+    }
     for(const code of doc.departmentCodes)departmentCounts[code]++;
     documents.set(doc._id,doc);
   }
   if(documents.size!==manifest.rows)throw new SyncError('catalog_count_mismatch');
   for(const code of Object.keys(DEPARTMENTS))if(departmentCounts[code]!==manifest.scopeCounts[code])throw new SyncError('department_count_mismatch');
+  if(regional)for(const region of REGION_CODES)for(const code of SCOPES) {
+    if(regionCounts[region][code]!==manifest.regionScopes[region].scopeCounts[code])throw new SyncError('regional_catalog_count_mismatch');
+  }
   return {manifest,documents,filename,checksum};
 }
 function emit(event,fields={}) { console.log(JSON.stringify({event,...fields})); }
@@ -134,10 +191,11 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
       }
     }
     const current=new Map();
-    for await(const row of catalog.find({},{projection:{_id:1,provider:1,active:1,basicSourceHash:1,catalogHash:1}})) {
+    for await(const row of catalog.find({},{projection:{_id:1,provider:1,active:1,basicSourceHash:1,catalogHash:1,'apiFields.sidoCd':1}})) {
       if(row.provider!=='HIRA'||typeof row.basicSourceHash!=='string'||typeof row.catalogHash!=='string')throw new SyncError('hospital_collection_migration_required');
       current.set(row._id,row);
     }
+    if(manifest.schemaVersion===2)assertReasonableRegionalRemoval(current.values(),documents);
     if(apply) {
       await renewLock();
       // This marker survives failed/partial applies, so an older snapshot cannot
