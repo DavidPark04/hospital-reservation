@@ -109,7 +109,22 @@ class HospitalRecommendationMongoTest {
         assertEquals("gwangju", ((Map<?, ?>)items.getFirst()).get("id"));
     }
 
-    private void save(Document hospital) { mongo.save(hospital, HospitalCatalog.COLLECTION); }
+    @Test void unregisteredHospitalsAreExcludedFromNearbyAndWebRecommendations() {
+        save(hospital("registered", "등록의원", "서울특별시 종로구 대학로 101", "의원", 37.58, 127.0));
+        mongo.insert(hospital("hidden", "미등록병원", "서울특별시 종로구 대학로 102", "의원", 37.58, 127.0), HospitalCatalog.COLLECTION);
+        List<?> nearby = (List<?>) service.recommend("01", "내과", "서울", "NEARBY", false, null, null).get("items");
+        assertEquals(1, nearby.size());
+        assertEquals("registered", ((Map<?, ?>) nearby.getFirst()).get("id"));
+        when(web.search("내과", "서울")).thenReturn(webResult(candidate("미등록병원", "서울 종로구 대학로 102", "https://hospital.example.org/info")));
+        assertTrue(((List<?>) service.recommend("01", "내과", "서울", "SPECIALIST", false, null, null).get("items")).isEmpty());
+        assertEquals(2, mongo.getCollection(HospitalCatalog.COLLECTION).countDocuments());
+    }
+
+    private void save(Document hospital) {
+        mongo.save(hospital, HospitalCatalog.COLLECTION);
+        mongo.save(new Document("_id", hospital.getString("_id")).append("status", "ACTIVE")
+                .append("departmentCodes", hospital.get("departmentCodes")).append("departments", hospital.get("departments")), RegisteredHospitals.COLLECTION);
+    }
     private Document hospital(String id, String name, String address, String type, double lat, double lon) {
         return new Document("_id", id).append("provider", "HIRA").append("active", true).append("externalId", "not-public-" + id)
             .append("name", name).append("address", address).append("tel", "02-123-4567")

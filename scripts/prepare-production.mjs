@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const repository = 'DavidPark04/hospital-reservation';
+const repository = 'medipick-dev/hospital-reservation';
 const workflows = ['application-checks.yml', 'repository-checks.yml'];
 const shaPattern = /^[0-9a-f]{40}$/;
 

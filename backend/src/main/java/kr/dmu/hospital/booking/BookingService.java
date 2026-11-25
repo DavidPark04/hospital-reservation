@@ -2,6 +2,8 @@ package kr.dmu.hospital.booking;
 
 import com.mongodb.MongoException;
 import kr.dmu.hospital.common.ApiException;
+import kr.dmu.hospital.auth.CurrentUser;
+import kr.dmu.hospital.auth.UserPrincipal;
 import kr.dmu.hospital.integration.Departments;
 import kr.dmu.hospital.integration.HospitalCatalog;
 import org.bson.Document;
@@ -41,33 +43,11 @@ public class BookingService {
     }
 
     public List<Document> doctors(String hospitalId, String departmentCode) {
-        Document hospital = HospitalCatalog.require(mongo, hospitalId);
-        validateDepartment(hospital, departmentCode);
+        requireRegisteredHospital(hospitalId);
+        if (!Departments.contains(departmentCode)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
         Query selection = Query.query(Criteria.where("hospitalId").is(hospitalId)
-                .and("departmentCode").is(departmentCode));
-        List<Document> existing = mongo.find(selection, Document.class, "doctors");
-        if (existing.isEmpty()) {
-            runWithRetry(() -> {
-                List<Document> assigned = mongo.find(selection, Document.class, "doctors");
-                if (!assigned.isEmpty()) {
-                    return null;
-                }
-                List<String> names = new ArrayList<>(List.of("김하늘", "이서준", "박서연", "정지우", "최도윤", "윤수민"));
-                Collections.shuffle(names);
-                String[] specialties = specialties(departmentCode);
-                for (int i = 0; i < 3; i++) {
-                    Document doctor = new Document("_id", stableId("doctor", hospitalId, departmentCode, String.valueOf(i)))
-                            .append("hospitalId", hospitalId).append("departmentCode", departmentCode)
-                            .append("departmentName", Departments.name(departmentCode))
-                            .append("sampleCode", "sample-" + i).append("name", names.get(i))
-                            .append("specialty", specialties[i]).append("isVirtual", true)
-                            .append("createdAt", new Date());
-                    mongo.insert(doctor, "doctors");
-                }
-                return null;
-            });
-        }
-        List<Document> result = mongo.find(selection.with(Sort.by("sampleCode")), Document.class, "doctors");
+                .and("departmentCode").is(departmentCode).and("active").is(true).and("isVirtual").is(false));
+        List<Document> result = mongo.find(selection.with(Sort.by("name", "_id")), Document.class, "doctors");
         List<Document> views = new ArrayList<>();
         for (Document doctor : result) {
             views.add(doctorView(doctor));
@@ -77,15 +57,15 @@ public class BookingService {
 
     public List<Document> slots(String doctorId, String dateText, boolean admin) {
         Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
-        if (!admin) HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
-        LocalDate date = parseDate(dateText);
-        LocalDate today = LocalDate.now(SEOUL);
-        if (!date.isBefore(today) && date.isBefore(today.plusDays(14))) {
-            ensureSampleSlots(doctorId, today);
+        if (!admin) {
+            requireRegisteredHospital(doctor.getString("hospitalId"));
+            requireActiveDoctor(doctor);
         }
+        LocalDate date = parseDate(dateText);
         Date start = atSeoul(date, LocalTime.MIN);
         Date end = atSeoul(date.plusDays(1), LocalTime.MIN);
         Criteria criteria = Criteria.where("doctorId").is(doctorId).and("startAt").gte(start).lt(end);
+        if (!admin) criteria.and("isVirtual").is(false);
         List<Document> found = mongo.find(Query.query(criteria).with(Sort.by("startAt")), Document.class, "timeSlots");
         List<Document> result = new ArrayList<>();
         Date now = new Date();
@@ -108,10 +88,11 @@ public class BookingService {
     }
 
     public Document create(String userId, String key, String slotId) {
+        requirePatientAccount(userId);
         return mutate(userId, key, "CREATE\n" + slotId, () -> {
             Document slot = acquireSlot(slotId);
-            Document doctor = requireDocument("doctors", slot.getString("doctorId"), "의료진을 찾을 수 없습니다.");
-            Document hospital = HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
+            Document doctor = bookingDoctor(slot.getString("doctorId"));
+            Document hospital = requireRegisteredHospital(doctor.getString("hospitalId"));
             Document reservation = new Document("_id", UUID.randomUUID().toString())
                     .append("userId", userId).append("status", "RESERVED")
                     .append("createdAt", new Date()).append("updatedAt", new Date());
@@ -124,6 +105,7 @@ public class BookingService {
     }
 
     public Document change(String userId, String reservationId, String key, String slotId) {
+        requirePatientAccount(userId);
         return mutate(userId, key, "CHANGE\n" + reservationId + "\n" + slotId, () -> {
             Document reservation = ownedReservation(reservationId, userId);
             if (!"RESERVED".equals(reservation.getString("status"))) {
@@ -135,8 +117,8 @@ public class BookingService {
             ensureFuture(reservation.getDate("startAt"));
             Document before = reservationView(reservation);
             Document nextSlot = acquireSlot(slotId);
-            Document doctor = requireDocument("doctors", nextSlot.getString("doctorId"), "의료진을 찾을 수 없습니다.");
-            Document hospital = HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
+            Document doctor = bookingDoctor(nextSlot.getString("doctorId"));
+            Document hospital = requireRegisteredHospital(doctor.getString("hospitalId"));
             releaseSlot(reservation.getString("slotId"));
             setAppointment(reservation, nextSlot, doctor, hospital);
             reservation.put("updatedAt", new Date());
@@ -191,7 +173,8 @@ public class BookingService {
     public List<Document> createSlots(String doctorId, String dateText, String startText, String endText,
                                        int intervalMinutes, int capacity) {
         Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
-        HospitalCatalog.require(mongo, doctor.getString("hospitalId"));
+        requireActiveDoctor(doctor);
+        requireRegisteredHospital(doctor.getString("hospitalId"));
         LocalDate date = parseDate(dateText);
         LocalTime start;
         LocalTime end;
@@ -231,10 +214,11 @@ public class BookingService {
         if (capacity < 0 || capacity > 100) {
             throw new ApiException(400, "정원은 0~100명 사이로 입력해 주세요.");
         }
-        requireDocument("timeSlots", slotId, "시간표를 찾을 수 없습니다.");
-        Criteria criteria = Criteria.where("_id").is(slotId).and("reservedCount").lte(capacity);
+        Document existing = requireDocument("timeSlots", slotId, "시간표를 찾을 수 없습니다.");
+        ensureFuture(existing.getDate("startAt"));
+        Criteria criteria = Criteria.where("_id").is(slotId).and("startAt").gt(new Date()).and("reservedCount").lte(capacity);
         if (closed) {
-            criteria = Criteria.where("_id").is(slotId).and("reservedCount").is(0);
+            criteria = Criteria.where("_id").is(slotId).and("startAt").gt(new Date()).and("reservedCount").is(0);
         }
         Document changed = mongo.findAndModify(Query.query(criteria), new Update().set("capacity", capacity)
                 .set("closed", closed), FindAndModifyOptions.options().returnNew(true), Document.class, "timeSlots");
@@ -243,6 +227,240 @@ public class BookingService {
                     : "현재 예약 수보다 정원을 줄일 수 없습니다.");
         }
         return slotView(changed);
+    }
+
+    public Document managedHospital() {
+        Document registration = requireHospitalManager(false);
+        Document hospital = requireDocument("hospitals", registration.getString("_id"), "병원 정보를 찾을 수 없습니다.");
+        Document fields = hospital.get("apiFields", Document.class);
+        return new Document("id", hospital.getString("_id")).append("name", hospital.getString("name"))
+                .append("address", hospital.getString("address")).append("tel", Objects.requireNonNullElse(hospital.getString("tel"), ""))
+                .append("postalCode", fields == null ? "" : Objects.requireNonNullElse(fields.getString("postNo"), ""))
+                .append("businessNumber", registration.getString("businessNumber"))
+                .append("departments", registration.getOrDefault("departments", List.of()))
+                .append("availableDepartments", Departments.items());
+    }
+
+    public List<Document> managedDoctors() {
+        String hospitalId = requireHospitalManager(false).getString("_id");
+        List<Document> found = mongo.find(Query.query(Criteria.where("hospitalId").is(hospitalId).and("isVirtual").is(false))
+                .with(Sort.by("name", "_id")), Document.class, "doctors");
+        List<Document> result = new ArrayList<>();
+        for (Document doctor : found) result.add(doctorView(doctor));
+        return result;
+    }
+
+    public Document createDoctor(String name, String departmentCode, String specialty) {
+        validateDoctorInput(name, departmentCode, specialty);
+        return runWithRetry(() -> {
+            String hospitalId = requireHospitalManager(true).getString("_id");
+            requireRegisteredHospital(hospitalId);
+            String id = UUID.randomUUID().toString();
+            Document doctor = new Document("_id", id).append("hospitalId", hospitalId)
+                    .append("departmentCode", departmentCode).append("departmentName", Departments.name(departmentCode))
+                    .append("name", name.trim()).append("specialty", specialty.trim()).append("active", true)
+                    .append("isVirtual", false).append("sampleCode", "managed-" + id).append("createdAt", new Date());
+            mongo.insert(doctor, "doctors");
+            refreshManagedDepartments(hospitalId);
+            return doctorView(doctor);
+        });
+    }
+
+    public Document editDoctor(String doctorId, String name, String departmentCode, String specialty, boolean active) {
+        validateDoctorInput(name, departmentCode, specialty);
+        return runWithRetry(() -> {
+            String hospitalId = requireHospitalManager(true).getString("_id");
+            Document doctor = ownedDoctor(doctorId, hospitalId);
+            if (!departmentCode.equals(doctor.getString("departmentCode")) && mongo.exists(Query.query(
+                    Criteria.where("doctorId").is(doctorId).and("status").is("RESERVED").and("startAt").gt(new Date())), "reservations")) {
+                throw new ApiException(409, "예정된 예약이 있는 의료진의 진료과는 변경할 수 없습니다. 예약을 먼저 변경하거나 취소해 주세요.");
+            }
+            doctor.put("name", name.trim()); doctor.put("departmentCode", departmentCode);
+            doctor.put("departmentName", Departments.name(departmentCode)); doctor.put("specialty", specialty.trim());
+            doctor.put("active", active); doctor.put("updatedAt", new Date());
+            mongo.save(doctor, "doctors");
+            refreshManagedDepartments(hospitalId);
+            return doctorView(doctor);
+        });
+    }
+
+    public List<Document> managedSlots(String doctorId, String date) {
+        String hospitalId = requireHospitalManager(false).getString("_id");
+        ownedDoctor(doctorId, hospitalId);
+        return slots(doctorId, date, true);
+    }
+
+    public List<Document> createManagedSlots(String doctorId, String date, String startTime, String endTime, int interval, int capacity) {
+        return runWithRetry(() -> {
+            String hospitalId = requireHospitalManager(true).getString("_id");
+            ownedDoctor(doctorId, hospitalId);
+            return createSlots(doctorId, date, startTime, endTime, interval, capacity);
+        });
+    }
+
+    public Document editManagedSlot(String slotId, int capacity, boolean closed) {
+        return runWithRetry(() -> {
+            String hospitalId = requireHospitalManager(true).getString("_id");
+            Document slot = requireDocument("timeSlots", slotId, "시간표를 찾을 수 없습니다.");
+            ownedDoctor(slot.getString("doctorId"), hospitalId);
+            return editSlot(slotId, capacity, closed);
+        });
+    }
+
+    public List<Document> managedReservations(String date, String status) {
+        String hospitalId = requireHospitalManager(false).getString("_id");
+        Criteria criteria = Criteria.where("hospitalId").is(hospitalId);
+        if (date != null && !date.isBlank()) {
+            LocalDate day = parseDate(date);
+            criteria.and("startAt").gte(atSeoul(day, LocalTime.MIN)).lt(atSeoul(day.plusDays(1), LocalTime.MIN));
+        }
+        if (status != null && !status.isBlank()) {
+            if (!List.of("RESERVED", "CANCELED").contains(status)) throw new ApiException(400, "예약 상태를 확인해 주세요.");
+            criteria.and("status").is(status);
+        }
+        List<Document> found = mongo.find(Query.query(criteria).with(Sort.by(Sort.Direction.DESC, "startAt")), Document.class, "reservations");
+        List<Document> result = new ArrayList<>();
+        Map<String, Document> patients = new HashMap<>();
+        List<String> patientIds = found.stream().map(item -> item.getString("userId")).distinct().toList();
+        if (!patientIds.isEmpty()) {
+            Query members = Query.query(Criteria.where("_id").in(patientIds));
+            members.fields().include("name").include("phone");
+            for (Document patient : mongo.find(members, Document.class, "users")) patients.put(patient.getString("_id"), patient);
+        }
+        for (Document reservation : found) {
+            Document view = reservationView(reservation);
+            Document patient = patients.get(reservation.getString("userId"));
+            view.put("patientName", patient == null ? "탈퇴한 회원" : Objects.requireNonNullElse(patient.getString("name"), ""));
+            view.put("patientPhone", patient == null ? "" : Objects.requireNonNullElse(patient.getString("phone"), ""));
+            result.add(view);
+        }
+        return result;
+    }
+
+    public Document changeManagedReservation(String reservationId, String key, String slotId) {
+        String hospitalId = requireHospitalManager(false).getString("_id");
+        String actorId = CurrentUser.require().getId();
+        return mutate(actorId, key, "HOSPITAL_CHANGE\n" + hospitalId + "\n" + reservationId + "\n" + slotId, () -> {
+            requireHospitalManager(true);
+            Document reservation = hospitalReservation(reservationId, hospitalId);
+            if (!"RESERVED".equals(reservation.getString("status"))) throw new ApiException(409, "취소된 예약은 변경할 수 없습니다.");
+            ensureFuture(reservation.getDate("startAt"));
+            if (slotId.equals(reservation.getString("slotId"))) return reservationView(reservation);
+            lockPatient(reservation.getString("userId"));
+            Document nextSlot = acquireSlot(slotId);
+            ownedDoctor(nextSlot.getString("doctorId"), hospitalId);
+            Document doctor = bookingDoctor(nextSlot.getString("doctorId"));
+            Document hospital = requireRegisteredHospital(hospitalId);
+            Document before = reservationView(reservation);
+            releaseSlot(reservation.getString("slotId"));
+            setAppointment(reservation, nextSlot, doctor, hospital);
+            reservation.put("updatedAt", new Date());
+            mongo.save(reservation, "reservations");
+            Document response = reservationView(reservation);
+            event(reservationId, actorId, "HOSPITAL_CHANGE", before, response);
+            return response;
+        });
+    }
+
+    public Document cancelManagedReservation(String reservationId, String key) {
+        String hospitalId = requireHospitalManager(false).getString("_id");
+        String actorId = CurrentUser.require().getId();
+        return mutate(actorId, key, "HOSPITAL_CANCEL\n" + hospitalId + "\n" + reservationId, () -> {
+            requireHospitalManager(true);
+            Document reservation = hospitalReservation(reservationId, hospitalId);
+            if ("CANCELED".equals(reservation.getString("status"))) return reservationView(reservation);
+            ensureFuture(reservation.getDate("startAt"));
+            lockPatient(reservation.getString("userId"));
+            Document before = reservationView(reservation);
+            releaseSlot(reservation.getString("slotId"));
+            reservation.put("status", "CANCELED"); reservation.put("updatedAt", new Date());
+            mongo.save(reservation, "reservations");
+            Document response = reservationView(reservation);
+            event(reservationId, actorId, "HOSPITAL_CANCEL", before, response);
+            return response;
+        });
+    }
+
+    private Document requireHospitalManager(boolean lock) {
+        UserPrincipal user = CurrentUser.require();
+        if (!"HOSPITAL".equals(user.getRole()) || user.getHospitalId() == null || !user.isProfileComplete()) {
+            throw new ApiException(403, "병원 계정으로 로그인해 주세요.");
+        }
+        Query query = Query.query(Criteria.where("_id").is(user.getHospitalId()).and("userId").is(user.getId()).and("status").is("ACTIVE"));
+        Document registration = lock ? mongo.findAndModify(query, new Update().inc("managementVersion", 1),
+                FindAndModifyOptions.options().returnNew(true), Document.class, "hospitalRegistrations")
+                : mongo.findOne(query, Document.class, "hospitalRegistrations");
+        if (registration == null) throw new ApiException(403, "관리 권한이 있는 병원 정보를 찾을 수 없습니다.");
+        return registration;
+    }
+
+    private Document ownedDoctor(String id, String hospitalId) {
+        Document doctor = mongo.findOne(Query.query(Criteria.where("_id").is(id).and("hospitalId").is(hospitalId).and("isVirtual").is(false)), Document.class, "doctors");
+        if (doctor == null) throw new ApiException(404, "우리 병원에 등록된 의료진을 찾을 수 없습니다.");
+        return doctor;
+    }
+
+    private Document hospitalReservation(String id, String hospitalId) {
+        Document reservation = mongo.findOne(Query.query(Criteria.where("_id").is(id).and("hospitalId").is(hospitalId)), Document.class, "reservations");
+        if (reservation == null) throw new ApiException(404, "우리 병원의 예약을 찾을 수 없습니다.");
+        return reservation;
+    }
+
+    private Document requireRegisteredHospital(String id) {
+        Document hospital = HospitalCatalog.require(mongo, id);
+        if (!mongo.exists(Query.query(Criteria.where("_id").is(id).and("status").is("ACTIVE")), "hospitalRegistrations")) {
+            throw new ApiException(404, "메디픽에 등록된 병원을 찾을 수 없습니다.");
+        }
+        return hospital;
+    }
+
+    private void requireActiveDoctor(Document doctor) {
+        if (!Boolean.TRUE.equals(doctor.getBoolean("active")) || !Boolean.FALSE.equals(doctor.getBoolean("isVirtual"))) {
+            throw new ApiException(409, "현재 예약을 받는 의료진이 아닙니다. 다른 의료진을 선택해 주세요.");
+        }
+    }
+
+    private Document bookingDoctor(String id) {
+        Document doctor = requireDocument("doctors", id, "의료진을 찾을 수 없습니다.");
+        requireActiveDoctor(doctor);
+        // Updating this document makes concurrent department/availability edits conflict with this booking.
+        Document locked = mongo.findAndModify(Query.query(Criteria.where("_id").is(id).and("active").is(true).and("isVirtual").is(false)),
+                new Update().inc("bookingVersion", 1), FindAndModifyOptions.options().returnNew(true), Document.class, "doctors");
+        if (locked == null) throw new ApiException(409, "의료진의 예약 설정이 변경되었습니다. 다시 확인해 주세요.");
+        return locked;
+    }
+
+    private void requirePatientAccount(String userId) {
+        Document user = mongo.findById(userId, Document.class, "users");
+        if (user == null) throw new ApiException(401, "로그인이 필요합니다.");
+        if ("HOSPITAL".equals(user.getString("role"))) throw new ApiException(403, "진료 예약은 개인 계정으로 로그인해 주세요.");
+    }
+
+    private void lockPatient(String userId) {
+        if (mongo.updateFirst(Query.query(Criteria.where("_id").is(userId)), new Update().inc("bookingVersion", 1), "users").getMatchedCount() != 1) {
+            throw new ApiException(409, "예약한 회원의 정보가 변경되었습니다. 예약 목록을 다시 확인해 주세요.");
+        }
+    }
+
+    private void validateDoctorInput(String name, String departmentCode, String specialty) {
+        if (name == null || name.isBlank() || name.length() > 50 || name.codePoints().anyMatch(Character::isISOControl)) {
+            throw new ApiException(400, "의료진 이름은 1~50자로 입력해 주세요.");
+        }
+        if (!Departments.contains(departmentCode)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
+        if (specialty == null || specialty.length() > 100 || specialty.codePoints().anyMatch(Character::isISOControl)) {
+            throw new ApiException(400, "전문 분야는 100자 이내로 입력해 주세요.");
+        }
+    }
+
+    private void refreshManagedDepartments(String hospitalId) {
+        Query query = Query.query(Criteria.where("hospitalId").is(hospitalId).and("active").is(true).and("isVirtual").is(false));
+        query.fields().include("departmentCode");
+        Set<String> uniqueCodes = new TreeSet<>();
+        for (Document doctor : mongo.find(query, Document.class, "doctors")) uniqueCodes.add(doctor.getString("departmentCode"));
+        List<String> codes = new ArrayList<>(uniqueCodes);
+        List<Document> departments = new ArrayList<>();
+        for (String code : codes) departments.add(new Document("code", code).append("name", Departments.name(code)));
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(hospitalId)), new Update().set("departments", departments).set("departmentCodes", codes), "hospitalRegistrations");
     }
 
     private Document mutate(String userId, String key, String body, Supplier<Document> operation) {
@@ -306,7 +524,7 @@ public class BookingService {
     }
 
     private Document acquireSlot(String slotId) {
-        Document filter = new Document("_id", slotId).append("closed", false)
+        Document filter = new Document("_id", slotId).append("closed", false).append("isVirtual", false)
                 .append("startAt", new Document("$gt", new Date()))
                 .append("$expr", new Document("$lt", List.of("$reservedCount", "$capacity")));
         Document slot = mongo.findAndModify(new BasicQuery(filter), new Update().inc("reservedCount", 1),
@@ -334,9 +552,10 @@ public class BookingService {
         reservation.put("departmentCode", doctor.getString("departmentCode"));
         reservation.put("departmentName", doctor.getString("departmentName"));
         reservation.put("doctorName", doctor.getString("name"));
+        reservation.put("isVirtual", false);
         reservation.put("snapshot", new Document("hospitalName", hospital.getString("name"))
                 .append("address", hospital.getString("address")).append("tel", hospital.getString("tel"))
-                .append("doctorName", doctor.getString("name")).append("isVirtual", true)
+                .append("doctorName", doctor.getString("name")).append("isVirtual", false)
                 .append("source", hospital.getString("source")));
     }
 
@@ -355,56 +574,6 @@ public class BookingService {
                 .append("after", after).append("createdAt", new Date()), "reservationEvents");
     }
 
-    private void ensureSampleSlots(String doctorId, LocalDate today) {
-        BulkOperations bulk = mongo.bulkOps(BulkOperations.BulkMode.UNORDERED, "timeSlots");
-        for (int day = 0; day < 14; day++) {
-            LocalDate date = today.plusDays(day);
-            if (date.getDayOfWeek() == DayOfWeek.SUNDAY) {
-                continue;
-            }
-            for (int hour : List.of(9, 10, 11, 14, 15, 16)) {
-                if (date.getDayOfWeek() == DayOfWeek.SATURDAY && hour >= 14) {
-                    continue;
-                }
-                addSlotUpsert(bulk, doctorId, atSeoul(date, LocalTime.of(hour, 0)), 4);
-                addSlotUpsert(bulk, doctorId, atSeoul(date, LocalTime.of(hour, 30)), 4);
-            }
-        }
-        try {
-            bulk.execute();
-        } catch (RuntimeException error) {
-            // Another first visitor can insert the same deterministic slots concurrently.
-            // Re-running only setOnInsert operations preserves capacity and admin edits.
-            if (!retryable(error)) {
-                throw error;
-            }
-            ensureSampleSlotsOnce(doctorId, today);
-        }
-    }
-
-    private void ensureSampleSlotsOnce(String doctorId, LocalDate today) {
-        for (int day = 0; day < 14; day++) {
-            LocalDate date = today.plusDays(day);
-            if (date.getDayOfWeek() == DayOfWeek.SUNDAY) {
-                continue;
-            }
-            for (int hour : List.of(9, 10, 11, 14, 15, 16)) {
-                if (date.getDayOfWeek() == DayOfWeek.SATURDAY && hour >= 14) {
-                    continue;
-                }
-                for (int minute : List.of(0, 30)) {
-                    Date start = atSeoul(date, LocalTime.of(hour, minute));
-                    String id = stableId("slot", doctorId, start.toInstant().toString());
-                    try {
-                        mongo.upsert(Query.query(Criteria.where("_id").is(id)), slotInsert(doctorId, start, 4), "timeSlots");
-                    } catch (DuplicateKeyException ignored) {
-                        // A concurrent request already inserted this exact slot.
-                    }
-                }
-            }
-        }
-    }
-
     private void addSlotUpsert(BulkOperations bulk, String doctorId, Date startAt, int capacity) {
         String id = stableId("slot", doctorId, startAt.toInstant().toString());
         bulk.upsert(Query.query(Criteria.where("_id").is(id)), slotInsert(doctorId, startAt, capacity));
@@ -413,7 +582,7 @@ public class BookingService {
     private Update slotInsert(String doctorId, Date startAt, int capacity) {
         return new Update().setOnInsert("doctorId", doctorId).setOnInsert("startAt", startAt)
                 .setOnInsert("capacity", capacity).setOnInsert("reservedCount", 0)
-                .setOnInsert("closed", false).setOnInsert("isVirtual", true).setOnInsert("createdAt", new Date());
+                .setOnInsert("closed", false).setOnInsert("isVirtual", false).setOnInsert("createdAt", new Date());
     }
 
     private <T> T runWithRetry(Supplier<T> operation) {
@@ -466,43 +635,12 @@ public class BookingService {
         return document;
     }
 
-    private void validateDepartment(Document hospital, String code) {
-        if (!Departments.contains(code)) {
-            throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
-        }
-        Object raw = hospital.get("departments");
-        if (raw instanceof List<?> list && !list.isEmpty()) {
-            for (Object item : list) {
-                if (item instanceof Map<?, ?> map && code.equals(map.get("code"))) {
-                    return;
-                }
-            }
-            throw new ApiException(400, "이 병원에서 확인된 진료과를 선택해 주세요.");
-        }
-        String declared = hospital.getString("departmentCode");
-        if (declared != null && !declared.isBlank() && !declared.equals(code)) {
-            throw new ApiException(400, "이 병원의 진료과와 선택한 진료과가 다릅니다.");
-        }
-    }
-
-    private String[] specialties(String code) {
-        if ("13".equals(code)) {
-            return new String[]{"코·부비동 상담", "귀·어지럼 상담", "목·음성 상담"};
-        }
-        if ("05".equals(code)) {
-            return new String[]{"관절 상담", "척추·자세 상담", "운동 손상 상담"};
-        }
-        if ("14".equals(code)) {
-            return new String[]{"일반 피부 상담", "피부 염증 상담", "피부 관리 상담"};
-        }
-        return new String[]{Departments.name(code) + " 일반 상담", Departments.name(code) + " 건강 상담", Departments.name(code) + " 경과 상담"};
-    }
-
     private Document doctorView(Document doctor) {
         return new Document("id", doctor.getString("_id")).append("hospitalId", doctor.getString("hospitalId"))
                 .append("departmentCode", doctor.getString("departmentCode"))
                 .append("departmentName", doctor.getString("departmentName")).append("name", doctor.getString("name"))
-                .append("specialty", doctor.getString("specialty")).append("isVirtual", true);
+                .append("specialty", doctor.getString("specialty")).append("active", doctor.getBoolean("active", false))
+                .append("isVirtual", doctor.getBoolean("isVirtual", true));
     }
 
     private Document slotView(Document slot) {
@@ -523,7 +661,8 @@ public class BookingService {
                 .append("departmentCode", reservation.getString("departmentCode"))
                 .append("departmentName", reservation.getString("departmentName"))
                 .append("doctorName", reservation.getString("doctorName"))
-                .append("createdAt", reservation.getDate("createdAt").toInstant().toString()).append("isVirtual", true);
+                .append("createdAt", reservation.getDate("createdAt").toInstant().toString())
+                .append("isVirtual", reservation.getBoolean("isVirtual", true));
     }
 
     private LocalDate parseDate(String value) {

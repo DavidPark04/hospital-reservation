@@ -15,7 +15,6 @@ import org.springframework.data.mongodb.core.SimpleMongoClientDatabaseFactory;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
@@ -151,7 +150,7 @@ class HospitalCacheMongoTest {
     @Test
     void firstDetailMaterializesOnlyThatHospitalAndRepeatedReadDoesNotRewriteIt() {
         Document originalBasic = basic("opened", "선택 병원", "서울", "01");
-        mongo.insert(originalBasic, "hospitals");
+        insert(originalBasic);
         insert(basic("other", "미선택 병원", "부산", "01"));
         assertEquals("선택 병원", service.detail(id("opened")).get("name"));
         Document before = cached("opened");
@@ -180,7 +179,7 @@ class HospitalCacheMongoTest {
         assertEquals("새 주소", view.get("address"));
         assertNull(view.get("location"));
         assertFalse(view.containsKey("latitude"));
-        assertEquals("13", ((Map<?, ?>) ((List<?>) view.get("departments")).getFirst()).get("code"));
+        assertEquals("01", ((Map<?, ?>) ((List<?>) view.get("departments")).getFirst()).get("code"));
         assertTrue(view.get("evidence").toString().contains("투석"));
         assertEquals(detailTime.toInstant().toString(), view.get("fetchedAt"));
         verifyNoInteractions(hira);
@@ -262,13 +261,12 @@ class HospitalCacheMongoTest {
     }
 
     @Test
-    void samplesAppearOnlyWhenDemoIsEnabledAndCatalogIsEmpty() {
+    void samplesAreNotExposedAsRegisteredHospitals() {
         mongo.insert(basic("sample", "체험 병원", "서울", "01").append("source", "SAMPLE"), "hospitalDetails");
         assertTrue(((List<?>) service.search("체험", "", "").get("items")).isEmpty());
-        ReflectionTestUtils.setField(service, "demoEnabled", true);
-        assertEquals("SAMPLE", service.search("체험", "", "").get("source"));
         assertTrue(((List<?>) service.search("체험", "", "", true).get("items")).isEmpty());
-        assertEquals("SAMPLE", service.search("체험 병원", "서울", "01", true).get("source"));
+        assertTrue(((List<?>) service.search("체험 병원", "서울", "01", true).get("items")).isEmpty());
+        assertEquals(404, assertThrows(ApiException.class, () -> service.detail(id("sample"))).getStatus());
         insert(basic("real", "실제 병원", "서울", "01"));
         assertTrue(((List<?>) service.search("체험", "", "").get("items")).isEmpty());
         assertTrue(((List<?>) service.search("체험 병원", "", "", true).get("items")).isEmpty());
@@ -289,7 +287,40 @@ class HospitalCacheMongoTest {
                 .append("apiFields", new Document("ykiho", external).append("yadmNm", name));
     }
 
-    private void insert(Document row) { mongo.insert(row, HospitalCatalog.COLLECTION); }
+    @Test
+    void fullCatalogRemainsStoredButUnregisteredAndSuspendedHospitalsStayHidden() {
+        mongo.insert(basic("unregistered", "미등록 병원", "서울", "01"), HospitalCatalog.COLLECTION);
+        insert(basic("registered", "등록 병원", "서울", "01"));
+        insert(basic("suspended", "중지 병원", "서울", "01"));
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(id("suspended"))),
+                new Update().set("status", "INACTIVE"), RegisteredHospitals.COLLECTION);
+        List<?> items = (List<?>) service.search("", "서울", "").get("items");
+        assertEquals(1, items.size());
+        assertEquals(id("registered"), ((Map<?, ?>) items.getFirst()).get("id"));
+        assertEquals(404, assertThrows(ApiException.class, () -> service.detail(id("unregistered"))).getStatus());
+        assertEquals(404, assertThrows(ApiException.class, () -> service.detail(id("suspended"))).getStatus());
+        assertEquals(3, mongo.getCollection(HospitalCatalog.COLLECTION).countDocuments());
+        assertEquals(0, mongo.getCollection("hospitalDetails").countDocuments());
+        verifyNoInteractions(hira);
+    }
+
+    @Test
+    void managedDepartmentSelectionOverridesCatalogWithoutChangingBasicData() {
+        insert(basic("managed", "등록 병원", "서울", "01"));
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(id("managed"))), new Update()
+                .set("departmentCodes", List.of("05")).set("departments", List.of(new Document("code", "05").append("name", "정형외과"))), RegisteredHospitals.COLLECTION);
+        assertTrue(((List<?>) service.search("", "", "01").get("items")).isEmpty());
+        List<?> items = (List<?>) service.search("", "", "05").get("items");
+        assertEquals(1, items.size());
+        assertEquals("05", ((Map<?, ?>) items.getFirst()).get("departmentCode"));
+        assertEquals(List.of("01"), mongo.findById(id("managed"), Document.class, HospitalCatalog.COLLECTION).get("departmentCodes"));
+    }
+
+    private void insert(Document row) {
+        mongo.insert(row, HospitalCatalog.COLLECTION);
+        mongo.insert(new Document("_id", row.getString("_id")).append("status", "ACTIVE")
+                .append("departmentCodes", row.get("departmentCodes")).append("departments", row.get("departments")), RegisteredHospitals.COLLECTION);
+    }
     private Document cached(String external) { return mongo.findById(id(external), Document.class, "hospitalDetails"); }
     private static String id(String external) { return UUID.nameUUIDFromBytes(("HIRA:" + external).getBytes(StandardCharsets.UTF_8)).toString(); }
     private static Document fact(String id, String kind, String value, Date time) {

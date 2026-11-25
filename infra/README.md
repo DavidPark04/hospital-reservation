@@ -1,6 +1,6 @@
 # 배포와 운영
 
-GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 새 운영 대상은 [medi-pick.vercel.app](https://medi-pick.vercel.app)입니다.
+GitHub 저장소 `medipick-dev/hospital-reservation`을 사용하고, **김도형의 Vercel 프로젝트에서 프론트와 Java 백엔드를 함께 운영**합니다. 운영 대상은 [medi-pick.vercel.app](https://medi-pick.vercel.app)입니다. 저장소는 2026-11-25 확인 기준 `medipick-dev` 조직으로 이전했으며 커밋·PR 이력은 유지됩니다.
 
 2026-11-21 첫 운영 배포에서 화면·병원 검색·MongoDB 연결과 소셜 인증 시작 주소를 확인했습니다. Production 환경변수와 GitHub Actions 비밀값 3개를 등록했습니다. 버전별 운영 반영은 해당 PR·Actions·Vercel 배포 결과로 확인하며, Google/Kakao 운영 callback 등록과 실계정 로그인 검증은 사용자가 직접 진행합니다.
 
@@ -9,7 +9,7 @@ GitHub 저장소 `DavidPark04/hospital-reservation`을 유지하고, **김도형
 | 항목 | 적용 값 |
 | --- | --- |
 | 소유 scope / 프로젝트 | `0381kdh-8885` / `medipick` |
-| 소스 저장소 | `DavidPark04/hospital-reservation` |
+| 소스 저장소 | `medipick-dev/hospital-reservation` |
 | 운영 브랜치·배포 방식 | `main`에서 검증한 커밋을 `develop`에 동기화하고 GitHub Actions에서 Vercel CLI로 배포 |
 | Root Directory | 기존 `frontend` 대신 저장소 루트: 입력란 비우기 |
 | 프로젝트 Build / Install / Output | 기존 정적 사이트 override를 해제하고 저장소 설정 사용 |
@@ -25,7 +25,7 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 ## GitHub 자동 배포 설정
 
-개인 소유 GitHub 저장소의 공동 작업자는 Vercel의 기본 Git 연결을 직접 만들 수 없으므로 [공식 외부 CI 방식](https://vercel.com/docs/git/external-pipelines)을 사용합니다. 저장소 Settings → Secrets and variables → Actions에 아래 **Repository secrets**를 등록합니다.
+GitHub Actions에서 검사한 커밋을 배포하는 [공식 외부 CI 방식](https://vercel.com/docs/git/external-pipelines)을 사용합니다. 저장소 Settings → Secrets and variables → Actions에 아래 **Repository secrets**를 등록합니다.
 
 | Secret | 값 |
 | --- | --- |
@@ -53,7 +53,7 @@ Java 21 컨테이너는 `PORT=8080`에 HTTP 서버를 열며 외부 프록시의
 
 [Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 매일 `15:00 UTC`, 한국 시간 `00:00`에 실행하도록 예약합니다. 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 `hospitals`에서 추가·변경·비활성화할 문서만 적용합니다. 상세 3종은 이 작업에서 수집하지 않으며 `hospitalDetails`에 저장하는 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
 
-Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API를 호출하거나 매일 재배포하지 않습니다. 일반 검색·AI 후보 조회는 기본 카탈로그를 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다.
+Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API를 호출하거나 매일 재배포하지 않습니다. 일반 검색·AI 후보 조회는 기본 카탈로그 중 활성 등록 병원만 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다. 등록되지 않은 병원도 기본 카탈로그에서는 보존·갱신합니다.
 
 GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각 완료를 보장하지 않습니다. 공개 저장소가 60일간 비활성 상태면 스케줄이 중지될 수 있습니다. Actions에서 다시 활성화하거나 **Run workflow → main**으로 실행하고 실제 완료 건수를 확인합니다. [GitHub 예약 실행 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
@@ -78,14 +78,23 @@ GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각
 | `OPENAI_MODEL` | `gpt-6.2-sol` |
 | `HIRA_HOSPITAL_KEY` | 병원정보서비스 인증키. 기본 수집은 Actions에서 수행하며 웹 요청에는 사용하지 않음 |
 | `HIRA_DETAIL_KEY` | 선택한 병원의 상세 3종 조회용 인증키 |
+| `COMWEL_API_KEY` | 병원 가입에 필수인 근로복지공단 고용/산재보험 현황정보 인증키. 사업자등록번호로 사업장을 조회하고 DB 병원과 대조 |
 | `PORT` | `8080` |
 | `SERVER_ADDRESS` | `0.0.0.0` (컨테이너 기본값) |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `framework` (배포 프록시용 컨테이너 기본값) |
-| `DEMO_ENABLED` | 샘플 병원 생성 여부. 실제 병원만 시작하려면 `false` |
+| `DEMO_ENABLED` | 샘플 병원 생성 여부. 운영은 `false` 권장. 공개 화면은 별도로 활성 등록 병원만 허용 |
 
 `SERVER_PORT`를 따로 설정하면 `PORT`와 동일하게 맞춥니다. `HOSPITAL_API_FILE`은 로컬 보조 입력용이므로 운영에 설정하지 않습니다. DB URI에는 대상 DB명을 지정하고, Atlas 네트워크 허용 설정에서 Vercel 실행 환경이 접속할 수 있는지 확인합니다. 로컬 PC IP만 허용한 상태로는 클라우드 서버 접속이 보장되지 않습니다.
 
 Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에서 실계정 OAuth를 확인하려면 해당 origin·callback·DB를 별도로 맞춰야 하므로 이번 운영 검증은 확정된 production 주소를 기준으로 합니다.
+
+## 병원 계정 운영
+
+개인 회원의 아이디·소셜 로그인과 마이페이지는 유지합니다. 병원 계정은 사업자등록번호·비밀번호로 가입·로그인하고 이메일·소셜 가입을 사용하지 않습니다. 근로복지공단 조회 결과와 DB 병원 정보가 일치하면 병원명·주소·우편번호·전화번호를 자동 입력하고 서버에서도 수정값을 받지 않습니다. 전화번호가 없으면 빈칸으로 등록합니다. 공개 사업자 정보의 일치 확인은 신청자의 실제 병원 운영 권한 인증을 뜻하지 않습니다.
+
+기본 병원 카탈로그는 그대로 보존하고 `hospitalRegistrations`의 활성 등록 병원만 검색·추천·상세·신규 예약에 공개합니다. 운영 DB에 등록 병원이 없으면 공개 목록은 비어 있습니다. 로컬 시험 가입이나 의료진·시간표를 운영으로 복사하지 않습니다. 병원이 직접 등록한 의료진·진료과·일정·정원으로 예약하며 서버가 매 요청의 병원 소속을 확인합니다. 병원은 자기 병원 예약만 조회·변경·취소할 수 있습니다.
+
+수업용 앱이며 외부 병원 접수 시스템(HIS)과 연결하지 않습니다. 앱 내부에서 예약을 저장해도 실제 병원 접수가 완료되는 것은 아닙니다.
 
 ## 카카오 지도 설정
 
@@ -115,9 +124,9 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 1. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. 작업 브랜치에서 `main`으로 올린 PR의 저장소·프론트·백엔드 검사가 통과하면 Squash로 병합합니다.
 2. 병합 커밋의 `main` 푸시 검사 두 개와 Vercel production 결과를 확인합니다. 배포가 끝나면 `git ls-remote origin refs/heads/main refs/heads/develop`으로 두 브랜치가 배포한 SHA를 가리키는지 확인합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
-4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 기본 검색은 적재된 MongoDB 카탈로그에서 `CACHE`로 반환하고 기본 API를 호출하지 않아야 합니다. 일일 동기화 완료 건수와 이름·지역·진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크, 샘플 병원 지도 제외도 확인합니다.
+4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 검색은 적재된 MongoDB 카탈로그의 활성 등록 병원만 반환하고 기본 API를 호출하지 않아야 합니다. 미등록 병원은 검색·추천·상세·신규 예약에 노출하지 않습니다. 일일 동기화 완료 건수와 이름·지역·관리 진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크도 확인합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
-6. 사용자가 정한 시험 계정으로 모의 예약 생성·변경·취소, 관리자 정원·휴진을 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
+6. 사용자가 정한 시험 계정으로 개인/병원 가입·로그인, 기본정보 수정 차단, 의료진·일정·정원·휴진과 예약 생성·변경·취소를 확인합니다. 다른 병원 관리 요청이 차단되는지도 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
 7. 유휴 상태에서 서버가 다시 시작돼도 기존 회원·예약이 유지되고 로그인·검색이 다시 되는지 확인합니다. 운영 결과와 미완료 항목을 해당 PR 및 [진행 현황](../docs/progress-and-next.md)에 기록합니다.
 
 ## 자동 검사와 현재 확인 범위

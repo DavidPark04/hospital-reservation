@@ -42,6 +42,12 @@ public class BookingIndexes implements ApplicationRunner {
                 new IndexOptions().unique(true).name("user_request_key_v1"));
         mongo.getCollection("reservationEvents").createIndex(
                 new Document("reservationId", 1).append("createdAt", 1));
+        mongo.getCollection("doctors").createIndex(
+                new Document("hospitalId", 1).append("active", 1).append("isVirtual", 1).append("departmentCode", 1),
+                new IndexOptions().name("hospital_managed_doctors_v1"));
+        mongo.getCollection("reservations").createIndex(
+                new Document("hospitalId", 1).append("startAt", -1).append("status", 1),
+                new IndexOptions().name("hospital_reservations_v1"));
 
         Document slotProperties = new Document("capacity", new Document("bsonType", "int").append("minimum", 0))
                 .append("reservedCount", new Document("bsonType", "int").append("minimum", 0))

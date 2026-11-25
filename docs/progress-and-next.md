@@ -15,7 +15,7 @@
 - 예약 확인 화면에서 바꾼 진료과·의료진·날짜·시간을 소셜 로그인 복귀 시 복원
 - MongoDB replica set 기반 정합성 테스트 및 프론트 빌드 CI 구성
 
-릴리스별 CI와 운영 반영 이력은 [GitHub Actions](https://github.com/DavidPark04/hospital-reservation/actions)에서 확인합니다.
+릴리스별 CI와 운영 반영 이력은 [GitHub Actions](https://github.com/medipick-dev/hospital-reservation/actions)에서 확인합니다.
 
 ## 자동 검증
 

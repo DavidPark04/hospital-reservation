@@ -44,6 +44,14 @@ public class UserIndexes implements ApplicationRunner {
             new IndexOptions().unique(true).name("social_signup_identity_v1"));
         mongo.getCollection(SocialSignups.COLLECTION).createIndex(new Document("expiresAt", 1),
             new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("social_signup_expiry_v1"));
+        mongo.getCollection(HospitalAccountService.VERIFICATIONS).createIndex(new Document("expiresAt", 1),
+            new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("hospital_signup_verification_expiry_v1"));
+        mongo.getCollection(HospitalAccountService.REGISTRATIONS).createIndex(new Document("businessNumber", 1),
+            new IndexOptions().unique(true).name("hospital_registration_business_v1"));
+        mongo.getCollection(HospitalAccountService.REGISTRATIONS).createIndex(new Document("userId", 1),
+            new IndexOptions().unique(true).name("hospital_registration_owner_v1"));
+        mongo.getCollection(HospitalAccountService.REGISTRATIONS).createIndex(new Document("status", 1).append("_id", 1),
+            new IndexOptions().name("hospital_registration_status_v1"));
         mongo.getCollection("users").createIndex(new Document("loginId", 1),
                 new IndexOptions().unique(true).name("user_login_id_v1"));
         mongo.getCollection("users").createIndex(new Document("socialIdentity", 1),
@@ -129,6 +137,8 @@ public class UserIndexes implements ApplicationRunner {
         Set<String> phones = new HashSet<>();
         Set<String> emails = new HashSet<>();
         for (Document user : mongo.find(new Query(), Document.class, "users")) {
+            // Hospital phone numbers are official facility contact fields, not personal identity claims.
+            if ("HOSPITAL".equals(user.getString("role"))) continue;
             Document contact = new Document("_id", user.getString("_id"));
             if (MemberIdentity.complete(user)) {
                 Object rawPhone = user.get("phone");

@@ -97,6 +97,9 @@ public class MemberService {
                         throw new ApiException(404, "회원을 찾을 수 없습니다.");
                     }
                     if (!"USER".equals(user.getString("role"))) {
+                        if ("HOSPITAL".equals(user.getString("role"))) {
+                            throw new ApiException(403, "병원 계정은 예약과 의료진에 연결되어 있어 현재 회원 삭제 기능으로 삭제할 수 없습니다.");
+                        }
                         throw new ApiException(403, withdrawal ? "관리자 계정은 탈퇴할 수 없습니다." : "관리자 계정은 삭제할 수 없습니다.");
                     }
                     if (withdrawal) {

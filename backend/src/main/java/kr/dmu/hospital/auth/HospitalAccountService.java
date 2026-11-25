@@ -1,0 +1,169 @@
+package kr.dmu.hospital.auth;
+
+import com.mongodb.MongoException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Pattern;
+import kr.dmu.hospital.common.ApiException;
+import org.bson.Document;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.mongodb.MongoTransactionManager;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+
+@Service
+public class HospitalAccountService {
+    public static final String REGISTRATIONS = "hospitalRegistrations";
+    static final String VERIFICATIONS = "hospitalSignupVerifications";
+    private final MongoTemplate mongo;
+    private final PasswordEncoder passwords;
+    private final AuthService auth;
+    private final ComwelClient comwel;
+    private final TransactionTemplate transaction;
+    private final SecureRandom random = new SecureRandom();
+
+    public HospitalAccountService(MongoTemplate mongo, PasswordEncoder passwords, AuthService auth,
+                                  ComwelClient comwel, MongoTransactionManager manager) {
+        this.mongo = mongo; this.passwords = passwords; this.auth = auth; this.comwel = comwel;
+        transaction = new TransactionTemplate(manager); transaction.setTimeout(20);
+    }
+
+    public Map<String, Object> lookup(Map<String, Object> body) {
+        String number = businessNumber(body);
+        requireUnregistered(number, null);
+        List<Map<String, String>> businesses = comwel.lookup(number);
+        Map<String, Document> matched = new LinkedHashMap<>();
+        for (Map<String, String> business : businesses) {
+            if (!number.equals(business.get("saeopjaDrno"))) continue;
+            String name = business.getOrDefault("saeopjangNm", "").trim();
+            if (name.isBlank() || name.length() > 150) continue;
+            Set<String> names = new LinkedHashSet<>(List.of(name, HospitalBusinessMatch.normalizedName(name)));
+            List<Document> candidates = mongo.find(Query.query(Criteria.where("active").is(true).and("name").in(names)).limit(25), Document.class, "hospitals");
+            if (candidates.isEmpty()) {
+                StringBuilder expression = new StringBuilder("^\\s*");
+                HospitalBusinessMatch.normalizedName(name).codePoints().forEach(code -> expression.append(Pattern.quote(new String(Character.toChars(code)))).append("\\s*"));
+                expression.append('$');
+                candidates = mongo.find(Query.query(Criteria.where("active").is(true).and("name").regex(expression.toString())).limit(25), Document.class, "hospitals");
+            }
+            if (candidates.size() >= 25) throw ambiguous();
+            for (Document hospital : candidates) if (HospitalBusinessMatch.matches(business, hospital, number)) matched.put(hospital.getString("_id"), hospital);
+        }
+        if (matched.isEmpty()) throw new ApiException(404, "사업자 정보와 일치하는 병원을 찾지 못했어요. 사업자번호와 병원 등록 정보를 확인해 주세요.");
+        if (matched.size() != 1) throw ambiguous();
+        Document hospital = matched.values().iterator().next();
+        requireUnregistered(number, hospital.getString("_id"));
+        Document basic = basicInformation(hospital);
+        byte[] bytes = new byte[32]; random.nextBytes(bytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        Date now = new Date();
+        mongo.insert(new Document("_id", digest(token)).append("businessNumber", number).append("hospitalId", hospital.getString("_id"))
+                .append("hospital", basic).append("createdAt", now).append("expiresAt", Date.from(now.toInstant().plusSeconds(900))), VERIFICATIONS);
+        return Map.of("businessNumber", number, "hospital", basic, "verificationToken", token);
+    }
+
+    public Map<String, Object> register(Map<String, Object> body) {
+        String number = businessNumber(body);
+        String password = rawPassword(body);
+        AuthService.requireValidPassword(password);
+        String token = text(body, "verificationToken");
+        if (!token.matches("[A-Za-z0-9_-]{43}")) throw verificationExpired();
+        String hash = passwords.encode(password);
+        for (int attempt = 0; attempt < 4; attempt++) {
+            try {
+                Document user = transaction.execute(status -> {
+                    Document proof = mongo.findOne(Query.query(Criteria.where("_id").is(digest(token)).and("businessNumber").is(number)
+                            .and("expiresAt").gt(new Date())), Document.class, VERIFICATIONS);
+                    if (proof == null) throw verificationExpired();
+                    String hospitalId = proof.getString("hospitalId");
+                    requireUnregistered(number, hospitalId);
+                    Document hospital = mongo.findOne(Query.query(Criteria.where("_id").is(hospitalId).and("active").is(true)), Document.class, "hospitals");
+                    if (hospital == null || !basicInformation(hospital).equals(proof.get("hospital", Document.class))) {
+                        throw new ApiException(409, "병원 기본정보가 변경됐어요. 사업자번호를 다시 조회해 주세요.");
+                    }
+                    Document basic = basicInformation(hospital);
+                    String userId = UUID.randomUUID().toString();
+                    Date now = new Date();
+                    Document member = new Document("_id", userId).append("loginId", "hospital:" + number)
+                            .append("businessNumber", number).append("hospitalId", hospitalId).append("name", basic.getString("name"))
+                            .append("phone", basic.getString("tel")).append("passwordHash", hash).append("role", "HOSPITAL")
+                            .append("authProvider", "LOCAL").append("profileComplete", true).append("tokenVersion", 0).append("createdAt", now);
+                    mongo.insert(new Document("_id", hospitalId).append("businessNumber", number).append("userId", userId)
+                            .append("status", "ACTIVE").append("basicInformation", basic).append("createdAt", now), REGISTRATIONS);
+                    mongo.insert(member, "users");
+                    if (mongo.remove(Query.query(Criteria.where("_id").is(proof.getString("_id"))), VERIFICATIONS).getDeletedCount() != 1) throw verificationExpired();
+                    return member;
+                });
+                return auth.issueHospitalSession(user);
+            } catch (DuplicateKeyException error) {
+                throw new ApiException(409, "이미 가입된 병원이에요. 병원 로그인으로 진행해 주세요.");
+            } catch (RuntimeException error) {
+                if (error instanceof ApiException || !retryable(error) || attempt == 3) throw error;
+            }
+        }
+        throw new ApiException(409, "가입 요청을 다시 확인해 주세요.");
+    }
+
+    public Map<String, Object> login(Map<String, Object> body) {
+        String number = businessNumber(body);
+        String password = rawPassword(body);
+        if (password.getBytes(StandardCharsets.UTF_8).length > 72) throw invalidLogin();
+        Document user = mongo.findOne(Query.query(Criteria.where("role").is("HOSPITAL").and("businessNumber").is(number)), Document.class, "users");
+        if (user == null || user.getString("passwordHash") == null || !passwords.matches(password, user.getString("passwordHash"))) throw invalidLogin();
+        if (!AuthService.hasHospitalRegistration(mongo, user)) throw invalidLogin();
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(user.getString("_id"))), new Update().set("lastLoginAt", new Date()), "users");
+        return auth.issueHospitalSession(user);
+    }
+
+    private void requireUnregistered(String number, String hospitalId) {
+        Criteria selection = hospitalId == null ? Criteria.where("businessNumber").is(number)
+                : new Criteria().orOperator(Criteria.where("businessNumber").is(number), Criteria.where("_id").is(hospitalId));
+        if (mongo.exists(Query.query(selection), REGISTRATIONS)
+                || mongo.exists(Query.query(Criteria.where("loginId").is("hospital:" + number)), "users")) {
+            throw new ApiException(409, "이미 가입된 병원이에요. 병원 로그인으로 진행해 주세요.");
+        }
+    }
+
+    public static Document basicInformation(Document hospital) {
+        Document fields = hospital.get("apiFields", Document.class);
+        return new Document("id", hospital.getString("_id")).append("name", hospital.getString("name"))
+                .append("address", hospital.getString("address")).append("postalCode", fields == null || fields.getString("postNo") == null ? "" : fields.getString("postNo"))
+                .append("tel", hospital.getString("tel") == null ? "" : hospital.getString("tel"));
+    }
+
+    static String businessNumber(Map<String, Object> body) {
+        String raw = text(body, "businessNumber");
+        if (!raw.matches("[0-9 -]{10,16}")) throw new ApiException(400, "사업자등록번호 10자리를 입력해 주세요.");
+        String number = raw.replace("-", "").replace(" ", "");
+        if (!number.matches("[0-9]{10}")) throw new ApiException(400, "사업자등록번호 10자리를 입력해 주세요.");
+        return number;
+    }
+    private static String text(Map<String, Object> body, String key) { return body != null && body.get(key) instanceof String value ? value.trim() : ""; }
+    private static String rawPassword(Map<String, Object> body) { return body != null && body.get("password") instanceof String value ? value : ""; }
+    private static ApiException invalidLogin() { return new ApiException(401, "사업자등록번호 또는 비밀번호가 맞지 않습니다."); }
+    private static ApiException ambiguous() { return new ApiException(409, "일치하는 병원을 하나로 확인할 수 없어요. 병원 등록 정보를 확인해 주세요."); }
+    private static ApiException verificationExpired() { return new ApiException(400, "사업자번호 조회가 만료됐어요. 다시 조회한 뒤 가입해 주세요."); }
+    private static String digest(String token) {
+        try { return Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8))); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 is unavailable"); }
+    }
+    private static boolean retryable(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof MongoException mongoError && (mongoError.hasErrorLabel("TransientTransactionError") || mongoError.getCode() == 112 || mongoError.getCode() == 251)) return true;
+        }
+        return false;
+    }
+}
