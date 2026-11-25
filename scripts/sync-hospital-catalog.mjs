@@ -227,6 +227,8 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
     await renewLock();
     await catalog.createIndex({active:1,name:1,_id:1},{name:'catalog_active_name_v1'});
     await renewLock();
+    await catalog.createIndex({'apiFields.postNo':1,active:1},{name:'catalog_postcode_active_v1'});
+    await renewLock();
     await catalog.createIndex({departmentCodes:1,active:1,name:1,_id:1},{name:'catalog_department_name_v1'});
     await renewLock();
     await runs.insertOne({_id:runId,provider:'HIRA',kind:'BASIC',status:'IMPORTING',startedAt:now,

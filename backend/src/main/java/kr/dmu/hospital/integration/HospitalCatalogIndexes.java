@@ -22,6 +22,8 @@ public class HospitalCatalogIndexes implements ApplicationRunner {
                 new IndexOptions().unique(true).name("catalog_provider_external_v1"));
         collection.createIndex(new Document("active", 1).append("name", 1).append("_id", 1),
                 new IndexOptions().name("catalog_active_name_v1"));
+        collection.createIndex(new Document("apiFields.postNo", 1).append("active", 1),
+                new IndexOptions().name("catalog_postcode_active_v1"));
         collection.createIndex(new Document("departmentCodes", 1).append("active", 1).append("name", 1).append("_id", 1),
                 new IndexOptions().name("catalog_department_name_v1"));
     }

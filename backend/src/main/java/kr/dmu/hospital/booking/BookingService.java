@@ -3,6 +3,7 @@ package kr.dmu.hospital.booking;
 import com.mongodb.MongoException;
 import kr.dmu.hospital.common.ApiException;
 import kr.dmu.hospital.auth.CurrentUser;
+import kr.dmu.hospital.auth.HospitalAccountService;
 import kr.dmu.hospital.auth.UserPrincipal;
 import kr.dmu.hospital.integration.Departments;
 import kr.dmu.hospital.integration.HospitalCatalog;
@@ -232,10 +233,7 @@ public class BookingService {
     public Document managedHospital() {
         Document registration = requireHospitalManager(false);
         Document hospital = requireDocument("hospitals", registration.getString("_id"), "병원 정보를 찾을 수 없습니다.");
-        Document fields = hospital.get("apiFields", Document.class);
-        return new Document("id", hospital.getString("_id")).append("name", hospital.getString("name"))
-                .append("address", hospital.getString("address")).append("tel", Objects.requireNonNullElse(hospital.getString("tel"), ""))
-                .append("postalCode", fields == null ? "" : Objects.requireNonNullElse(fields.getString("postNo"), ""))
+        return HospitalAccountService.basicInformation(hospital)
                 .append("businessNumber", registration.getString("businessNumber"))
                 .append("departments", registration.getOrDefault("departments", List.of()))
                 .append("availableDepartments", Departments.items());
