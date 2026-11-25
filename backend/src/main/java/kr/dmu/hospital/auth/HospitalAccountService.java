@@ -4,6 +4,7 @@ import com.mongodb.MongoException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -43,19 +44,22 @@ public class HospitalAccountService {
         String number = businessNumber(body);
         requireUnregistered(number, null);
         List<Map<String, String>> businesses = comwel.lookup(number);
-        Map<String, Document> matched = new LinkedHashMap<>();
-        Map<String, List<Document>> hospitalsByPostcode = new LinkedHashMap<>();
+        Map<String, List<Map<String, String>>> businessesByPostcode = new LinkedHashMap<>();
         for (Map<String, String> business : businesses) {
             if (!number.equals(business.get("saeopjaDrno"))) continue;
             String postcode = business.getOrDefault("post", "").trim();
             if (postcode.isEmpty() || business.getOrDefault("saeopjangNm", "").isBlank()) continue;
-            for (Document hospital : hospitalsByPostcode.computeIfAbsent(postcode, this::activeHospitalsAtPostcode)) {
-                if (HospitalBusinessMatch.matches(business, hospital, number)) matched.put(hospital.getString("_id"), hospital);
-            }
-            if (matched.size() > 1) throw ambiguous();
+            businessesByPostcode.computeIfAbsent(postcode, key -> new ArrayList<>()).add(business);
         }
-        if (matched.isEmpty()) throw new ApiException(404, "사업자 정보와 일치하는 병원을 찾지 못했어요. 사업자번호와 병원 등록 정보를 확인해 주세요.");
-        Document hospital = matched.values().iterator().next();
+        Document hospital = null;
+        for (var group : businessesByPostcode.entrySet()) {
+            for (Document candidate : activeHospitalsAtPostcode(group.getKey())) {
+                if (!HospitalBusinessMatch.matches(group.getValue(), candidate, number)) continue;
+                if (hospital != null) throw ambiguous();
+                hospital = candidate;
+            }
+        }
+        if (hospital == null) throw new ApiException(404, "사업자 정보와 일치하는 병원을 찾지 못했어요. 사업자번호와 병원 등록 정보를 확인해 주세요.");
         requireUnregistered(number, hospital.getString("_id"));
         byte[] bytes = new byte[32]; random.nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);

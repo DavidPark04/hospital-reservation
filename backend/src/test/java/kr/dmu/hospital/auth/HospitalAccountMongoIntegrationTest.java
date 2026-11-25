@@ -13,6 +13,8 @@ import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -114,6 +116,55 @@ class HospitalAccountMongoIntegrationTest {
         when(comwel.lookup(NUMBER)).thenReturn(List.of(HospitalBusinessMatchTest.business()));
         mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "duplicate-hospital"), "hospitals");
         assertEquals(409, assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER))).getStatus());
+        assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
+    }
+
+    @Test void buildingOnlyInsuranceAddressFindsTheNamedClinicAndReturnsItsCatalogAddress() {
+        String number = "7849501821";
+        String name = "풍동바른내과의원";
+        String address = "경기도 고양시 일산동구 숲속마을1로 76, 힘찬프라자 6층 602-603호 (풍동)";
+        var business = Map.of("saeopjaDrno", number, "saeopjangNm", name, "post", "10305",
+                "addr", "경기도 고양시 일산동구 숲속마을1로 76 (풍동, 힘찬프라자)");
+        when(comwel.lookup(number)).thenReturn(List.of(business, business));
+        var catalog = new Document("_id", "bareun-clinic").append("active", true).append("name", name)
+                .append("address", address).append("apiFields", new Document("postNo", "10305"));
+        mongo.insert(catalog, "hospitals");
+        mongo.insert(new Document(catalog).append("_id", "neighbor").append("name", "풍동연세이비인후과의원")
+                .append("address", "경기도 고양시 일산동구 숲속마을1로 76, (풍동, 힘찬프라자 303호)"), "hospitals");
+
+        var lookup = accounts.lookup(Map.of("businessNumber", "784-95-01821"));
+        Document hospital = (Document) lookup.get("hospital");
+        assertEquals("bareun-clinic", hospital.getString("id"));
+        assertEquals(name, hospital.getString("name"));
+        assertEquals(address, hospital.getString("address"));
+        assertEquals("10305", hospital.getString("postalCode"));
+    }
+
+    @Test void missingSuiteCannotChooseBetweenTwoSameNameClinicsInTheBuilding() {
+        var business = new HashMap<>(HospitalBusinessMatchTest.business());
+        business.put("addr", "경기 고양시 일산동구 숲속마을로 48 4층");
+        when(comwel.lookup(NUMBER)).thenReturn(List.of(business));
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "other-suite")
+                .append("address", "경기 고양시 일산동구 숲속마을로 48 4층 402호"), "hospitals");
+
+        var error = assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER)));
+        assertEquals(409, error.getStatus());
+        assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void buildingOnlyInsuranceRowCannotOverrideAConflictingSuite(boolean buildingOnlyFirst) {
+        String address = "경기 고양시 일산동구 숲속마을로 48";
+        Map<String, String> buildingOnly = new HashMap<>(HospitalBusinessMatchTest.business());
+        buildingOnly.put("addr", address);
+        Map<String, String> differentSuite = new HashMap<>(buildingOnly);
+        differentSuite.put("addr", address + " 4층 402호");
+        when(comwel.lookup(NUMBER)).thenReturn(buildingOnlyFirst
+                ? List.of(buildingOnly, differentSuite) : List.of(differentSuite, buildingOnly));
+
+        var error = assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER)));
+        assertTrue(error.getStatus() == 404 || error.getStatus() == 409);
         assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
     }
 

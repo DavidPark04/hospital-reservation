@@ -90,11 +90,41 @@ class HospitalBusinessMatchTest {
         assertTrue(matchesNames("솔빛III의원(제2분원)", catalog));
         assertEquals("솔빛Ⅲ의원 (제2분원)", HospitalName.parse(catalog).facility());
     }
+    @ParameterizedTest
+    @CsvSource({
+            "경기 고양시 일산동구 숲속마을로 48, true",
+            "경기 고양시 일산동구 숲속마을로 48 4층, true",
+            "경기 고양시 일산동구 숲속마을로 48 401호, true",
+            "경기 고양시 일산동구 숲속마을로 48 3층, false",
+            "경기 고양시 일산동구 숲속마을로 48 402호, false"
+    })
+    void comparesAvailableFloorAndSuiteInEitherAddress(String address, boolean compatible) {
+        var row = new HashMap<>(business());
+        row.put("addr", address);
+        assertEquals(compatible, HospitalBusinessMatch.matches(row, hospital(), NUMBER));
+        assertEquals(compatible, HospitalBusinessMatch.matches(business(), hospital().append("address", address), NUMBER));
+    }
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "601-603호 | 602-603호 | false",
+            "601호, 603호 | 601호, 604호 | false",
+            "601, 603호 | 602, 603호 | false",
+            "601/603호 | 602/603호 | false",
+            "602ㆍ603호 | 602호, 603호 | true",
+            "602-603호 | 602-603호 | true",
+            "601호, 603호 | 601호, 603호 | true"
+    })
+    void comparesAllExplicitSuites(String insuranceSuites, String catalogSuites, boolean compatible) {
+        String address = "경기 고양시 일산동구 숲속마을로 48 6층 ";
+        var row = new HashMap<>(business());
+        row.put("addr", address + insuranceSuites);
+        assertEquals(compatible, HospitalBusinessMatch.matches(row, hospital().append("address", address + catalogSuites), NUMBER));
+    }
     @Test void rejectsSameNameAtDifferentAddressFloorUnitOrPostalCode() {
         for (String address : new String[] {
                 "경기 고양시 일산서구 숲속마을로 48 4층 401호", "경기 고양시 일산동구 숲속마을로 480 4층 401호",
                 "경기 고양시 일산동구 숲속마을로 48 3층 401호", "경기 고양시 일산동구 숲속마을로 48 4층 402호",
-                "경기 고양시 일산동구 숲속마을로 48", "경기 고양시 일산동구 숲속마을로 48 지하4층 401호" }) {
+                "경기 고양시 일산동구 숲속마을로 48 지하4층 401호" }) {
             Map<String, String> row = new HashMap<>(business()); row.put("addr", address);
             assertFalse(HospitalBusinessMatch.matches(row, hospital(), NUMBER), address);
         }
