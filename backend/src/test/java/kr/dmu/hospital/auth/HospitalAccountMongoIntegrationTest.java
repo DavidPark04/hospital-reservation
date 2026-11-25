@@ -4,11 +4,17 @@ import com.mongodb.ConnectionString;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
@@ -32,6 +38,7 @@ import static org.mockito.Mockito.*;
 @EnabledIfEnvironmentVariable(named = "MONGODB_TEST_URI", matches = ".+")
 class HospitalAccountMongoIntegrationTest {
     private static final String NUMBER = "6911702710";
+    private static final String YONSEI_NUMBER = "1108200472";
     private static final String PASSWORD = "HospitalTest2026!";
     private MongoClient client;
     private MongoTemplate mongo;
@@ -63,6 +70,8 @@ class HospitalAccountMongoIntegrationTest {
     @Test void lookupThenSignupUsesOnlyServerBasicsWithoutEmailAndSupportsBusinessNumberLogin() {
         Map<String, Object> lookup = accounts.lookup(Map.of("businessNumber", "691-17-02710"));
         assertEquals(NUMBER, lookup.get("businessNumber"));
+        assertFalse(lookup.containsKey("candidates"));
+        assertFalse(lookup.containsKey("selectionToken"));
         assertEquals("", ((Document) lookup.get("hospital")).getString("tel"));
         Map<String, Object> body = registration(lookup);
         body.put("name", "변조 병원"); body.put("address", "변조 주소"); body.put("hospitalId", "other-hospital");
@@ -110,12 +119,9 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals(0, mongo.getCollection(HospitalAccountService.REGISTRATIONS).countDocuments());
     }
 
-    @Test void noMatchAndAmbiguousCatalogNeverIssueVerification() {
+    @Test void unmatchedBusinessDoesNotIssueVerification() {
         when(comwel.lookup(NUMBER)).thenReturn(List.of());
         assertEquals(404, assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER))).getStatus());
-        when(comwel.lookup(NUMBER)).thenReturn(List.of(HospitalBusinessMatchTest.business()));
-        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "duplicate-hospital"), "hospitals");
-        assertEquals(409, assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER))).getStatus());
         assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
     }
 
@@ -140,16 +146,138 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals("10305", hospital.getString("postalCode"));
     }
 
-    @Test void missingSuiteCannotChooseBetweenTwoSameNameClinicsInTheBuilding() {
+    @Test void threeMatchingClinicsRemainSelectableUntilOneIsVerifiedAndRegistered() {
         var business = new HashMap<>(HospitalBusinessMatchTest.business());
         business.put("addr", "경기 고양시 일산동구 숲속마을로 48 4층");
         when(comwel.lookup(NUMBER)).thenReturn(List.of(business));
         mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "other-suite")
                 .append("address", "경기 고양시 일산동구 숲속마을로 48 4층 402호"), "hospitals");
+        String address = "경기 고양시 일산동구 숲속마을로 48 4층 403호";
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "third-suite").append("address", address)
+                .append("tel", "031-000-0403"), "hospitals");
 
-        var error = assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER)));
-        assertEquals(409, error.getStatus());
-        assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
+        var lookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        assertEquals(List.of("other-suite", "test-hospital", "third-suite"), candidateIds(lookup));
+        assertEquals(NUMBER, lookup.get("businessNumber"));
+        assertEquals(0, mongo.getCollection("users").countDocuments());
+        Date originalExpiry = Date.from(Instant.now().plusSeconds(75));
+        mongo.updateFirst(new Query(), new Update().set("expiresAt", originalExpiry), HospitalAccountService.VERIFICATIONS);
+        var selected = accounts.select(selection(lookup, "third-suite"));
+        Document proof = mongo.findOne(Query.query(Criteria.where("hospitalId").is("third-suite")),
+                Document.class, HospitalAccountService.VERIFICATIONS);
+        assertNotNull(proof);
+        assertEquals(originalExpiry, proof.getDate("expiresAt"));
+        var basic = (Map<?, ?>) selected.get("hospital");
+        assertEquals("third-suite", basic.get("id"));
+        assertEquals("풍동든든한365의원", basic.get("name"));
+        assertEquals(address, basic.get("address"));
+        assertEquals("10306", basic.get("postalCode"));
+        assertEquals("031-000-0403", basic.get("tel"));
+        assertNotEquals(lookup.get("selectionToken"), selected.get("verificationToken"));
+        assertThrows(ApiException.class, () -> accounts.select(selection(lookup, "other-suite")));
+        var form = registration(selected);
+        form.put("hospitalId", "other-suite");
+        form.put("address", "다른 주소");
+        var session = accounts.register(form);
+        assertEquals("third-suite", auth.authenticate((String) session.get("token")).getHospitalId());
+        Document saved = mongo.findById("third-suite", Document.class, HospitalAccountService.REGISTRATIONS);
+        assertEquals(address, saved.get("basicInformation", Document.class).getString("address"));
+    }
+
+    @Test void yonseiMedicalCenterOffersBothCatalogHospitalsAndDoesNotOfferAnUnrelatedNeighbor() {
+        var business = Map.of("saeopjaDrno", YONSEI_NUMBER, "saeopjangNm", "연세대학교의료원", "post", "03722",
+                "addr", "서울특별시 서대문구  연세로 50-1 (신촌동) 연세의료원건물 종합관 인사팀",
+                "gyEopjongNm", "일반 병원");
+        when(comwel.lookup(YONSEI_NUMBER)).thenReturn(List.of(business, business));
+        String road = "서울특별시 서대문구 연세로 50-1, (신촌동)";
+        Document hospital = new Document("_id", "severance").append("name", "연세대학교의과대학세브란스병원")
+                .append("address", road).append("active", true).append("apiFields", new Document("postNo", "03722"));
+        mongo.insert(hospital, "hospitals");
+        mongo.insert(new Document(hospital).append("_id", "dental").append("name", "연세대학교치과대학치과병원"), "hospitals");
+        mongo.insert(new Document(hospital).append("_id", "neighbor").append("name", "다른대학교치과대학치과병원"), "hospitals");
+
+        var lookup = accounts.lookup(Map.of("businessNumber", "110-82-00472"));
+        assertEquals(List.of("dental", "severance"), candidateIds(lookup));
+        var selected = accounts.select(selection(lookup, "dental"));
+        var basic = (Map<?, ?>) selected.get("hospital");
+        assertEquals("연세대학교치과대학치과병원", basic.get("name"));
+        assertEquals(road, basic.get("address"));
+        assertEquals("03722", basic.get("postalCode"));
+    }
+
+    @Test void choiceIsBoundToLookupNumberAndOfferedIdsAndCannotBeUsedForRegistration() {
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "second"), "hospitals");
+        var lookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "added-later"), "hospitals");
+        var premature = Map.<String, Object>of("businessNumber", NUMBER, "password", PASSWORD,
+                "verificationToken", lookup.get("selectionToken"));
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.register(premature)).getStatus());
+        var wrongNumber = selection(lookup, "second");
+        wrongNumber.put("businessNumber", "0000000000");
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.select(wrongNumber)).getStatus());
+        assertEquals(400, assertThrows(ApiException.class,
+                () -> accounts.select(selection(lookup, "added-later"))).getStatus());
+        assertEquals(0, mongo.getCollection("users").countDocuments());
+        var chosen = accounts.select(selection(lookup, "second"));
+        var wrongType = selection(lookup, "second");
+        wrongType.put("selectionToken", chosen.get("verificationToken"));
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.select(wrongType)).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.select(selection(lookup, "second"))).getStatus());
+    }
+
+    @Test void expiredChoiceAndCatalogChangeRequireAnotherLookup() {
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "second"), "hospitals");
+        var expired = accounts.lookup(Map.of("businessNumber", NUMBER));
+        mongo.updateFirst(new Query(), new Update().set("expiresAt", Date.from(Instant.now().minusSeconds(5))),
+                HospitalAccountService.VERIFICATIONS);
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.select(selection(expired, "second"))).getStatus());
+        var fresh = accounts.lookup(Map.of("businessNumber", NUMBER));
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("second")),
+                new Update().set("address", "경기도 고양시 일산동구 숲속마을로 49"), "hospitals");
+        assertEquals(409, assertThrows(ApiException.class, () -> accounts.select(selection(fresh, "second"))).getStatus());
+        assertEquals(0, mongo.getCollection("users").countDocuments());
+    }
+
+    @Test void concurrentChoicesIssueOneProofForTheWinningHospital() throws Exception {
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "second"), "hospitals");
+        var lookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        var start = new CyclicBarrier(2);
+        List<String> confirmed = new ArrayList<>();
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            List<Future<String>> requests = new ArrayList<>();
+            for (String id : List.of("test-hospital", "second")) {
+                requests.add(executor.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    try {
+                        var result = accounts.select(selection(lookup, id));
+                        assertEquals(id, ((Map<?, ?>) result.get("hospital")).get("id"));
+                        return id;
+                    } catch (ApiException error) {
+                        assertEquals(400, error.getStatus());
+                        return null;
+                    }
+                }));
+            }
+            for (var request : requests) {
+                String hospitalId = request.get(30, TimeUnit.SECONDS);
+                if (hospitalId != null) confirmed.add(hospitalId);
+            }
+        }
+        assertEquals(1, confirmed.size());
+        var proofs = mongo.findAll(Document.class, HospitalAccountService.VERIFICATIONS);
+        assertEquals(1, proofs.size());
+        assertEquals(confirmed.getFirst(), proofs.getFirst().getString("hospitalId"));
+    }
+
+    @Test void hospitalClaimedAfterLookupIsRejectedAndIsOmittedFromTheNextList() {
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "second"), "hospitals");
+        mongo.insert(HospitalBusinessMatchTest.hospital().append("_id", "third"), "hospitals");
+        var lookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        mongo.insert(new Document("_id", "second").append("businessNumber", "0123456789")
+                .append("status", "ACTIVE").append("userId", "existing-owner"), HospitalAccountService.REGISTRATIONS);
+        assertEquals(409, assertThrows(ApiException.class, () -> accounts.select(selection(lookup, "second"))).getStatus());
+        var fresh = accounts.lookup(Map.of("businessNumber", NUMBER));
+        assertEquals(List.of("test-hospital", "third"), candidateIds(fresh));
     }
 
     @ParameterizedTest
@@ -202,7 +330,7 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals(catalogName, original.getString("name"));
     }
 
-    @Test void exactNameAndFoundationNameAtTheSameAddressAreAmbiguous() {
+    @Test void exactNameAndFoundationNameAtTheSameAddressOfferBothCatalogIds() {
         String number = HospitalBusinessMatchTest.SEOUL_ST_MARY_NUMBER;
         var business = HospitalBusinessMatchTest.seoulStMaryBusiness();
         when(comwel.lookup(number)).thenReturn(List.of(business));
@@ -210,9 +338,8 @@ class HospitalAccountMongoIntegrationTest {
         mongo.insert(HospitalBusinessMatchTest.seoulStMaryHospital().append("_id", "test-exact-name")
                 .append("name", business.get("saeopjangNm")), "hospitals");
 
-        ApiException error = assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", number)));
-        assertEquals(409, error.getStatus());
-        assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
+        var lookup = accounts.lookup(Map.of("businessNumber", number));
+        assertEquals(List.of("test-exact-name", "test-seoul-st-mary"), candidateIds(lookup));
     }
 
     @Test void hospitalPasswordChangesInvalidateOldTokensAndRevokedRegistrationInvalidatesNewToken() {
@@ -242,7 +369,22 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals("0319030119", hospital.getString("phone"));
         assertEquals(2, mongo.getCollection("users").countDocuments());
     }
+    private List<String> candidateIds(Map<String, Object> lookup) {
+        assertFalse(lookup.containsKey("verificationToken"));
+        assertFalse(lookup.containsKey("hospital"));
+        assertFalse(((String) lookup.get("selectionToken")).isBlank());
+        List<?> candidates = assertInstanceOf(List.class, lookup.get("candidates"));
+        for (var record : candidates) {
+            assertEquals(Set.of("id", "name", "address", "postalCode", "tel"), ((Map<?, ?>) record).keySet());
+        }
+        return candidates.stream().map(item -> (String) ((Map<?, ?>) item).get("id")).sorted().toList();
+    }
+    private Map<String, Object> selection(Map<String, Object> lookup, String hospitalId) {
+        return new HashMap<>(Map.of("businessNumber", lookup.get("businessNumber"),
+                "selectionToken", lookup.get("selectionToken"), "hospitalId", hospitalId));
+    }
     private Map<String, Object> registration(Map<String, Object> lookup) {
-        return new HashMap<>(Map.of("businessNumber", NUMBER, "password", PASSWORD, "verificationToken", lookup.get("verificationToken")));
+        return new HashMap<>(Map.of("businessNumber", lookup.get("businessNumber"), "password", PASSWORD,
+                "verificationToken", lookup.get("verificationToken")));
     }
 }

@@ -13,6 +13,10 @@ record HospitalName(String legalForm, String operator, String facility) {
     private static final Pattern TRAILING_OPERATOR = Pattern.compile("\\((" + FORM + ")([^()]*)\\)$");
     private static final Pattern SCHOOL_OPERATOR = Pattern.compile("^[\\p{L}\\p{N}·\\s]+?(?:학원|교육재단)");
     private static final Pattern OTHER_OPERATOR = Pattern.compile("^[\\p{L}\\p{N}·\\s]+?(?:재단|선교회|협회)");
+    private static final Pattern OPERATOR_SUFFIX = Pattern.compile("(?:사회복지재단|의료재단|교육재단|복지재단|장학재단|재단|학원|선교회|협회|의료원)$");
+    private static final Pattern UNIVERSITY = Pattern.compile("[\\p{L}\\p{N}·]+대학교");
+    private static final Pattern UNIVERSITY_FACILITY = Pattern.compile(
+            "(?:의과대학|치과대학|한의과대학|의학전문대학원|치의학전문대학원|한의학전문대학원|직장부속|부속|부설).*?(?:병원|의원)(?:\\([^()]+\\))?");
     private static final Pattern SPACES = Pattern.compile("[\\p{javaWhitespace}\\p{Zs}]+");
     private static final Set<String> FACILITY_TYPES = Set.of("병원", "의원", "치과", "치과병원", "치과의원", "한의원",
             "한방병원", "종합병원", "상급종합병원", "요양병원", "정신병원", "보건소", "보건지소", "보건진료소");
@@ -49,6 +53,33 @@ record HospitalName(String legalForm, String operator, String facility) {
         if (rawName.isEmpty()) return false;
         if (rawName.equals(key(second))) return true;
         return parse(first).matches(parse(second));
+    }
+
+    static boolean identifiesOperator(String businessName, String catalogName) {
+        if (businessName == null || catalogName == null) return false;
+        // A standalone parenthesized legal name has no facility suffix for the normal display parser.
+        String normalized = Normalizer.normalize(businessName.strip(), Normalizer.Form.NFKC);
+        Matcher enclosed = TRAILING_OPERATOR.matcher(normalized);
+        HospitalName source = parse(enclosed.matches() ? enclosed.group(1) + enclosed.group(2) : normalized);
+        HospitalName catalog = parse(catalogName);
+        if (!source.legalForm.isEmpty() && !catalog.legalForm.isEmpty() && !source.legalForm.equals(catalog.legalForm)) return false;
+        if (!source.operator.isEmpty() && !catalog.operator.isEmpty() && !source.operator.equals(catalog.operator)) return false;
+
+        String owner = key(source.facility);
+        if (source.operator.isEmpty() && owner.equals(catalog.operator)) {
+            Matcher suffix = OPERATOR_SUFFIX.matcher(owner);
+            if (suffix.find() && suffix.start() > 0) return true;
+        }
+
+        if ((!source.legalForm.isEmpty() && !source.legalForm.equals("학교법인"))
+                || (!catalog.legalForm.isEmpty() && !catalog.legalForm.equals("학교법인"))) return false;
+        String university = owner;
+        if (owner.endsWith("대학교의료원")) university = owner.substring(0, owner.length() - "의료원".length());
+        else if (!source.legalForm.equals("학교법인")) return false;
+        String clinic = key(catalog.facility);
+        if (!UNIVERSITY.matcher(university).matches() || !clinic.startsWith(university)) return false;
+        String affiliation = clinic.substring(university.length());
+        return FACILITY_TYPES.contains(affiliation) || UNIVERSITY_FACILITY.matcher(affiliation).matches();
     }
 
     private boolean matches(HospitalName other) {

@@ -262,16 +262,17 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `hospitalSignupVerifications` — 병원 가입 전 조회 확인
 
-사업자번호를 근로복지공단 고용·산재보험 API로 조회하고, 반환된 사업장명·주소를 `hospitals`와 대조하여 병원 하나를 확인했을 때 만든다. 확인값에는 법인 표기를 포함한 카탈로그 원래 이름을 보관해 가입 직전에 재검사한다. 가입 화면에는 DB 이름에서 식별된 법인 부분을 뺀 병원 고유명을 표시한다. 일치 결과가 없거나 여러 병원으로 해석되면 가입을 진행하지 않는다.
+공단 사업장과 `hospitals`를 대조한 뒤, 선택이 필요하면 제시한 후보 목록을 저장한다. 사용자가 후보를 고르면 서버는 선택 문서를 소비하고 가입 확인 문서를 같은 트랜잭션에서 만든다. 병원 하나가 직접 일치하면 가입 확인 문서를 바로 만든다. 두 단계 모두 카탈로그의 원래 이름과 주소 등 기본정보를 보관해 변경 여부를 확인한다.
 
 | 필드 | 타입 | 쉬운 설명 |
 | --- | --- | --- |
-| `_id` | string / PK | 브라우저에 발급한 일회용 `verificationToken`의 SHA-256 해시. 원문은 DB에 저장하지 않음 |
+| `_id` | string / PK | 일회용 `selectionToken` 또는 `verificationToken`의 SHA-256 해시 |
 | `businessNumber` | string | 조회한 사업자등록번호 |
-| `hospitalId` | string / REF | 일치한 병원의 `hospitals._id` |
-| `hospital` | object | 대조 당시 DB의 `id`, `name`, `address`, `postalCode`, `tel` |
-| `createdAt` | date | 대조에 성공한 시각 |
-| `expiresAt` | date | 생성 후 15분. 만료되면 다시 조회해야 함 |
+| `candidates` | array | 선택 문서에 저장한 후보별 `id`, `name`, `address`, `postalCode`, `tel` |
+| `hospitalId` | string / REF | 가입 확인 문서에 저장한 병원의 `hospitals._id` |
+| `hospital` | object | 가입 확인 문서에 저장한 병원의 DB 기본정보 |
+| `createdAt` | date | 해당 문서를 발급한 시각 |
+| `expiresAt` | date | 최초 조회 후 15분. 후보 선택 후에도 같은 만료 시각 적용 |
 
 가입 완료 시 확인 문서를 소모하며, 계정·등록 생성과 확인 문서 삭제를 같은 트랜잭션으로 처리한다. 조회 이후 DB 기본정보가 바뀌었어도 재조회를 요구한다. TTL 인덱스 `hospital_signup_verification_expiry_v1`이 만료 자료를 정리하고 서버도 만료 시각을 직접 검사한다.
 

@@ -32,7 +32,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/auth/social/providers").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/auth/social/exchange").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register", "/api/chat").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/auth/hospital/lookup", "/api/auth/hospital/register", "/api/auth/hospital/login").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/auth/hospital/lookup", "/api/auth/hospital/lookup/select",
+                        "/api/auth/hospital/register", "/api/auth/hospital/login").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/hospitals/**", "/api/doctors/**", "/api/slots").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                 .requestMatchers(HttpMethod.POST, "/api/auth/logout", "/api/auth/social/profile").authenticated()

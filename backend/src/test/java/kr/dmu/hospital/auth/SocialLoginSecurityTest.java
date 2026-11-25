@@ -57,6 +57,8 @@ class SocialLoginSecurityTest {
         @Bean SocialLoginFlow flow(SocialLoginSettings settings, SocialMemberService members, SocialLoginTickets tickets, MongoAuthorizationRequests requests, SocialWithdrawalService withdrawal) { return new SocialLoginFlow(settings, members, tickets, requests, withdrawal); }
         @Bean SocialLoginController social(SocialLoginSettings settings, SocialLoginTickets tickets, SocialLoginFlow flow, AuthService auth) { return new SocialLoginController(settings, tickets, flow, auth); }
         @Bean AuthController authController(AuthService auth) { return new AuthController(auth); }
+        @Bean HospitalAccountService hospitalAccounts() { return mock(HospitalAccountService.class); }
+        @Bean HospitalAccountController hospitalController(HospitalAccountService accounts) { return new HospitalAccountController(accounts); }
         @Bean ApiErrorHandler errors() { return new ApiErrorHandler(); }
         @Bean ProtectedTestController protectedApis() { return new ProtectedTestController(); }
     }
@@ -65,16 +67,28 @@ class SocialLoginSecurityTest {
     }
     @Autowired WebApplicationContext context;
     @Autowired AuthService auth;
+    @Autowired HospitalAccountService hospitalAccounts;
     @Autowired SocialMemberService members;
     @Autowired SocialLoginTickets tickets;
     @Autowired SocialLoginFlow flow;
     private MockMvc mvc;
     @BeforeEach void setUp() {
-        reset(auth, members, tickets);
+        reset(auth, members, tickets, hospitalAccounts);
         when(tickets.create(any())).thenReturn(SocialLoginTickets.randomValue());
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
     @AfterEach void tearDown() { SecurityContextHolder.clearContext(); }
+
+    @Test void hospitalApplicantCanPostACandidateSelectionBeforeLogin() throws Exception {
+        Map<String, Object> selection = Map.of("businessNumber", "1108200472", "selectionToken", "choice", "hospitalId", "dental");
+        when(hospitalAccounts.select(selection)).thenReturn(Map.of("businessNumber", "1108200472",
+                "hospital", Map.of("id", "dental", "name", "연세대학교치과대학치과병원"), "verificationToken", "verified"));
+        mvc.perform(post("/api/auth/hospital/lookup/select").contentType("application/json")
+                        .content("{\"businessNumber\":\"1108200472\",\"selectionToken\":\"choice\",\"hospitalId\":\"dental\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.hospital.id").value("dental"))
+                .andExpect(jsonPath("$.verificationToken").value("verified"));
+        verify(hospitalAccounts).select(selection);
+    }
 
     @Test void passwordChangeRequiresCompletedMemberTokenAndPreservesRawFields() throws Exception {
         String body = "{\"currentPassword\":\" CurrentPassword! \",\"newPassword\":\" ChangedPassword! \"}";

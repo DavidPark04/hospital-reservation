@@ -1,6 +1,7 @@
 package kr.dmu.hospital.auth;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
@@ -30,6 +31,63 @@ class HospitalBusinessMatchTest {
     static Map<String, String> seoulStMaryBusiness() {
         return Map.of("saeopjaDrno", SEOUL_ST_MARY_NUMBER, "saeopjangNm", SEOUL_ST_MARY_NAME,
                 "post", "06591", "addr", "서울 서초구 반포대로 222 (반포동)");
+    }
+
+    @Test void universityMedicalCenterOffersAllAffiliatedCampusHospitalsForSelection() {
+        String number = "1108200472";
+        var center = Map.of("saeopjaDrno", number, "saeopjangNm", "연세대학교의료원", "post", "03722",
+                "addr", "서울특별시 서대문구  연세로 50-1 (신촌동) 연세의료원건물 종합관 인사팀");
+        for (String name : List.of("연세대학교의과대학세브란스병원", "연세대학교치과대학치과병원", "연세대학교부속어린이병원")) {
+            var clinic = new Document("name", name).append("active", true)
+                    .append("address", "서울특별시 서대문구 연세로 50-1, (신촌동)")
+                    .append("apiFields", new Document("postNo", "03722"));
+            assertFalse(HospitalBusinessMatch.matches(center, clinic, number), name);
+            assertTrue(HospitalBusinessMatch.isChoiceCandidate(List.of(center, center), clinic, number), name);
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "학교법인 솔빛대학교, 솔빛대학교부속병원, true",
+            "의료법인 샘물의료재단, 의료법인 샘물의료재단 솔빛병원, true",
+            "샘물의료재단, (의) 샘물의료재단 솔빛병원, true",
+            "(의료법인 길의료재단), (의료법인 길의료재단) 길병원, true",
+            "의료법인 샘물의료재단, 재단법인 샘물의료재단 솔빛병원, false",
+            "의료법인 샘물의료재단, 의료법인 다른의료재단 솔빛병원, false",
+            "의료법인 의료재단, 의료법인 의료재단 솔빛병원, false",
+            "연세대학교세브란스빌딩, 연세대학교 세브란스헬스체크업의원, false",
+            "연세대학교의료원, 연세대학교동문치과의원, false",
+            "연세대학교의료원, 의료법인 다른재단 연세대학교치과대학치과병원, false",
+            "연세대학교의료원, 다른대학교의과대학세브란스병원, false",
+            "연세대학교의료원강남분원, 연세대학교의과대학세브란스병원, false",
+            "연세대학교의과대학강남세브란스병원, 연세대학교의과대학세브란스병원, false"
+    })
+    void choiceRequiresIdentifiableOrganizationalAffiliation(String insured, String catalog, boolean related) {
+        var row = new HashMap<>(business());
+        row.put("saeopjangNm", insured);
+        assertEquals(related, HospitalBusinessMatch.isChoiceCandidate(List.of(row), hospital().append("name", catalog), NUMBER));
+    }
+
+    @Test void organizationChoiceRequiresActiveFacilityNumberAndCompatibleAddressAcrossRecords() {
+        var owner = new HashMap<>(business());
+        owner.put("saeopjangNm", "샘물대학교의료원");
+        var clinic = hospital().append("name", "샘물대학교병원");
+        var direct = new HashMap<>(owner);
+        direct.put("saeopjangNm", clinic.getString("name"));
+        assertTrue(HospitalBusinessMatch.matches(direct, clinic, NUMBER));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner, direct), clinic, NUMBER));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner), clinic, "0000000000"));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner), new Document(clinic).append("active", false), NUMBER));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner),
+                new Document(clinic).append("apiFields", new Document("postNo", "10307")), NUMBER));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner),
+                new Document(clinic).append("address", "경기도 고양시 일산동구 숲속마을로 48-1"), NUMBER));
+        var conflict = new HashMap<>(owner);
+        conflict.put("addr", "경기도 고양시 일산동구 숲속마을로 48 4층 402호");
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner, conflict), clinic, NUMBER));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(conflict, owner), clinic, NUMBER));
+        conflict.put("saeopjangNm", clinic.getString("name"));
+        assertFalse(HospitalBusinessMatch.isChoiceCandidate(List.of(owner, conflict), clinic, NUMBER));
     }
 
     @Test void acceptsVerifiedExampleDespiteProvinceWhitespaceAndBuildingLabelOrder() {

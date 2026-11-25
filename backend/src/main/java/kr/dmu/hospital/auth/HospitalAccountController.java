@@ -9,6 +9,7 @@ public class HospitalAccountController {
     private final HospitalAccountService service;
     public HospitalAccountController(HospitalAccountService service) { this.service = service; }
     @PostMapping("/lookup") public Map<String, Object> lookup(@RequestBody Map<String, Object> body) { return service.lookup(body); }
+    @PostMapping("/lookup/select") public Map<String, Object> select(@RequestBody Map<String, Object> body) { return service.select(body); }
     @PostMapping("/register") public Map<String, Object> register(@RequestBody Map<String, Object> body) { return service.register(body); }
     @PostMapping("/login") public Map<String, Object> login(@RequestBody Map<String, Object> body) { return service.login(body); }
 }
