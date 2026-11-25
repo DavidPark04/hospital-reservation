@@ -1,28 +1,65 @@
 package kr.dmu.hospital.auth;
 
 import java.text.Normalizer;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.bson.Document;
 
 final class HospitalBusinessMatch {
     private static final Pattern ROAD = Pattern.compile("^(.+?)\\s+([^\\s,()]+(?:대로|로|길))\\s+(\\d+(?:-\\d+)?)(?=[\\s,()]|$)");
+    private static final String UNIT_NUMBER = "(?:지하\\s*|[A-Za-z])?\\d+";
+    private static final Pattern FLOORS = unitPattern("층");
+    private static final Pattern SUITES = unitPattern("호");
+    private enum Evidence { UNRELATED, CONFLICT, PARTIAL, EXACT }
+
     private HospitalBusinessMatch() { }
 
     static boolean matches(Map<String, String> business, Document hospital, String number) {
-        if (!number.equals(business.get("saeopjaDrno")) || !Boolean.TRUE.equals(hospital.getBoolean("active"))) return false;
-        if (!HospitalName.matches(business.get("saeopjangNm"), hospital.getString("name"))) return false;
+        return matches(List.of(business), hospital, number);
+    }
+
+    static boolean matches(List<Map<String, String>> businesses, Document hospital, String number) {
+        if (!Boolean.TRUE.equals(hospital.getBoolean("active"))) return false;
+        boolean partial = false;
+        boolean conflict = false;
+        for (var business : businesses) {
+            Evidence evidence = compare(business, hospital, number);
+            if (evidence == Evidence.EXACT) return true;
+            if (evidence == Evidence.PARTIAL) partial = true;
+            if (evidence == Evidence.CONFLICT) conflict = true;
+        }
+        // An insurance record with missing details cannot override a conflicting unit at the same location.
+        return partial && !conflict;
+    }
+
+    private static Evidence compare(Map<String, String> business, Document hospital, String number) {
+        if (!number.equals(business.get("saeopjaDrno"))
+                || !HospitalName.matches(business.get("saeopjangNm"), hospital.getString("name"))) return Evidence.UNRELATED;
         Document api = hospital.get("apiFields", Document.class);
         String post = business.getOrDefault("post", "").trim();
-        if (api == null || post.isBlank() || !post.equals(api.getString("postNo"))) return false;
+        if (api == null || post.isBlank() || !post.equals(api.getString("postNo"))) return Evidence.UNRELATED;
         String first = normalizedAddress(business.get("addr"));
         String second = normalizedAddress(hospital.getString("address"));
         Matcher a = ROAD.matcher(first);
         Matcher b = ROAD.matcher(second);
-        if (!a.find() || !b.find()) return false;
-        for (int i = 1; i <= 3; i++) if (!a.group(i).equals(b.group(i))) return false;
-        return unit(first, "층").equals(unit(second, "층")) && unit(first, "호").equals(unit(second, "호"));
+        if (!a.find() || !b.find()) return Evidence.UNRELATED;
+        for (int i = 1; i <= 3; i++) if (!a.group(i).equals(b.group(i))) return Evidence.UNRELATED;
+        String businessDetail = first.substring(a.end());
+        String catalogDetail = second.substring(b.end());
+        boolean partial = false;
+        for (Pattern pattern : List.of(FLOORS, SUITES)) {
+            Set<String> left = units(businessDetail, pattern);
+            Set<String> right = units(catalogDetail, pattern);
+            if (left.equals(right)) continue;
+            if (!left.isEmpty() && !right.isEmpty()) return Evidence.CONFLICT;
+            partial = true;
+        }
+        return partial ? Evidence.PARTIAL : Evidence.EXACT;
     }
 
     private static String normalizedAddress(String address) {
@@ -39,8 +76,18 @@ final class HospitalBusinessMatch {
         return value;
     }
 
-    private static String unit(String address, String suffix) {
-        Matcher matcher = Pattern.compile("(지하\\s*)?(\\d+)\\s*" + suffix).matcher(address);
-        return matcher.find() ? (matcher.group(1) == null ? "" : "지하") + matcher.group(2) : "";
+    private static Pattern unitPattern(String suffix) {
+        return Pattern.compile("(" + UNIT_NUMBER + "(?:\\s*[-~∼,/·ᆞ]\\s*" + UNIT_NUMBER + ")*)\\s*" + suffix);
+    }
+
+    private static Set<String> units(String detail, Pattern pattern) {
+        Set<String> values = new HashSet<>();
+        Matcher matcher = pattern.matcher(detail);
+        while (matcher.find()) {
+            String group = matcher.group(1).replaceAll("\\s+", "").toUpperCase(Locale.ROOT)
+                    .replace('~', '-').replace('∼', '-');
+            values.addAll(List.of(group.split("[,/·ᆞ]")));
+        }
+        return values;
     }
 }
