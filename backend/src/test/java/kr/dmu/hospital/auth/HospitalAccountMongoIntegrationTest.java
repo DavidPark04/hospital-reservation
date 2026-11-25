@@ -117,6 +117,53 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
     }
 
+    @Test void lookupFindsCatalogHospitalWithItsFoundationNameInACrowdedPostcode() {
+        String number = HospitalBusinessMatchTest.SEOUL_ST_MARY_NUMBER;
+        var business = HospitalBusinessMatchTest.seoulStMaryBusiness();
+        when(comwel.lookup(number)).thenReturn(List.of(business, business));
+        for (int i = 0; i < 30; i++) {
+            Document neighbor = HospitalBusinessMatchTest.seoulStMaryHospital()
+                    .append("_id", "neighbor-" + i).append("name", "이웃의원" + i);
+            mongo.insert(neighbor, "hospitals");
+        }
+        Document catalog = HospitalBusinessMatchTest.seoulStMaryHospital();
+        mongo.insert(catalog, "hospitals");
+
+        var result = accounts.lookup(Map.of("businessNumber", number));
+        Document hospital = (Document) result.get("hospital");
+        assertEquals(catalog.getString("_id"), hospital.getString("id"));
+        assertEquals("가톨릭대학교서울성모병원", hospital.getString("name"));
+        assertEquals("06591", hospital.getString("postalCode"));
+    }
+
+    @Test void lookupUsesCatalogSpacingAndBranchNameAndPreservesTheOriginalRecord() {
+        String catalogName = "의료법인 샘물의료재단 새봄의원 동부분원";
+        Map<String, String> business = new HashMap<>(HospitalBusinessMatchTest.business());
+        business.put("saeopjangNm", "새봄의원동부분원");
+        when(comwel.lookup(NUMBER)).thenReturn(List.of(business));
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("test-hospital")),
+                new Update().set("name", catalogName), "hospitals");
+
+        var result = accounts.lookup(Map.of("businessNumber", NUMBER));
+        Document hospital = (Document) result.get("hospital");
+        assertEquals("새봄의원 동부분원", hospital.getString("name"));
+        Document original = mongo.findById("test-hospital", Document.class, "hospitals");
+        assertEquals(catalogName, original.getString("name"));
+    }
+
+    @Test void exactNameAndFoundationNameAtTheSameAddressAreAmbiguous() {
+        String number = HospitalBusinessMatchTest.SEOUL_ST_MARY_NUMBER;
+        var business = HospitalBusinessMatchTest.seoulStMaryBusiness();
+        when(comwel.lookup(number)).thenReturn(List.of(business));
+        mongo.insert(HospitalBusinessMatchTest.seoulStMaryHospital(), "hospitals");
+        mongo.insert(HospitalBusinessMatchTest.seoulStMaryHospital().append("_id", "test-exact-name")
+                .append("name", business.get("saeopjangNm")), "hospitals");
+
+        ApiException error = assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", number)));
+        assertEquals(409, error.getStatus());
+        assertEquals(0, mongo.getCollection(HospitalAccountService.VERIFICATIONS).countDocuments());
+    }
+
     @Test void hospitalPasswordChangesInvalidateOldTokensAndRevokedRegistrationInvalidatesNewToken() {
         var session = accounts.register(registration(accounts.lookup(Map.of("businessNumber", NUMBER))));
         String oldToken = (String) session.get("token");

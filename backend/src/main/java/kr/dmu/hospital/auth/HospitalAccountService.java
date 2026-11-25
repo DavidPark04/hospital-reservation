@@ -7,12 +7,9 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.springframework.dao.DuplicateKeyException;
@@ -47,32 +44,31 @@ public class HospitalAccountService {
         requireUnregistered(number, null);
         List<Map<String, String>> businesses = comwel.lookup(number);
         Map<String, Document> matched = new LinkedHashMap<>();
+        Map<String, List<Document>> hospitalsByPostcode = new LinkedHashMap<>();
         for (Map<String, String> business : businesses) {
             if (!number.equals(business.get("saeopjaDrno"))) continue;
-            String name = business.getOrDefault("saeopjangNm", "").trim();
-            if (name.isBlank() || name.length() > 150) continue;
-            Set<String> names = new LinkedHashSet<>(List.of(name, HospitalBusinessMatch.normalizedName(name)));
-            List<Document> candidates = mongo.find(Query.query(Criteria.where("active").is(true).and("name").in(names)).limit(25), Document.class, "hospitals");
-            if (candidates.isEmpty()) {
-                StringBuilder expression = new StringBuilder("^\\s*");
-                HospitalBusinessMatch.normalizedName(name).codePoints().forEach(code -> expression.append(Pattern.quote(new String(Character.toChars(code)))).append("\\s*"));
-                expression.append('$');
-                candidates = mongo.find(Query.query(Criteria.where("active").is(true).and("name").regex(expression.toString())).limit(25), Document.class, "hospitals");
+            String postcode = business.getOrDefault("post", "").trim();
+            if (postcode.isEmpty() || business.getOrDefault("saeopjangNm", "").isBlank()) continue;
+            for (Document hospital : hospitalsByPostcode.computeIfAbsent(postcode, this::activeHospitalsAtPostcode)) {
+                if (HospitalBusinessMatch.matches(business, hospital, number)) matched.put(hospital.getString("_id"), hospital);
             }
-            if (candidates.size() >= 25) throw ambiguous();
-            for (Document hospital : candidates) if (HospitalBusinessMatch.matches(business, hospital, number)) matched.put(hospital.getString("_id"), hospital);
+            if (matched.size() > 1) throw ambiguous();
         }
         if (matched.isEmpty()) throw new ApiException(404, "사업자 정보와 일치하는 병원을 찾지 못했어요. 사업자번호와 병원 등록 정보를 확인해 주세요.");
-        if (matched.size() != 1) throw ambiguous();
         Document hospital = matched.values().iterator().next();
         requireUnregistered(number, hospital.getString("_id"));
-        Document basic = basicInformation(hospital);
         byte[] bytes = new byte[32]; random.nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         Date now = new Date();
         mongo.insert(new Document("_id", digest(token)).append("businessNumber", number).append("hospitalId", hospital.getString("_id"))
-                .append("hospital", basic).append("createdAt", now).append("expiresAt", Date.from(now.toInstant().plusSeconds(900))), VERIFICATIONS);
-        return Map.of("businessNumber", number, "hospital", basic, "verificationToken", token);
+                .append("hospital", catalogInformation(hospital)).append("createdAt", now).append("expiresAt", Date.from(now.toInstant().plusSeconds(900))), VERIFICATIONS);
+        return Map.of("businessNumber", number, "hospital", basicInformation(hospital), "verificationToken", token);
+    }
+
+    private List<Document> activeHospitalsAtPostcode(String postcode) {
+        Query query = Query.query(Criteria.where("apiFields.postNo").is(postcode).and("active").is(true));
+        query.fields().include("name", "address", "tel", "active", "apiFields.postNo");
+        return mongo.find(query, Document.class, "hospitals");
     }
 
     public Map<String, Object> register(Map<String, Object> body) {
@@ -91,7 +87,7 @@ public class HospitalAccountService {
                     String hospitalId = proof.getString("hospitalId");
                     requireUnregistered(number, hospitalId);
                     Document hospital = mongo.findOne(Query.query(Criteria.where("_id").is(hospitalId).and("active").is(true)), Document.class, "hospitals");
-                    if (hospital == null || !basicInformation(hospital).equals(proof.get("hospital", Document.class))) {
+                    if (hospital == null || !catalogInformation(hospital).equals(proof.get("hospital", Document.class))) {
                         throw new ApiException(409, "병원 기본정보가 변경됐어요. 사업자번호를 다시 조회해 주세요.");
                     }
                     Document basic = basicInformation(hospital);
@@ -138,6 +134,11 @@ public class HospitalAccountService {
     }
 
     public static Document basicInformation(Document hospital) {
+        return catalogInformation(hospital).append("name", HospitalName.parse(hospital.getString("name")).facility());
+    }
+
+    // The verification snapshot includes the original catalog name so a change of operator still invalidates it.
+    private static Document catalogInformation(Document hospital) {
         Document fields = hospital.get("apiFields", Document.class);
         return new Document("id", hospital.getString("_id")).append("name", hospital.getString("name"))
                 .append("address", hospital.getString("address")).append("postalCode", fields == null || fields.getString("postNo") == null ? "" : fields.getString("postNo"))

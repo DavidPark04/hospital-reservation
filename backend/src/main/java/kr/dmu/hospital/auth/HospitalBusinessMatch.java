@@ -10,14 +10,9 @@ final class HospitalBusinessMatch {
     private static final Pattern ROAD = Pattern.compile("^(.+?)\\s+([^\\s,()]+(?:대로|로|길))\\s+(\\d+(?:-\\d+)?)(?=[\\s,()]|$)");
     private HospitalBusinessMatch() { }
 
-    static String normalizedName(String name) {
-        return Normalizer.normalize(name == null ? "" : name, Normalizer.Form.NFKC).replaceAll("[\\p{javaWhitespace}\\p{Zs}]+", "");
-    }
-
     static boolean matches(Map<String, String> business, Document hospital, String number) {
         if (!number.equals(business.get("saeopjaDrno")) || !Boolean.TRUE.equals(hospital.getBoolean("active"))) return false;
-        String name = normalizedName(business.get("saeopjangNm"));
-        if (name.isBlank() || !name.equals(normalizedName(hospital.getString("name")))) return false;
+        if (!HospitalName.matches(business.get("saeopjangNm"), hospital.getString("name"))) return false;
         Document api = hospital.get("apiFields", Document.class);
         String post = business.getOrDefault("post", "").trim();
         if (api == null || post.isBlank() || !post.equals(api.getString("postNo"))) return false;

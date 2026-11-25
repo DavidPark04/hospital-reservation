@@ -232,7 +232,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 `apiFields`의 예로 `ykiho`(기관 식별값), `yadmNm`(병원명), `addr`(주소), `telno`(전화번호), `XPos`(경도), `YPos`(위도)가 있다. API가 보내는 그 밖의 기본 필드도 보존하므로 원본 객체의 필드는 병원·API 응답에 따라 달라질 수 있다. 브라우저 응답에는 `apiFields`, `externalId`, 비교용 해시를 그대로 내보내지 않는다.
 
-**키와 연결:** `(provider, externalId)` 조합이 유일하다. `provider` 하나나 `externalId` 하나에 각각 독립적인 UK를 만든 구조는 아니다. 실제 병원의 `hospitalDetails._id`, 의료진과 예약의 `hospitalId`에서 같은 병원 ID를 사용한다. 검색을 빠르게 하는 일반 인덱스는 `(active, name, _id)`와 `(departmentCodes, active, name, _id)`이며 중복 방지 인덱스가 아니다.
+**키와 연결:** `(provider, externalId)` 조합이 유일하다. `provider` 하나나 `externalId` 하나에 각각 독립적인 UK를 만든 구조는 아니다. 실제 병원의 `hospitalDetails._id`, 의료진과 예약의 `hospitalId`에서 같은 병원 ID를 사용한다. 병원 검색은 `(active, name, _id)`와 `(departmentCodes, active, name, _id)` 인덱스를 사용한다. 가입 시에는 `(apiFields.postNo, active)` 인덱스로 같은 우편번호의 활성 병원을 찾는다.
 
 **왜 해시·날짜가 여러 개인가?** 해시는 변경 여부를 빨리 비교하고, 날짜는 언제 가져온 자료인지 구분한다. 내용이 같으면 병원 문서에 날짜만 다시 쓰지 않는다. 따라서 오늘 전체 수집에 성공했어도 어떤 병원의 `basicFetchedAt`은 며칠 전일 수 있다. 오늘 작업의 성공 여부는 아래 `hospitalImportRuns`에서 확인한다. `active:false`는 원본 목록에서 확인되지 않는다는 뜻이며 폐업을 확정하는 값은 아니다.
 
@@ -262,7 +262,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `hospitalSignupVerifications` — 병원 가입 전 조회 확인
 
-사업자번호를 근로복지공단 고용·산재보험 API로 조회하고, 반환된 사업장명·주소를 `hospitals`와 대조하여 병원 하나를 확인했을 때 만든다. 일치 결과가 없거나 여러 병원으로 해석되면 가입을 진행하지 않는다.
+사업자번호를 근로복지공단 고용·산재보험 API로 조회하고, 반환된 사업장명·주소를 `hospitals`와 대조하여 병원 하나를 확인했을 때 만든다. 확인값에는 법인 표기를 포함한 카탈로그 원래 이름을 보관해 가입 직전에 재검사한다. 가입 화면에는 DB 이름에서 식별된 법인 부분을 뺀 병원 고유명을 표시한다. 일치 결과가 없거나 여러 병원으로 해석되면 가입을 진행하지 않는다.
 
 | 필드 | 타입 | 쉬운 설명 |
 | --- | --- | --- |
