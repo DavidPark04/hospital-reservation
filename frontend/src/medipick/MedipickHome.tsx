@@ -15,8 +15,8 @@ const chapters = [
   { id: 'consult', pane: 'chat', name: 'AI 상담', short: '상담', title: ['어디가', '불편하세요?'], detail: '불편한 점과 진료 목적을 이야기해 주세요. 가까운 의원과 전문 진료기관 중 원하는 방향을 함께 찾아요.' },
   { id: 'reasons', pane: 'reasons', name: '추천 이유', short: '추천 이유', title: ['이 병원을', '살펴보는 이유.'], detail: '내가 찾는 지역과 진료과를 비교해요. 전문 진료기관을 추천받았다면 AI가 참고한 자료도 살펴보세요.' },
   { id: 'discover', pane: 'map', name: '병원 찾기', short: '지도', title: ['내가 찾던 병원,', '지도 위에.'], detail: '병원을 선택해 주소를 보고, 카카오맵에서 출발지를 정해 경로와 예상 시간을 확인해요.' },
-  { id: 'doctors', pane: 'doctors', name: '의료진 선택', short: '의료진', title: ['누구에게', '진료받을까요?'], detail: '선택한 병원의 가상 의료진과 진료 분야를 살펴보세요.' },
-  { id: 'reserve', pane: 'book', name: '모의 예약', short: '예약', title: ['원하는 시간에,', '진료 약속을.'], detail: '가상 시간표에서 일정을 골라 모의 예약을 진행해요. 저장한 일정은 내 예약에서 변경하거나 취소할 수 있어요.' },
+  { id: 'doctors', pane: 'doctors', name: '의료진 선택', short: '의료진', title: ['누구에게', '진료받을까요?'], detail: '병원이 직접 등록한 의료진과 진료 분야를 살펴보세요.' },
+  { id: 'reserve', pane: 'book', name: '예약', short: '예약', title: ['원하는 시간에,', '진료 약속을.'], detail: '병원이 등록한 진료 일정에서 원하는 시간을 예약해요. 저장한 일정은 내 예약에서 변경하거나 취소할 수 있어요.' },
 ]
 const lastChapter = chapters.length - 1
 const clamp = (v: number, maximum = 1) => Math.max(0, Math.min(maximum, v))
@@ -227,7 +227,7 @@ export default function MedipickHome({ onBooking, onAccount, recommendation, ini
         </div>
         <div className="film-intro" aria-hidden={progress > .44} inert={progress > .44}>
           <h1><span>내게 맞는 병원,</span>{' '}<br className="intro-break"/><span>여기서 찾아요.</span></h1>
-          <p>증상에 맞는 병원 찾기부터 모의 예약까지.</p>
+          <p>증상에 맞는 병원 찾기부터 예약까지.</p>
           <div className="film-intro-actions">
             <a href="#/chat"><Sparkles size={17} aria-hidden="true"/>AI 상담 시작</a>
             <a href="#/search"><Search size={17} aria-hidden="true"/>병원 직접 찾기</a>

@@ -33,8 +33,6 @@ public class HospitalService {
     private final MongoTemplate mongo;
     private final HiraClient hira;
     private final TransactionTemplate transaction;
-    @org.springframework.beans.factory.annotation.Value("${app.demo-enabled:false}")
-    private boolean demoEnabled;
 
     public HospitalService(MongoTemplate mongo, HiraClient hira, MongoTransactionManager transactionManager) {
         this.mongo = mongo;
@@ -52,26 +50,20 @@ public class HospitalService {
         region = clean(region, 80);
         department = clean(department, 2);
         if (!department.isBlank() && !Departments.contains(department)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
+        Map<String, Document> registrations = RegisteredHospitals.active(mongo, department);
+        if (registrations.isEmpty()) return result(List.of(), "CACHE", "조건에 맞는 등록 병원이 아직 없어요. 병원 등록 후 검색과 예약을 이용할 수 있어요.");
         List<Criteria> filters = searchFilters(query, region, exactName);
+        filters.add(Criteria.where("_id").in(registrations.keySet()));
         filters.add(Criteria.where("provider").is("HIRA"));
         filters.add(Criteria.where("active").is(true));
-        if (!department.isBlank()) filters.add(Criteria.where("departmentCodes").is(department));
         Query selection = Query.query(new Criteria().andOperator(filters.toArray(Criteria[]::new)))
                 .with(Sort.by("name", "_id")).limit(30);
         List<Document> rows = mongo.find(HospitalCatalog.publicFields(selection), Document.class, HospitalCatalog.COLLECTION);
         List<Map<String, Object>> items = new ArrayList<>();
-        for (Document row : rows) items.add(publicHospital(HospitalCatalog.combine(row, null), "CACHE"));
-        if (items.isEmpty() && demoEnabled && !mongo.exists(new Query(), HospitalCatalog.COLLECTION)) {
-            List<Criteria> sampleFilters = searchFilters(query, region, exactName);
-            sampleFilters.add(Criteria.where("source").is("SAMPLE"));
-            if (!department.isBlank()) sampleFilters.add(Criteria.where("departments.code").is(department));
-            List<Document> samples = mongo.find(Query.query(new Criteria().andOperator(sampleFilters.toArray(Criteria[]::new)))
-                    .with(Sort.by("name", "_id")).limit(30), Document.class, "hospitalDetails");
-            for (Document sample : samples) items.add(publicHospital(sample, "SAMPLE"));
-            if (!items.isEmpty()) return result(items, "SAMPLE", "전국 병원 정보가 아직 준비되지 않아 예약 체험용 샘플을 표시합니다.");
-        }
-        return result(items, "CACHE", items.isEmpty() ? "저장된 병원 목록에서 검색 결과를 찾지 못했어요. 지역이나 병원명을 바꿔 보세요."
-                : "매일 갱신해 저장한 병원 기본 정보입니다.");
+        for (Document row : rows) items.add(publicHospital(RegisteredHospitals.withManagedDepartments(
+                HospitalCatalog.combine(row, null), registrations.get(row.getString("_id"))), "CACHE"));
+        return result(items, "CACHE", items.isEmpty() ? "등록된 병원 중 검색 결과를 찾지 못했어요. 지역이나 병원명을 바꿔 보세요."
+                : "메디픽 등록 병원입니다. 기본 정보는 매일 갱신하며 진료과와 일정은 병원에서 관리합니다.");
     }
 
     private List<Criteria> searchFilters(String name, String region, boolean exactName) {
@@ -102,15 +94,16 @@ public class HospitalService {
     }
 
     public Map<String, Object> detail(String id) {
+        RegisteredHospitals.require(mongo, id);
         Document hospital = materialize(id);
-        if ("SAMPLE".equals(hospital.getString("source"))) return publicHospital(hospital, "SAMPLE");
+        if ("SAMPLE".equals(hospital.getString("source"))) return registeredView(hospital, "SAMPLE");
         Object detailTime = hospital.get("detailFetchedAt");
         if (hospital.getBoolean("detailComplete", true) && detailTime instanceof Date date
                 && date.toInstant().isAfter(Instant.now().minusSeconds(3600))) {
-            return publicHospital(hospital, "CACHE");
+            return registeredView(hospital, "CACHE");
         }
         if (!hira.detailsConfigured()) {
-            Map<String, Object> result = publicHospital(hospital, "CACHE");
+            Map<String, Object> result = registeredView(hospital, "CACHE");
             result.put("notice", "상세정보 API가 설정되지 않았습니다. 기본 정보만 표시합니다.");
             return result;
         }
@@ -141,11 +134,11 @@ public class HospitalService {
             Document saved = saveDetails(id, departments, evidence, refreshedKinds,
                     special.successful() && designation.successful(), now);
             boolean complete = saved.getBoolean("detailComplete", true);
-            Map<String, Object> result = publicHospital(HospitalCatalog.require(mongo, id), complete ? "LIVE" : "CACHE");
+            Map<String, Object> result = registeredView(HospitalCatalog.require(mongo, id), complete ? "LIVE" : "CACHE");
             if (!complete) result.put("notice", "일부 상세정보를 새로 확인하지 못해 해당 항목은 이전 근거를 유지했습니다. 각 근거의 조회 시각을 확인해 주세요.");
             return result;
         } catch (HiraClient.UpstreamUnavailable | CompletionException unavailable) {
-            Map<String, Object> result = publicHospital(HospitalCatalog.require(mongo, id), "CACHE");
+            Map<String, Object> result = registeredView(HospitalCatalog.require(mongo, id), "CACHE");
             result.put("notice", "상세정보를 새로 확인하지 못했습니다. 마지막 조회 정보만 표시합니다.");
             return result;
         }
@@ -158,6 +151,11 @@ public class HospitalService {
             // An unavailable designation is unknown, never a negative evaluation.
             return new DetailResult(List.of(), false);
         }
+    }
+
+    private Map<String, Object> registeredView(Document hospital, String source) {
+        return publicHospital(RegisteredHospitals.withManagedDepartments(hospital,
+                RegisteredHospitals.require(mongo, hospital.getString("_id"))), source);
     }
 
     private void addOptionalEvidence(String id, List<Map<String, String>> rows, String kind, String label, List<Document> evidence, Date now) {

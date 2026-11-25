@@ -72,7 +72,7 @@ public class AuthService {
         String loginId = loginId(body); String password = text(body, "password");
         if (password.length() > 128) throw new ApiException(400, "입력 정보를 확인해 주세요.");
         Document user = mongo.findOne(Query.query(Criteria.where("loginId").is(loginId)), Document.class, "users");
-        if (user == null || user.getString("passwordHash") == null || !passwords.matches(password, user.getString("passwordHash"))) throw new ApiException(401, "아이디 또는 비밀번호가 맞지 않습니다.");
+        if (user == null || "HOSPITAL".equals(user.getString("role")) || user.getString("passwordHash") == null || !passwords.matches(password, user.getString("passwordHash"))) throw new ApiException(401, "아이디 또는 비밀번호가 맞지 않습니다.");
         mongo.updateFirst(Query.query(Criteria.where("_id").is(user.getString("_id"))), new Update().set("lastLoginAt", new Date()), "users");
         return issue(user);
     }
@@ -166,6 +166,19 @@ public class AuthService {
         }
         throw new ApiException(503, "가입 요청을 처리하지 못했습니다. 다시 로그인해 주세요.");
     }
+    Map<String, Object> issueHospitalSession(Document user) {
+        if (user == null || !"HOSPITAL".equals(user.getString("role")) || !hasHospitalRegistration(mongo, user)) {
+            throw new ApiException(401, "병원 로그인 정보를 확인해 주세요.");
+        }
+        return issue(user);
+    }
+    static boolean hasHospitalRegistration(MongoTemplate mongo, Document user) {
+        String hospitalId = user.getString("hospitalId");
+        String number = user.getString("businessNumber");
+        return hospitalId != null && number != null && "LOCAL".equals(user.getString("authProvider"))
+            && mongo.exists(Query.query(Criteria.where("_id").is(hospitalId).and("userId").is(user.getString("_id"))
+                .and("businessNumber").is(number).and("status").is("ACTIVE")), HospitalAccountService.REGISTRATIONS);
+    }
     private Map<String, Object> issue(Document user) { return issue(user, false); }
     private Map<String, Object> issue(Document user, boolean signupPending) {
         Instant now = Instant.now();
@@ -186,6 +199,7 @@ public class AuthService {
         Number version = jwt.getClaim("ver");
         if (user == null || version == null || version.intValue() != user.getInteger("tokenVersion", 0)
                 || (signupPending ? !SocialSignups.live(user) : !MemberIdentity.complete(user))) throw new JwtException("Expired session");
+        if (!signupPending && "HOSPITAL".equals(user.getString("role")) && !hasHospitalRegistration(mongo, user)) throw new JwtException("Hospital registration is unavailable");
         return signupPending ? UserPrincipal.forSignup(user) : new UserPrincipal(user);
     }
     public void logout() {
@@ -204,7 +218,7 @@ public class AuthService {
         requireValidPassword(password);
         return password;
     }
-    private static void requireValidPassword(String password) {
+    static void requireValidPassword(String password) {
         if (password.length() < 8 || password.getBytes(StandardCharsets.UTF_8).length > 72) throw new ApiException(400, "비밀번호는 8자 이상, 72바이트 이하로 입력해 주세요.");
     }
     private static ApiException passwordSessionExpired() { return new ApiException(401, "로그인 정보가 변경됐어요. 다시 로그인해 주세요."); }

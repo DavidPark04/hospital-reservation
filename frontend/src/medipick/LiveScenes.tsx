@@ -39,7 +39,6 @@ function ClinicStages({hospital,department,phase,goToChapter,onBooking,onAccount
   const [selectedDoctor,setDoctor] = useState('')
   const [date,setDate] = useState(()=>{
     const tomorrow = today(1)
-    // Generated virtual schedules begin on the next non-Sunday. Users can still select any valid date.
     return new Date(tomorrow+'T00:00:00Z').getUTCDay()===0 ? today(2) : tomorrow
   })
   const [selection,setSelection] = useState('')
@@ -63,37 +62,37 @@ function ClinicStages({hospital,department,phase,goToChapter,onBooking,onAccount
     onBooking(hospital,department,{doctorId:doctor.id,date,slotId:chosen.id})
   }
   return <>
-    <section className="sc-pane sc-doctors-stage" data-film-page="doctors" inert={phase!==4} aria-label="가상 의료진">
+    <section className="sc-pane sc-doctors-stage" data-film-page="doctors" inert={phase!==4} aria-label="의료진">
       <div className="ls-stack ls-staff">
-        <header className="ls-heading"><small>가상 의료진</small><h3>{hospital?.name||'진료받을 병원을 선택해 주세요'}</h3></header>
+        <header className="ls-heading"><small>의료진</small><h3>{hospital?.name||'진료받을 병원을 선택해 주세요'}</h3></header>
         {doctor ? <>
-          <div className="ls-doctors" role="group" aria-label="가상 의료진 선택">
+          <div className="ls-doctors" role="group" aria-label="의료진 선택">
             {staff.map((item,i)=><button type="button" key={item.id} aria-pressed={item.id===doctor.id} onClick={()=>{setDoctor(item.id);setSelection('')}}>
               <span className="ls-portrait"><DoctorPortrait index={i}/></span>
               <strong>{item.name} <small>의사</small></strong><span>{item.specialty}</span>
               {item.id===doctor.id&&<i data-film-anchor="doctors"><Check size={16}/></i>}
             </button>)}
           </div>
-          <button type="button" className="ls-link" onClick={()=>goToChapter(5)}>이 의료진의 모의 일정 보기 <ArrowRight size={16}/></button>
+          <button type="button" className="ls-link" onClick={()=>goToChapter(5)}>이 의료진의 진료 일정 보기 <ArrowRight size={16}/></button>
         </>:<>
-          <QueryStatus loading={doctors.isLoading} error={doctors.error} retry={()=>doctors.refetch()} message={hospital?(doctors.isLoading?'가상 의료진을 불러오는 중이에요.':'이 진료과에서 선택할 의료진이 없어요.'):'병원을 찾으면 해당 진료과의 가상 의료진을 볼 수 있어요.'}/>
+          <QueryStatus loading={doctors.isLoading} error={doctors.error} retry={()=>doctors.refetch()} message={hospital?(doctors.isLoading?'의료진을 불러오는 중이에요.':'이 진료과에서 선택할 의료진이 없어요.'):'병원을 찾으면 해당 진료과의 의료진을 볼 수 있어요.'}/>
           <button type="button" className="ls-link" onClick={()=>goToChapter(2)}>병원 선택하기 <ArrowRight size={16}/></button>
         </>}
       </div>
     </section>
-    <section className="sc-pane sc-book-stage" data-film-page="booking" inert={phase!==5} aria-label="모의 예약 일정">
+    <section className="sc-pane sc-book-stage" data-film-page="booking" inert={phase!==5} aria-label="예약 일정">
       <div className="ls-stack ls-ticket"><div className="ls-ticket-stub" aria-hidden="true"><span>{date.slice(0,4)}년 {Number(date.slice(5,7))}월</span><b>{Number(date.slice(8))}</b><span>{calendarDay.toLocaleDateString('ko-KR',{weekday:'long',timeZone:'Asia/Seoul'})}</span></div>
-        <div className="ls-ticket-body"><header className="ls-heading"><small>{hospital?.name||'모의 예약'}</small><h3><CalendarDays size={21} data-film-anchor="booking"/>{doctor?doctor.name+' 의사 일정':'일정 선택'}</h3></header>
+        <div className="ls-ticket-body"><header className="ls-heading"><small>{hospital?.name||'예약'}</small><h3><CalendarDays size={21} data-film-anchor="booking"/>{doctor?doctor.name+' 의사 일정':'일정 선택'}</h3></header>
           {doctor ? <>
             <label className="ls-date">예약 날짜<input type="date" min={today()} max={today(90)} value={date} onChange={e=>{if(e.target.validity.valid && e.target.value){setDate(e.target.value);setSelection('')}}}/></label>
             {slots.isLoading||slots.isError ? <QueryStatus loading={slots.isLoading} error={slots.error} retry={()=>slots.refetch()} message="일정을 확인하고 있어요."/> :
-              slots.data?.items.length ? <div className="ls-times" role="group" aria-label="모의 예약 시간">{slots.data.items.map(slot=>{
+              slots.data?.items.length ? <div className="ls-times" role="group" aria-label="예약 시간">{slots.data.items.map(slot=>{
                 const elapsed = Date.parse(slot.startAt)<=Date.now()
                 return <button key={slot.id} type="button" aria-pressed={slot.id===chosen?.id} disabled={slot.closed||slot.remaining<1||elapsed} onClick={()=>setSelection(slot.id)}>{timeLabel(slot.startAt)}<small>{slot.closed?'휴진':slot.remaining<1?'마감':elapsed?'지난 시간':'잔여 '+slot.remaining}</small></button>
               })}</div>
               : <p className="ls-note">선택할 수 있는 일정이 없어요. 다른 날짜를 확인해 주세요.</p>}
             <button type="button" className="ls-primary" disabled={!chosen} onClick={continueBooking}>선택한 일정으로 예약 확인 <ChevronRight size={17}/></button>
-          </>:<><p className="ls-note">병원과 가상 의료진을 선택하면 예약 가능한 시간과 잔여 정원이 표시돼요.</p><button type="button" className="ls-primary" onClick={()=>goToChapter(hospital?4:2)}>{hospital?'의료진 선택':'병원 선택'} <ArrowRight size={16}/></button></>}
+          </>:<><p className="ls-note">병원과 의료진을 선택하면 예약 가능한 시간과 잔여 정원이 표시돼요.</p><button type="button" className="ls-primary" onClick={()=>goToChapter(hospital?4:2)}>{hospital?'의료진 선택':'병원 선택'} <ArrowRight size={16}/></button></>}
           <button type="button" className="ls-link" onClick={onAccount}>마이페이지 <ArrowRight size={14}/></button>
         </div>
       </div>
@@ -115,7 +114,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
     staleTime:120_000
   })
   const results = list.data?.items||[]
-  const items = consultation ? [consultation.hospital] : browseFilters ? results : results.filter(h=>h.name===HOME_HOSPITAL_FILTERS.query && h.source!=='SAMPLE')
+  const items = consultation ? [consultation.hospital] : browseFilters ? results : results.filter(h=>h.source!=='SAMPLE')
   const hospital = items.find(h=>h.id===hospitalId)||items[0]
   const department = (consultation ? consultation.department : filters.department)||hospital?.departmentCode||hospital?.departments?.[0]?.code||''
   const departmentLabel = hospital?.departments?.find(d=>d.code===department)?.name || DEPARTMENTS.find(d=>d.code===department)?.name || hospital?.departmentName
@@ -133,7 +132,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
       {items.map(h=><option key={h.id} value={h.id}>{h.name}</option>)}
     </select></label>
   }
-  const statusText = pending?'병원 정보를 불러오고 있어요.':'조건에 맞는 병원을 찾지 못했어요. 지역이나 진료과를 바꿔 보세요.'
+  const statusText = pending?'병원 정보를 불러오고 있어요.':'조건에 맞는 등록 병원이 없어요. 다른 조건으로 검색하거나 병원 등록을 진행해 주세요.'
   return <div className="film-panes sc-root">
     <section className="sc-pane sc-chat-stage" data-film-page="chat" inert={phase!==1} aria-label="AI 상담"><ConsultScene/></section>
     <section className="sc-pane sc-reasons-stage" data-film-page="reasons" inert={phase!==2} aria-label="병원과 추천 근거">
@@ -142,7 +141,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
           <h3>{hospital?.name || '어디에서 진료받고 싶으세요?'}</h3>
         </header>
         {!consultation&&<form className="ls-filter" onSubmit={e=>{e.preventDefault();browseHospitals()}}><label><span>지역</span><input maxLength={80} value={region} onChange={e=>setRegion(e.target.value)} placeholder="시·구·동"/></label>
-          <label><span>진료과</span><select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)}>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+          <label><span>진료과</span><select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)}><option value="">전체 진료과</option>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
           <button type="submit" aria-label="이 조건으로 병원 검색"><Search size={18}/></button>
         </form>}
         <div className="ls-reason-info"><span><i className="fv-pin-source" aria-hidden="true"/>{hospital?.address||'병원 위치'}</span>
@@ -162,7 +161,7 @@ export default function LiveScenes({phase,goToChapter,onBooking,onAccount,recomm
       <div className="ls-map">
         {hospital ? <>
           {phase>=2 && phase<=4 && <HospitalLocation hospital={hospital}/>}
-          <div className="ls-map-controls">{candidates()}<button type="button" className="ls-link" onClick={()=>goToChapter(4)}>가상 의료진 보기 <ArrowRight size={15}/></button></div>
+          <div className="ls-map-controls">{candidates()}<button type="button" className="ls-link" onClick={()=>goToChapter(4)}>의료진 보기 <ArrowRight size={15}/></button></div>
         </> : <div className="ls-map-empty"><MapPin size={31}/><QueryStatus loading={pending} error={error} retry={()=>list.refetch()} message={statusText}/><button type="button" className="ls-link" onClick={()=>goToChapter(2)}>병원 찾기 <ArrowRight size={15}/></button></div>}
       </div>
     </section>

@@ -7,6 +7,8 @@
 | 상태·설정 | GET `/api/health`, `/api/meta` | 전체 |
 | 일반 가입 | POST `/api/auth/register` | 비회원 |
 | 아이디 로그인 | POST `/api/auth/login` | 비회원 |
+| 병원 사업자번호 조회 | POST `/api/auth/hospital/lookup` | 비회원 |
+| 병원 가입·로그인 | POST `/api/auth/hospital/register`, `/api/auth/hospital/login` | 비회원 |
 | 내 정보·로그아웃 | GET `/api/auth/me`, POST `/api/auth/logout` | 회원 또는 유효한 가입 임시 토큰 |
 | 비밀번호 변경 | PATCH `/api/auth/password` | 가입 완료 LOCAL 회원·관리자, 현재 비밀번호 확인 |
 | 소셜 제공자 | GET `/api/auth/social/providers` | 전체 |
@@ -20,12 +22,35 @@
 | 소셜 탈퇴 취소 | POST `/api/auth/social/withdrawal/cancel` | 현재 회원의 JWT |
 | 병원 검색·상세 | GET `/api/hospitals`, `/api/hospitals/{id}` | 전체 |
 | AI 상담 | POST `/api/chat` | 전체, 서버 사용량 제한 적용 |
-| 가상 의료진 | GET `/api/hospitals/{id}/doctors?department=01` | 전체 |
-| 가상 일정 | GET `/api/slots?doctorId=...&date=YYYY-MM-DD` | 전체 |
+| 병원 등록 의료진 | GET `/api/hospitals/{id}/doctors?department=01` | 전체, 등록 병원의 활성 실의료진 |
+| 병원 등록 일정 | GET `/api/slots?doctorId=...&date=YYYY-MM-DD` | 전체, 등록 병원의 실제 일정 |
 | 내 예약·생성 | GET·POST `/api/reservations` | 가입 완료 회원 |
 | 예약 변경·취소 | PATCH·DELETE `/api/reservations/{id}` | 예약 소유자 |
 | 관리자 일정 | GET·POST `/api/admin/slots`, PATCH `/api/admin/slots/{id}` | ADMIN |
 | 회원 목록·삭제 | GET `/api/admin/members`, DELETE `/api/admin/members/{id}` | ADMIN |
+| 병원 정보·의료진 관리 | GET `/api/hospital/manage/hospital`, GET·POST `/api/hospital/manage/doctors`, PATCH `/api/hospital/manage/doctors/{id}` | HOSPITAL, 자기 병원 |
+| 병원 일정 관리 | GET·POST `/api/hospital/manage/slots`, PATCH `/api/hospital/manage/slots/{id}` | HOSPITAL, 자기 병원 |
+| 병원 예약 관리 | GET `/api/hospital/manage/reservations`, PATCH·DELETE `/api/hospital/manage/reservations/{id}` | HOSPITAL, 자기 병원 |
+
+## 병원 가입·관리
+
+개인 가입·로그인과 병원 가입·로그인을 분리합니다. 병원 가입에는 이메일·소셜 로그인을 사용하지 않습니다.
+
+| 동작 | 요청 | 응답·규칙 |
+| --- | --- | --- |
+| 사업자번호 조회 | `{businessNumber}` | `{businessNumber,hospital:{id,name,address,postalCode,tel},verificationToken}`. 공공 API 이름·주소와 DB 병원이 하나로 일치해야 성공 |
+| 병원 가입 | `{businessNumber,password,verificationToken}` | `{token,user}`. 조회 확인은 15분간 유효하고 한 번 사용. 서버가 DB 기본정보를 다시 확인 |
+| 병원 로그인 | `{businessNumber,password}` | `{token,user}`. 사업자번호는 하이픈 제거 후 10자리. User에 `role:HOSPITAL,hospitalId,businessNumber` 포함 |
+| 의료진 등록 | `{name,departmentCode,specialty?}` | Doctor 응답. 신규 `active:true,isVirtual:false` |
+| 의료진 수정 | `{name,departmentCode,specialty?,active}` | 자기 병원 의료진만 수정. 예정된 예약이 있으면 진료과 변경 거절 |
+| 일정 생성 | `{doctorId,date,startTime,endTime,intervalMinutes,capacity}` | `{items}`. 날짜는 오늘부터 365일 이내, 미래 시간만 생성. 간격 15~120분, 정원 1~100 |
+| 일정 수정 | `{capacity,closed}` | Slot 응답. 정원 0~100, 예약 인원 이하 축소·예약 있는 일정 휴진·지난 일정 수정 거절 |
+| 병원 예약 목록 | 선택 쿼리 `date=YYYY-MM-DD`, `status=RESERVED\|CANCELED` | `{items}`. 예약 응답에 `patientName,patientPhone`만 추가 |
+| 병원 예약 변경·취소 | 변경 `{slotId}`, 취소 본문 없음 | `Idempotency-Key` 필요. 같은 병원의 일정만 이동 가능. 기존 예약 응답 형태 유지 |
+
+병원 정보 응답에는 기본정보와 `businessNumber`, 운영 진료과 `departments`, 의료진 등록용 `availableDepartments`가 있습니다. 병원명·주소·우편번호·전화번호는 읽기 전용이며 전화번호가 없으면 빈 문자열입니다. 등록된 병원이라도 의료진·일정을 직접 등록하기 전에는 예약 가능 항목이 비어 있습니다.
+
+모든 병원 관리 요청은 JWT 계정과 활성 `hospitalRegistrations` 소속을 서버에서 확인합니다. 병원 계정은 개인 예약 생성 및 개인 회원 탈퇴 기능을 사용할 수 없습니다. 사업자 정보 대조는 실제 운영자 신원 인증이 아니며, 실제 병원·환자가 이용하는 서비스로 운영하려면 별도 권한 확인 절차가 필요합니다. 현재 수업 프로젝트 구현에는 운영자 승인 절차가 없습니다.
 
 ## 가입과 로그인
 
@@ -69,7 +94,7 @@ PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. �
 
 ## 병원·상담
 
-검색 파라미터는 `query`, `region`, `department`, `exactName`입니다. 기본 병원명 검색은 부분 일치이며, `exactName=true`이면 입력한 병원명 전체가 대소문자까지 일치하는 자료를 조회합니다. 응답은 `{items,source,message?,fetchedAt?}`이며 병원 기본 목록은 `hospitals`의 활성 자료를 이름·ID 순서로 최대 30건 반환합니다. `department`는 일일 수집에서 확인한 `departmentCodes` 소속을 검색합니다. 검색 요청은 기본 공공 API를 호출하지 않으며 저장된 자료의 `source`는 `CACHE`입니다. 응답 메시지는 "매일 갱신해 저장한 병원 기본 정보입니다."입니다. 기본 목록이 비어 있고 `DEMO_ENABLED=true`인 경우에만 `hospitalDetails`의 샘플 검색을 허용하며 `SAMPLE`로 표시합니다.
+검색 파라미터는 `query`, `region`, `department`, `exactName`입니다. 기본 병원명 검색은 부분 일치이며, `exactName=true`이면 입력한 병원명 전체가 대소문자까지 일치하는 자료를 조회합니다. 응답은 `{items,source,message?,fetchedAt?}`이며 `hospitals`의 활성 자료 중 `hospitalRegistrations.status=ACTIVE`인 병원만 이름·ID 순서로 최대 30건 반환합니다. `department`는 병원이 등록한 활성 의료진의 운영 진료과를 검색합니다. 검색 요청은 기본 공공 API를 호출하지 않으며 저장된 자료의 `source`는 `CACHE`입니다. 등록 병원이 없으면 빈 목록을 반환하며 미등록 병원이나 시연 병원으로 대체하지 않습니다. AI 추천 후보도 같은 등록 조건을 적용합니다.
 
 상세는 현재 기본 카탈로그에 저장된 병원의 최신 기본 필드와 상세 캐시를 합칩니다. 상세 3종(진료과·특수진료·전문병원 지정)은 기존처럼 필요할 때 조회하고 완전한 결과를 1시간 캐시합니다. 이때 성공한 외부 상세 조회는 `LIVE`, 저장된 상세 재사용은 `CACHE`이며, 근거마다 출처·조회 시점을 포함합니다. 기본 카탈로그에 없는 ID는 404, 비활성화된 병원은 410입니다. 명시된 샘플 병원 상세는 `SAMPLE`을 유지합니다. 의료진은 `isVirtual:true`인 저장된 가상 자료입니다.
 
@@ -86,6 +111,8 @@ PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. �
 생성·변경 본문은 `{slotId}`입니다. 생성·변경·취소 모두 `Idempotency-Key` 헤더를 전달합니다. 사용자·키와 정규화한 작업 내용의 SHA-256 해시를 저장합니다. 같은 키·같은 작업은 기존 응답, 다른 작업은 409입니다. 요청 키에는 자동 TTL을 두지 않으며 회원 삭제 시 해당 회원 키를 제거합니다.
 
 예약 상태는 `RESERVED`, `CANCELED`입니다. 변경은 `reservationEvents.action=CHANGE`로 기록하며 `CHANGED` 상태를 만들지 않습니다. 서버에서 소유권·참조 ID·정원·휴진을 확인합니다. 정원 확보/반환, 예약·응답·이력 저장은 하나의 트랜잭션이며 실패하면 롤백합니다. 반복 취소는 정원을 두 번 반환하지 않습니다.
+
+병원에서 수행한 변경·취소 이력은 `HOSPITAL_CHANGE`, `HOSPITAL_CANCEL`로 기록하고 `actorId`는 병원 계정입니다. 개인 신규 예약은 등록 병원의 활성 의료진과 `isVirtual:false`인 일정만 가능합니다. 예전 개인 예약 내역과 취소 기능은 유지합니다.
 
 관리자 일정 생성 본문은 `{doctorId,date,startTime,endTime,intervalMinutes,capacity}`, 변경은 `{capacity,closed}`입니다. 기존 예약보다 작은 정원이나 예약이 있는 일정의 휴진 변경은 409로 거부합니다.
 

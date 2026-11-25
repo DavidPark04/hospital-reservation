@@ -12,6 +12,8 @@ public class UserPrincipal {
     private final String authProvider;
     private final String email;
     private final String phone;
+    private final String hospitalId;
+    private final String businessNumber;
     private final boolean profileComplete;
     private final boolean signupPending;
     private final int tokenVersion;
@@ -29,12 +31,16 @@ public class UserPrincipal {
         name = profileComplete && user.getString("name") != null ? user.getString("name") : "";
         email = profileComplete ? user.getString("email") : null;
         phone = profileComplete ? user.getString("phone") : null;
+        hospitalId = "HOSPITAL".equals(role) ? user.getString("hospitalId") : null;
+        businessNumber = "HOSPITAL".equals(role) ? user.getString("businessNumber") : null;
     }
     public String getId() { return id; }
     public String getName() { return name; }
     public String getLoginId() { return loginId; }
     public String getRole() { return role; }
     public String getAuthProvider() { return authProvider; }
+    public String getHospitalId() { return hospitalId; }
+    public String getBusinessNumber() { return businessNumber; }
     public boolean isProfileComplete() { return profileComplete; }
     public boolean isSignupPending() { return signupPending; }
     public int getTokenVersion() { return tokenVersion; }
@@ -45,6 +51,7 @@ public class UserPrincipal {
         result.put("profileComplete", profileComplete); result.put("emailVerified", false);
         if (email != null && !email.isBlank()) result.put("email", email);
         if (phone != null && !phone.isBlank()) result.put("phone", phone);
+        if ("HOSPITAL".equals(role)) { result.put("hospitalId", hospitalId); result.put("businessNumber", businessNumber); }
         return result;
     }
 }

@@ -36,7 +36,10 @@ public class HospitalRecommendationService {
     private Map<String, Object> nearby(String department, String region, boolean promptCare, Double lat, Double lon) {
         if (!Departments.contains(department)) return result(List.of(), "CACHE", "진료과를 먼저 확인해 주세요. 직접 병원 검색도 이용할 수 있어요.");
         if ((region == null || region.isBlank()) && lat == null) return result(List.of(), "CACHE", "병원을 찾을 지역이나 기준 위치가 필요해요.");
-        Document match = new Document("provider", "HIRA").append("active", true).append("departmentCodes", department);
+        Map<String, Document> registrations = RegisteredHospitals.active(mongo, department);
+        if (registrations.isEmpty()) return result(List.of(), "CACHE", "해당 진료과로 등록된 병원이 아직 없어요. 검색 조건을 바꿔 확인해 주세요.");
+        Document match = new Document("provider", "HIRA").append("active", true)
+                .append("_id", new Document("$in", new ArrayList<>(registrations.keySet())));
         List<Document> conditions = regionConditions(region);
         // Primary outpatient services. Unknown types, nursing facilities and tertiary hospitals are not called nearby first-care options.
         List<String> types = switch (department) {
@@ -75,7 +78,8 @@ public class HospitalRecommendationService {
         for (Document row : rows) {
             if (items.size() == 3) break;
             if (lat != null && distance(lat, lon, number(row.get("latitude")), number(row.get("longitude"))) > 30) continue;
-            Map<String, Object> item = publicCard(row, department, lat, lon);
+            Map<String, Object> item = publicCard(RegisteredHospitals.withManagedDepartments(row,
+                    registrations.get(row.getString("_id"))), department, lat, lon);
             item.put("recommendationReason", Departments.name(department) + " 진료과가 등록된 " + hospitalType(row)
                     + (lat == null ? "으로, 말씀하신 지역에서 찾았어요." : "으로, 제공한 위치와의 직선거리를 고려했어요."));
             items.add(item);
@@ -88,6 +92,8 @@ public class HospitalRecommendationService {
     }
 
     private Map<String, Object> specialists(String department, String specialty, String region, Double lat, Double lon) {
+        Map<String, Document> registrations = RegisteredHospitals.active(mongo, department);
+        if (registrations.isEmpty()) return result(List.of(), "CACHE", "해당 진료과로 등록된 전문 진료 후보가 아직 없어요.");
         String topic = specialty == null || specialty.isBlank() ? Departments.name(department) : specialty;
         Map<String, Object> search = expertise.search(topic, region == null ? "" : region);
         List<Map<String, Object>> items = new ArrayList<>();
@@ -97,12 +103,13 @@ public class HospitalRecommendationService {
             String name = text(candidate.get("name"), 120);
             String address = text(candidate.get("address"), 200);
             if (name.isBlank() || address.isBlank()) continue;
-            Document hospital = matchHospital(name, address);
+            Document hospital = matchHospital(name, address, registrations.keySet());
             if (hospital == null || ids.contains(hospital.getString("_id")) || !regionMatches(region, hospital.getString("address"))) continue;
             List<Map<String, String>> sources = recommendationSources(candidate.get("sources"), hospital);
             String reason = text(candidate.get("reason"), 500);
             if (sources.isEmpty() || reason.isBlank()) continue;
-            Map<String, Object> item = publicCard(hospital, department, lat, lon);
+            Map<String, Object> item = publicCard(RegisteredHospitals.withManagedDepartments(hospital,
+                    registrations.get(hospital.getString("_id"))), department, lat, lon);
             item.put("specialty", topic);
             item.put("recommendationReason", reason);
             item.put("recommendationSources", sources);
@@ -112,16 +119,17 @@ public class HospitalRecommendationService {
         }
         if (items.isEmpty() && search.get("candidates") instanceof List<?> candidates && !candidates.isEmpty())
             expertise.invalidate(topic, region == null ? "" : region);
-        String notice = items.isEmpty() ? "참고 자료와 병원명·주소가 연결되는 전문 진료 후보를 찾지 못했어요. 검색 범위를 넓히거나 주변 진료과 병원을 찾아볼 수 있어요."
+        String notice = items.isEmpty() ? "메디픽 등록 병원 중 참고 자료와 병원명·주소가 연결되는 전문 진료 후보를 찾지 못했어요. 검색 범위를 넓히거나 주변 진료과 병원을 찾아볼 수 있어요."
                 : "공식 안내·기사·공개 후기 등의 검색 결과를 AI가 요약한 참고 후보예요. 출처 유형을 함께 확인해 주세요. 후기나 언급은 치료 성적·병원 간 우열을 뜻하지 않으며, 실제 진료 가능 여부와 접수 절차는 병원에 확인해 주세요.";
         if (search.get("notice") instanceof String message && !message.isBlank()) notice = message + " " + notice;
         return result(items, String.valueOf(search.getOrDefault("source", "WEB")), notice);
     }
 
-    private Document matchHospital(String name, String address) {
+    private Document matchHospital(String name, String address, Set<String> registeredIds) {
         List<Document> alternatives = new ArrayList<>();
         for (String alias : aliases(name)) alternatives.add(new Document("name", new Document("$regex", spacedPattern(alias)).append("$options", "i")));
-        Document filter = new Document("provider", "HIRA").append("active", true).append("$or", alternatives);
+        Document filter = new Document("provider", "HIRA").append("active", true).append("$or", alternatives)
+                .append("_id", new Document("$in", new ArrayList<>(registeredIds)));
         List<Document> found = mongo.getCollection(HospitalCatalog.COLLECTION).find(filter).limit(21)
                 .maxTime(5, TimeUnit.SECONDS).into(new ArrayList<>());
         if (found.size() > 20) return null;

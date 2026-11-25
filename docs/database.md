@@ -2,7 +2,7 @@
 
 메디픽의 DB 이름은 **`MediPick`**이다. 이 문서는 현재 MongoDB에 어떤 정보가 들어가고, 각 필드가 무슨 뜻이며, 서로 어떻게 연결되는지를 처음 읽는 사람도 따라갈 수 있게 설명한다.
 
-현재 구조는 **16개 컬렉션**으로 나뉜다. 먼저 회원·병원·의료진·시간표·예약 **핵심 5개**를 이해하면 된다. 나머지는 소셜 로그인, 중복 요청 방지, API 결과 재사용, 수집 작업 기록을 위한 보조 저장소다.
+현재 구현은 **18개 컬렉션**으로 나뉜다. 먼저 회원·병원·의료진·시간표·예약 **핵심 5개**를 이해하면 된다. 병원 회원 추가로 `hospitalRegistrations`(등록 병원)와 `hospitalSignupVerifications`(가입 전 조회 확인)가 생겼다. 나머지는 인증, 중복 요청 방지, API 결과 재사용, 수집 작업 기록을 위한 보조 저장소다. 컬렉션 구조는 코드 기준이며 실제 배포 상태는 해당 PR·Actions 결과로 확인한다.
 
 > 표의 이름·연락처·ID·건수는 설명용 가상 예시다. 실제 회원 정보, 비밀번호, API 키, DB 접속 정보는 포함하지 않는다. 필드는 현재 코드와 DB 메타데이터를 기준으로 설명하며, 같은 컬렉션 안에서도 가입 방식·문서 종류에 따라 선택 필드가 없을 수 있다.
 
@@ -10,7 +10,7 @@
 
 1. [사용자 동작으로 이해하기](#overview)
 2. [타입·PK·UK·REF 등 용어](#terms)
-3. [전체 16개 컬렉션 목록](#collections)
+3. [전체 18개 컬렉션 목록](#collections)
 4. [핵심 5개 데이터](#core)
 5. [병원 상세·추천·수집 보조 데이터](#hospital-support)
 6. [예약 요청과 변경 이력](#booking-support)
@@ -25,9 +25,11 @@
 | 사용자가 하는 일 | DB에서 하는 일 |
 | --- | --- |
 | 회원가입을 완료한다 | `users`에 회원 한 명을 저장한다. |
-| 병원을 검색한다 | `hospitals`에 미리 저장한 병원 기본 정보를 읽는다. |
+| 병원 회원가입을 한다 | 사업자번호로 공공 API를 조회하고 DB 병원과 대조한 뒤 `users`와 `hospitalRegistrations`를 함께 저장한다. |
+| 병원을 검색한다 | `hospitals`의 전체 기본 자료 중 `hospitalRegistrations`에 등록된 병원만 읽는다. |
 | 병원을 선택한다 | 필요한 상세 정보를 `hospitalDetails`에서 읽고, 재사용할 수 없으면 API로 확인한다. 근거는 `hospitalEvidence`에도 저장한다. |
-| 의료진과 시간을 고른다 | `doctors`의 가상 의료진과 `timeSlots`의 모의 시간표를 읽는다. |
+| 병원이 의료진·일정을 등록한다 | 자기 병원의 `doctors`와 `timeSlots`에 직접 입력한 정보를 저장한다. |
+| 의료진과 시간을 고른다 | 등록 병원이 직접 설정한 활성 의료진과 예약 가능한 시간표를 읽는다. |
 | 예약을 완료한다 | `reservations`에 예약을 저장하고 시간표의 예약 인원을 늘린다. `requests`는 중복 처리를 막고 `reservationEvents`는 이력을 남긴다. |
 | 카카오·구글로 처음 로그인한다 | 소셜 인증에 성공해도 추가 정보 입력 전에는 `social_signups`에 가입 대기 정보만 둔다. 가입 완료 시 `users`로 정식 회원을 만든다. |
 
@@ -35,9 +37,20 @@
 
 ![메디픽 핵심 5개 컬렉션 ERD](images/database-core.svg)
 
-[핵심 그림 크게 보기](images/database-core.svg) · [전체 16개 관계도 보기](images/database-full.svg)
+[핵심 그림 크게 보기](images/database-core.svg) · [병원 회원 추가 전 16개 관계도](images/database-full.svg)
 
-그림은 주요 필드 위주이고, 아래 표에는 선택 필드와 내부 처리용 필드도 풀어 적었다. 병원 기본 정보와 실제 병원의 상세 캐시는 같은 `_id`를 사용한다. 시연용 SAMPLE 병원은 상세 컬렉션에만 있을 수 있다.
+기존 SVG 그림은 병원 회원 추가 전 구조다. 최신 필드와 병원 회원 관계는 아래 표와 관계도를 기준으로 읽는다. 병원 기본 정보와 상세 캐시는 같은 `_id`를 사용한다. 예전 시연용 자료는 남아 있을 수 있지만 일반 사용자의 신규 검색·예약에는 제공하지 않는다.
+
+```mermaid
+flowchart LR
+    U[users: 병원 계정] -->|hospitalId| H[hospitals: 전체 기본 자료]
+    R[hospitalRegistrations: 등록 병원] -->|userId| U
+    R -->|같은 _id| H
+    V[hospitalSignupVerifications: 15분 조회 확인] -->|hospitalId| H
+    D[doctors: 병원이 등록한 의료진] -->|hospitalId| H
+    S[timeSlots: 병원이 설정한 일정] -->|doctorId| D
+    B[reservations: 개인 회원 예약] -->|slotId| S
+```
 
 <a id="terms"></a>
 
@@ -96,15 +109,17 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 <a id="collections"></a>
 
-## 3. 전체 16개 컬렉션 목록
+## 3. 전체 18개 컬렉션 목록
 
 | 구분 | 컬렉션 | 한 문장 설명 |
 | --- | --- | --- |
-| 핵심 | [`users`](#users) | 가입 완료 회원과 관리자 |
+| 핵심 | [`users`](#users) | 가입 완료 개인·병원 회원과 관리자 |
 | 핵심 | [`hospitals`](#hospitals) | 미리 수집한 전국 병원 기본 정보 |
-| 핵심 | [`doctors`](#doctors) | 병원·진료과별 가상 의료진 |
+| 핵심 | [`doctors`](#doctors) | 병원이 직접 등록한 의료진 |
 | 핵심 | [`timeSlots`](#timeSlots) | 예약할 수 있는 시간과 자리 수 |
-| 핵심 | [`reservations`](#reservations) | 회원이 완료한 모의 예약 |
+| 핵심 | [`reservations`](#reservations) | 개인 회원의 예약 |
+| 병원 가입 | [`hospitalRegistrations`](#hospitalRegistrations) | 병원 계정과 실제 병원을 연결하고 공개 여부를 관리 |
+| 병원 가입 | [`hospitalSignupVerifications`](#hospitalSignupVerifications) | 사업자번호·DB 병원 대조 결과를 가입 때까지 임시 보관 |
 | 병원·AI 보조 | [`hospitalDetails`](#hospitalDetails) | 선택한 병원의 상세 API 결과 캐시 |
 | 병원·AI 보조 | [`hospitalEvidence`](#hospitalEvidence) | 병원 공공 정보의 출처와 확인 시점 |
 | 병원·AI 보조 | [`hospitalRecommendationEvidence`](#hospitalRecommendationEvidence) | 기사·공식 자료 등 웹 추천 근거 캐시 |
@@ -117,7 +132,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | 소셜 인증 보조 | [`social_login_tickets`](#social_login_tickets) | 인증 결과를 앱 로그인으로 넘기는 일회용 티켓 |
 | 소셜 인증 보조 | [`social_withdrawal_proofs`](#social_withdrawal_proofs) | 같은 소셜 계정으로 재인증한 탈퇴 확인서 |
 
-진료과는 별도 `departments` 컬렉션이 아니라 병원 문서 안의 목록과 앱의 `Departments` 코드표로 관리한다.
+진료과는 별도 `departments` 컬렉션이 아니다. 공공 자료는 `hospitals.departments`, 병원이 실제 운영하도록 설정한 진료과는 `hospitalRegistrations.departments`에 둔다. 후자는 활성 의료진의 진료과를 모아 만들며 앱의 `Departments` 코드표를 사용한다.
 
 <a id="core"></a>
 
@@ -127,22 +142,24 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `users` — 가입을 완료한 회원
 
-일반 회원가입을 완료했거나, 카카오·구글 인증 후 이름·이메일·전화번호를 입력해 가입을 완료한 회원을 저장한다. 관리자도 같은 컬렉션에 저장하고 `role`로 구분한다.
+개인 회원, 병원 회원, 관리자를 함께 저장하고 `role`로 구분한다. 개인은 기존 아이디 가입 또는 카카오·구글 가입을 사용한다. 병원은 사업자번호와 비밀번호로 가입·로그인하며 이메일과 소셜 로그인을 사용하지 않는다.
 
 | 필드 | 타입 | 쉬운 설명 | 예시·저장 조건 |
 |---|---|---|---|
 | `_id` | string | 회원 한 명을 구분하는 고유번호(PK). 예약 등에서 이 번호로 회원을 연결한다. | 임의로 생성한 UUID 문자열 |
-| `loginId` | string | 일반 로그인에서 입력하는 아이디. 소셜 회원도 내부 관리용 아이디가 생긴다. | 일반: `member01` / 소셜: `kakao_` 또는 `google_`로 시작하는 자동 생성 값 |
-| `name` | string | 회원이 직접 입력한 이름. | `홍길동` |
+| `loginId` | string | 개인 로그인 아이디 또는 내부 관리용 아이디 | 개인: `member01` / 소셜: `kakao_`, `google_` 접두어 / 병원: `hospital:` + 사업자번호. 병원 화면에서는 사업자번호만 입력 |
+| `name` | string | 개인은 입력한 이름, 병원은 DB에서 확인한 병원명 | `홍길동` / `예시의원` |
 | `nameNormalized` | string | 이름을 비교하기 위해 공백·유니코드·영문 대소문자를 정리한 값. 이름 자체에 중복 금지 제약은 없다. | `  Hong   Gil  ` → `hong gil` |
-| `phone` | string | 회원이 입력한 연락처. 비교할 때 혼동하지 않도록 공백과 `-`를 제거해 저장한다. | `010-1234-5678` → `01012345678` |
-| `email` | string | 회원이 직접 입력한 이메일. 앞뒤 공백은 제거한다. | `Member@example.com` |
+| `phone` | string | 개인은 정규화한 입력 연락처. 병원은 DB의 병원 전화번호를 복사 | 개인: `01012345678`. 병원 전화번호가 없으면 빈 문자열 |
+| `email` | string, 선택 | 개인 회원이 직접 입력한 이메일. 병원 계정에는 저장하지 않는다 | `Member@example.com` |
 | `emailNormalized` | string | 이메일 중복 검사에 쓰는 값. 앞뒤 공백을 제거하고 소문자로 저장한다. | `Member@example.com` → `member@example.com` |
-| `passwordHash` | string | 비밀번호 원문 대신 저장하는 BCrypt 해시값. 로그인할 때 입력한 비밀번호와 비교한다. | 일반 가입 계정에만 저장. 소셜 계정에는 서비스 비밀번호가 없다. |
+| `passwordHash` | string | 비밀번호 원문 대신 저장하는 BCrypt 해시값. 로그인할 때 입력한 비밀번호와 비교한다. | 일반 개인·병원 계정에 저장. 소셜 계정에는 서비스 비밀번호가 없다. |
 | `authProvider` | string | 어떤 방식으로 가입했는지. | `LOCAL` 일반 / `GOOGLE` 구글 / `KAKAO` 카카오 |
 | `socialSubject` | string | 구글·카카오가 발급한 계정 고유번호를 문자열로 저장한 값. | 구글의 `sub` 또는 카카오의 `id`. 소셜 회원만 저장. |
 | `socialIdentity` | string | 서비스 이름과 소셜 고유번호를 합친 값. 서로 다른 소셜 서비스의 번호를 구분하고, 같은 소셜 계정의 중복 회원 생성을 막는다. | `KAKAO:123456` / `GOOGLE:example-subject` |
-| `role` | string | 일반 회원인지 관리자인지. | `USER` / `ADMIN` |
+| `role` | string | 개인 회원·병원 회원·관리자 구분 | `USER` / `HOSPITAL` / `ADMIN` |
+| `businessNumber` | string, 병원만 | 병원 로그인에 사용하는 사업자등록번호. PK는 아니다 | 하이픈 없는 10자리 |
+| `hospitalId` | string, 병원만 | 이 계정이 관리하는 병원의 고유번호(REF) | `hospitals._id` |
 | `memberIdentityClaimed` | bool | 이 문서의 전화번호·이메일에 중복 제한을 적용하는지 표시한다. | 일반·소셜 가입 완료 시 `true`. 연락처가 없는 이전 데이터에는 없을 수 있다. |
 | `profileComplete` | bool | 소셜 로그인 후 추가 정보 입력을 마쳤는지. | 소셜 가입 완료 시 `true`. 일반 회원은 이 필드가 없어도 가입 완료로 판단한다. |
 | `profileCompletedAt` | date | 소셜 회원이 이름·이메일·전화번호 입력을 마친 시각. | 소셜 가입 완료 시 저장 |
@@ -154,6 +171,8 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `lastLoginAt` | date | 일반 아이디·비밀번호 로그인에 성공한 최근 시각. | 일반 로그인 성공 시 갱신. 현재 소셜 로그인 흐름에서는 갱신하지 않는다. |
 
 `memberIdentityClaimed=true`는 **본인 인증·이메일 인증·전화번호 인증을 완료했다는 뜻이 아니다.** 연락처 중복 제한을 적용하기 위한 내부 값이다. `emailVerified=false`도 현재 동작에 맞는 값이다.
+
+병원 계정에는 개인용 연락처 중복 제한을 적용하지 않는다. 병원 가입은 `hospitalRegistrations`의 사업자번호·병원번호·계정번호 중복 제한으로 관리한다. 병원의 소속 정보는 로그인 토큰의 표시만 믿지 않고 DB의 활성 등록과도 대조한다. 현재 일반 회원 탈퇴·관리자 회원 삭제 기능은 `USER` 대상이며 병원 계정을 삭제하는 흐름은 제공하지 않는다.
 
 #### 중복을 막는 키
 
@@ -184,7 +203,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `hospitals` — 전국 병원 기본 정보
 
-병원 이름·주소·전화번호 등 병원 검색의 기준이 되는 자료다. **웹에서 검색할 때는 이 컬렉션을 읽는다.** 사용자가 검색할 때마다 병원 기본 API를 호출하지 않는다.
+병원 이름·주소·전화번호 등 병원 검색과 병원 가입 대조의 기준 자료다. **전국 기본 데이터는 계속 보관하지만 웹 검색·추천·예약은 메디픽에 등록한 병원으로 제한한다.** `hospitals.active=true`만으로 서비스에 가입한 병원이라는 뜻은 아니며, `hospitalRegistrations.status=ACTIVE`도 함께 확인한다. 사용자가 검색할 때마다 병원 기본 API를 호출하지 않는다.
 
 | 필드 | 타입 | 쉬운 설명 | 가상 예시·값 |
 | --- | --- | --- | --- |
@@ -217,31 +236,77 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 **왜 해시·날짜가 여러 개인가?** 해시는 변경 여부를 빨리 비교하고, 날짜는 언제 가져온 자료인지 구분한다. 내용이 같으면 병원 문서에 날짜만 다시 쓰지 않는다. 따라서 오늘 전체 수집에 성공했어도 어떤 병원의 `basicFetchedAt`은 며칠 전일 수 있다. 오늘 작업의 성공 여부는 아래 `hospitalImportRuns`에서 확인한다. `active:false`는 원본 목록에서 확인되지 않는다는 뜻이며 폐업을 확정하는 값은 아니다.
 
+<a id="hospitalRegistrations"></a>
+
+### `hospitalRegistrations` — 메디픽에 가입한 병원
+
+`hospitals`가 전국 병원 자료라면 이 컬렉션은 **그중 메디픽에 가입한 병원의 명단**이다. 현재는 병원 하나당 병원 계정 하나를 연결한다. 의료진마다 로그인 계정을 만드는 구조는 아니다.
+
+| 필드 | 타입 | 쉬운 설명 |
+| --- | --- | --- |
+| `_id` | string / PK·REF | 연결한 `hospitals._id`와 같은 값. 같은 병원을 두 번 등록하지 못함 |
+| `businessNumber` | string / UK | 하이픈 없는 사업자등록번호 10자리. 같은 사업자번호의 중복 가입 방지 |
+| `userId` | string / UK·REF | 병원을 관리하는 `users._id`. 한 계정으로 병원 여러 개를 연결하지 못함 |
+| `status` | string | `ACTIVE`인 등록만 공개·관리 대상으로 사용 |
+| `basicInformation` | object | 가입 때 DB에서 확인한 `id`, `name`, `address`, `postalCode`, `tel` 사본 |
+| `departments` | array<object>, 선택 | 병원이 등록한 활성 의료진의 진료과 코드·이름 목록 |
+| `departmentCodes` | array<string>, 선택 | 위 목록의 진료과 코드. 공개 검색의 진료과 조건에 사용 |
+| `managementVersion` | int, 선택 | 병원 관리 작업이 동시에 실행될 때 충돌을 감지하는 내부 번호 |
+| `createdAt` | date | 병원 가입 완료 시각 |
+
+사업자번호 인덱스는 `hospital_registration_business_v1`, 계정번호 인덱스는 `hospital_registration_owner_v1`이다. 병원 계정 생성과 이 등록 문서 생성은 하나의 트랜잭션으로 처리한다. 활성 의료진이 없으면 운영 진료과 목록도 비어 있다. 의료진 등록·수정과 운영 진료과 갱신 역시 같은 트랜잭션이다.
+
+**자동 입력되는 병원명·주소·우편번호·전화번호는 사용자가 수정할 수 없다.** 전화번호는 DB에 있으면 그대로 넣고 없으면 빈칸으로 둔다. 가입 요청에 임의 값을 넣어 보내도 서버는 현재 DB의 기본정보를 사용한다. 관리 화면의 기본정보도 현재 `hospitals`에서 읽는다.
+
+<a id="hospitalSignupVerifications"></a>
+
+### `hospitalSignupVerifications` — 병원 가입 전 조회 확인
+
+사업자번호를 근로복지공단 고용·산재보험 API로 조회하고, 반환된 사업장명·주소를 `hospitals`와 대조하여 병원 하나를 확인했을 때 만든다. 일치 결과가 없거나 여러 병원으로 해석되면 가입을 진행하지 않는다.
+
+| 필드 | 타입 | 쉬운 설명 |
+| --- | --- | --- |
+| `_id` | string / PK | 브라우저에 발급한 일회용 `verificationToken`의 SHA-256 해시. 원문은 DB에 저장하지 않음 |
+| `businessNumber` | string | 조회한 사업자등록번호 |
+| `hospitalId` | string / REF | 일치한 병원의 `hospitals._id` |
+| `hospital` | object | 대조 당시 DB의 `id`, `name`, `address`, `postalCode`, `tel` |
+| `createdAt` | date | 대조에 성공한 시각 |
+| `expiresAt` | date | 생성 후 15분. 만료되면 다시 조회해야 함 |
+
+가입 완료 시 확인 문서를 소모하며, 계정·등록 생성과 확인 문서 삭제를 같은 트랜잭션으로 처리한다. 조회 이후 DB 기본정보가 바뀌었어도 재조회를 요구한다. TTL 인덱스 `hospital_signup_verification_expiry_v1`이 만료 자료를 정리하고 서버도 만료 시각을 직접 검사한다.
+
+**사업자 정보와 병원이 일치했다는 확인은 가입한 사람이 실제 병원 운영자인지 증명하지 않는다.** 실제 병원·환자가 이용하는 서비스에는 별도의 병원 운영 권한 확인이 필요하다. 현재 수업 프로젝트에는 관리자 승인·운영자 본인 인증 절차를 추가하지 않았다.
+
 <a id="doctors"></a>
 
-### `doctors` — 병원에 배정한 가상 의료진
+### `doctors` — 병원이 직접 등록한 의료진
 
-사용자가 선택한 병원과 진료과에 모의 예약용 의료진을 배정한다. 현재 의료진은 공공 API에서 받은 실제 의사 명단이 아니라 **서비스에서 생성한 가상 인물**이다. 한 번 만든 배정은 DB에 저장하므로 같은 병원을 다시 열 때마다 다른 사람으로 바뀌지 않는다.
+병원 계정이 의료진 이름·진료과·전문 분야를 등록하고 수정한다. 공공 API에서 의사 실명 명단을 받거나 임의의 이름을 자동 생성하지 않는다. 기존 시연 자료가 DB에 남더라도 신규 예약 대상은 `isVirtual=false`, `active=true`인 의료진이다.
 
 | 필드 | 타입 | 쉬운 설명 | 예시 |
 | --- | --- | --- | --- |
-| `_id` | string | 가상 의료진 한 명의 고유번호(PK) | 병원·진료과·배정 순서로 만든 UUID |
+| `_id` | string | 의료진 한 명의 고유번호(PK) | 새 UUID |
 | `hospitalId` | string | 어느 병원에 속하는지 나타내는 연결 번호(REF) | 해당 병원의 `_id` |
 | `departmentCode` | string | 소속 진료과 코드 | `05` = 정형외과 |
 | `departmentName` | string | 화면에 보여 줄 진료과 이름 | `정형외과` |
-| `sampleCode` | string | 같은 병원·진료과 안에서 가상 의료진을 구분하는 순번 | `sample-0` |
-| `name` | string | 화면에 표시할 가상 의료진 이름 | `김하늘` — 가상 인물 |
-| `specialty` | string | 시연용으로 부여한 상담 분야 | `관절 상담` |
-| `isVirtual` | bool | 가상 데이터인지 | 현재 `true` |
-| `createdAt` | date | 가상 의료진을 처음 배정한 시각 | `2026-11-22T06:30:00Z` |
+| `sampleCode` | string | 기존 복합 인덱스와 호환하기 위한 내부 식별값. 신규 값은 순번이 아님 | `managed-` + 의료진 UUID. 예전 자료에는 `sample-0` 등 |
+| `name` | string | 병원에서 입력한 의료진 이름 | 설명용 예시 `김하늘` |
+| `specialty` | string | 병원에서 입력한 전문 분야 | `관절 진료` |
+| `active` | bool | 신규 예약을 받는 의료진인지 | `true` / `false` |
+| `isVirtual` | bool | 예전 시연 자료인지 구분 | 병원 직접 등록은 `false` |
+| `bookingVersion` | int, 선택 | 의료진 설정 변경과 예약이 겹칠 때 충돌을 감지하는 내부 번호 | 예약 처리 시 증가 |
+| `createdAt` | date | 의료진 등록 시각 | 생성 시각 |
+| `updatedAt` | date, 선택 | 의료진 정보 수정 시각 | 수정 시각 |
 
 **중복 방지:** `(hospitalId, departmentCode, sampleCode)` 조합이 같으면 두 번 생성할 수 없다. `sampleCode` 하나가 전국에서 유일해야 한다는 뜻은 아니다. 서로 다른 병원은 각각 `sample-0`을 가질 수 있다.
+
+예정된 예약이 있는 의료진의 진료과 변경은 거절한다. 의료진을 비활성화하면 신규 예약을 막지만 이미 있는 예약은 유지하므로 병원이 따로 변경·취소할 수 있다.
 
 <a id="timeSlots"></a>
 
 ### `timeSlots` — 예약할 수 있는 시간과 자리 수
 
-“김하늘 의료진의 11월 23일 오전 9시에는 4명까지 예약할 수 있다”를 한 문서로 저장한다. 실제 병원의 접수 시스템과 연결된 일정이 아니라 모의 예약용 시간표다.
+“김하늘 의료진의 11월 23일 오전 9시에는 4명까지 예약할 수 있다”를 한 문서로 저장한다. 병원이 메디픽에서 날짜·시작/종료 시간·간격·정원을 직접 설정한다. 다른 병원 접수 시스템과 자동 연동하는 기능은 없다.
 
 | 필드 | 타입 | 쉬운 설명 | 예시 |
 | --- | --- | --- | --- |
@@ -251,16 +316,16 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `capacity` | int | 이 시간에 받을 수 있는 최대 예약 인원 | `4` |
 | `reservedCount` | int | 현재 예약된 인원 | `2` |
 | `closed` | bool | 이 시간을 휴진·예약 불가로 처리했는지 | `false` = 열림, `true` = 닫힘 |
-| `isVirtual` | bool | 시연용 시간표인지 | 현재 `true` |
+| `isVirtual` | bool | 시연용 시간표인지 | 직접 등록한 일정은 `false` |
 | `createdAt` | date | 이 시간표를 처음 만든 시각 | 생성 시각 |
 
 **남은 자리**는 `capacity - reservedCount`로 계산한다. 예를 들어 정원 4명, 예약 2명이면 2자리다. API 응답의 `remaining`은 이 계산 결과이며 DB에 별도로 저장하는 필드는 아니다. `endAt` 필드도 현재 저장하지 않는다.
 
-**중복 방지:** `(doctorId, startAt)`가 같으면 같은 의료진의 같은 시간표를 두 번 만들 수 없다. DB 자체 검사로 `0 ≤ reservedCount ≤ capacity`를 유지한다. 날짜 조회 시 필요한 시연용 일정을 생성하고, 이미 있는 일정의 정원·휴진 설정은 덮어쓰지 않는다.
+**중복 방지:** `(doctorId, startAt)`가 같으면 같은 의료진의 같은 시간표를 두 번 만들 수 없다. DB 자체 검사로 `0 ≤ reservedCount ≤ capacity`를 유지한다. 조회만으로 일정을 만들지 않는다. 같은 시간을 다시 생성해도 기존 정원·휴진 설정을 덮어쓰지 않으며, 수정 API로 정원·휴진을 변경한다. 예약 수보다 정원을 줄이거나 예약이 있는 시간을 휴진 처리하는 요청, 지난 일정 수정은 거절한다.
 
 <a id="reservations"></a>
 
-### `reservations` — 회원이 완료한 모의 예약
+### `reservations` — 개인 회원의 예약
 
 “어떤 회원이 어느 병원·의료진의 어떤 시간을 예약했는지”를 저장한다. 의료진·병원 ID를 함께 저장하므로 예약 목록을 보여 줄 때 필요한 대상을 바로 알 수 있다.
 
@@ -276,7 +341,8 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `hospitalName` | string | 예약에 표시할 병원 이름 사본 | `예시병원` |
 | `departmentCode` | string | 예약한 진료과 코드 사본 | `05` |
 | `departmentName` | string | 예약한 진료과 이름 사본 | `정형외과` |
-| `doctorName` | string | 예약한 가상 의료진 이름 사본 | `김하늘` |
+| `doctorName` | string | 예약한 의료진 이름 사본 | `김하늘` |
+| `isVirtual` | bool, 선택 | 예전 시연 예약인지 | 신규 병원 등록 기반 예약은 `false`. 이전 자료에는 필드가 없을 수 있음 |
 | `snapshot` | object | 예약 생성·변경 당시 병원과 의료진 정보를 따로 담은 묶음 | 아래 표 참고 |
 | `createdAt` | date | 예약을 처음 만든 시각 | 예약 생성 시각 |
 | `updatedAt` | date | 예약을 생성·변경·취소한 최근 시각 | 마지막 처리 시각 |
@@ -288,13 +354,15 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `hospitalName` | string | 당시 병원 이름 |
 | `address` | string | 당시 병원 주소 |
 | `tel` | string | 당시 병원 전화번호 |
-| `doctorName` | string | 당시 가상 의료진 이름 |
-| `isVirtual` | bool | 모의 예약 여부. 현재 `true` |
+| `doctorName` | string | 당시 의료진 이름 |
+| `isVirtual` | bool | 신규 병원 등록 기반 예약은 `false`. 예전 시연 예약은 `true` |
 | `source` | string | 병원 정보의 출처 표시 |
 
 **중복 방지:** `status=RESERVED`인 예약에만 `(userId, startAt)` 조합의 중복을 막는다. 한 회원이 같은 시각에 병원이 다른 예약을 두 개 유지할 수 없다. 취소한 예약은 이 제한에서 제외한다.
 
 **보관:** 취소했다고 예약 문서를 삭제하지 않는다. 회원 탈퇴 때도 활성 예약을 취소하고 예약 이력은 남긴다. 따라서 과거 `userId`가 가리키는 회원이 현재 `users`에는 없을 수 있다.
+
+**병원 권한:** 개인은 자기 예약을, 병원은 자기 `hospitalId`로 들어온 예약만 조회·변경·취소한다. 병원 화면에는 예약자의 이름·전화번호만 추가하고 이메일·비밀번호 해시·회원번호는 반환하지 않는다. 병원이 다른 병원 일정으로 예약을 옮길 수 없으며, 변경·취소 시 자리 수·요청 결과·이력을 함께 처리한다. 병원 계정은 개인용 진료 예약을 생성하지 못한다.
 
 <a id="hospital-support"></a>
 
@@ -466,7 +534,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | 필드 | 타입 | 쉬운 설명 | 예시 |
 | --- | --- | --- | --- |
 | `_id` | string | 요청 처리 기록의 고유번호(PK) | 새 UUID |
-| `userId` | string | 요청한 회원(REF) | `users._id` |
+| `userId` | string | 요청한 개인 또는 병원 계정(REF) | `users._id`. 병원이 변경한 예약에서는 예약한 환자가 아닌 처리한 병원 계정 |
 | `key` | string | 프런트엔드가 요청에 붙인 재시도 구분값 | 요청 헤더 `Idempotency-Key`의 값 |
 | `requestHash` | string | 요청 내용이 같은지 비교하는 해시값 | 요청 종류·예약/시간표 번호로 계산 |
 | `responseSnapshot` | object | 처음 성공했을 때 돌려준 예약 결과 사본 | 예약 ID·상태·병원·진료 시각 등 |
@@ -486,8 +554,8 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | --- | --- | --- | --- |
 | `_id` | string | 변경 이력 한 건의 고유번호(PK) | 새 UUID |
 | `reservationId` | string | 어느 예약의 이력인지(REF) | `reservations._id` |
-| `actorId` | string | 누가 처리했는지(REF) | 본인 또는 관리자의 `users._id` |
-| `action` | string | 수행한 작업 | `CREATE` 생성 / `CHANGE` 변경 / `CANCEL` 취소 |
+| `actorId` | string | 누가 처리했는지(REF) | 개인·병원 계정 또는 관리자의 `users._id` |
+| `action` | string | 수행한 작업 | `CREATE` 생성 / `CHANGE` 변경 / `CANCEL` 취소 / `HOSPITAL_CHANGE` 병원 변경 / `HOSPITAL_CANCEL` 병원 취소 |
 | `before` | object 또는 null | 작업 전 예약 응답의 사본 | 처음 생성할 때는 `null` |
 | `after` | object | 작업 후 예약 응답의 사본 | 변경된 시각·상태 등 |
 | `createdAt` | date | 작업한 시각 | 이력 발생 시각 |
@@ -600,6 +668,8 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | 예약 변경 | 새 시간 자리 확보 → 기존 시간 자리 반환 → 예약 갱신 → 요청 결과·변경 이력 저장 |
 | 예약 취소 | 예약을 `CANCELED`로 변경 → 자리 반환 → 요청 결과·취소 이력 저장 |
 | 회원 삭제 | 활성 예약 취소·자리 반환 → 회원과 관련 임시 기록 삭제 → 과거 예약·이력 보존 |
+| 병원 가입 | `users` 병원 계정 + `hospitalRegistrations` 생성 → `hospitalSignupVerifications` 소모 |
+| 의료진 등록·수정 | `doctors` 저장 → 활성 의료진 기준으로 등록 병원의 진료과 목록 갱신 |
 
 이 작업들은 **트랜잭션**으로 묶는다. 중간에 실패하면 앞에서 바꾼 내용도 되돌려, 예약은 없는데 자리만 줄어드는 상태를 막는다. MongoDB Atlas 또는 트랜잭션을 지원하는 replica set 구성이 필요한 이유다.
 
@@ -610,6 +680,8 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 3. **기존 소셜 로그인:** 같은 `socialIdentity`의 가입 완료 회원을 찾아 일회용 티켓을 통해 로그인. 소셜 계정의 이름·이메일을 새로 회원정보로 덮어쓰지 않는다.
 4. **로그아웃·비밀번호 변경:** 회원 `tokenVersion`을 올려 이전 버전 로그인 토큰을 무효화한다. 다른 브라우저에서 같은 회원으로 로그인한 토큰도 이전 버전이면 함께 무효화된다. 비밀번호 변경은 일반 가입 계정만 가능하다.
 5. **탈퇴·관리자 회원 삭제:** `users`를 삭제하고 활성 예약을 취소한다. 회원의 `requests`, `social_login_tickets`, `social_withdrawal_proofs`도 삭제한다. 예약 문서와 예약 변경 이력은 보관하므로 과거 예약의 `userId`·이벤트의 `actorId`에 대응하는 현재 회원이 없을 수 있다.
+6. **병원 가입:** 사업자번호 조회 → 사업장명·주소와 DB 병원 대조 → 15분 확인값 발급 → 사업자번호·비밀번호로 가입. 병원명·주소·우편번호·전화번호는 서버에서 확정하고 이메일·소셜 가입은 사용하지 않는다.
+7. **병원 로그인·관리:** 사업자번호·비밀번호와 활성 등록을 확인한다. 모든 관리 요청에서 로그인 계정과 등록 병원의 연결을 다시 확인한다. 개인정보용 가입·탈퇴 기능은 기존 `USER` 기준으로 유지한다.
 
 TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이다. 정확히 만료 시각에 물리적으로 삭제된다는 뜻은 아니다. 인증 코드는 `expiresAt`도 직접 비교하므로, 정리가 조금 늦어져도 만료된 인증을 사용할 수 없다. `users` 자체에는 TTL이 없다.
 
@@ -627,8 +699,9 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 | 예약과 중복 요청 기록 | 같은 요청이 재전송되어도 자리를 두 번 차지하지 않게 한다. |
 | 임시 인증 정보와 회원 정보 | 60초·5분·30분처럼 수명이 다른 자료를 각각 정리한다. |
 | 병원 자료와 수집 기록 | 병원 내용이 그대로면 문서를 다시 쓰지 않고도 오늘 전체 작업의 성공 여부를 확인한다. |
+| 전체 병원 기본 자료와 등록 명단 | 전국 자료를 보존한 채 실제로 서비스에 가입한 병원만 공개하고, 병원 소속·운영 진료과를 공공 원본과 구분한다. |
 
-따라서 16개 모두가 사용자가 입력하는 화면 하나씩을 뜻하지 않는다. 대부분의 사용자 기능은 핵심 5개를 중심으로 동작하고 보조 컬렉션이 인증·재시도·API 재사용을 지원한다.
+따라서 18개 모두가 사용자가 입력하는 화면 하나씩을 뜻하지 않는다. 핵심 5개와 병원 등록 명단을 중심으로 동작하고 보조 컬렉션이 인증·재시도·API 재사용을 지원한다.
 
 ### 수집과 보관 원칙
 
@@ -637,6 +710,7 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 - 웹 추천 근거 캐시는 24시간이며 개인 상담 내용 저장소가 아니다.
 - 증상 원문과 상담 대화 이력은 기본 저장하지 않는다. 위치를 입력해 계산에 사용하더라도 정밀 위치를 DB에 보관하지 않는다.
 - 회원 비밀번호 원문과 구글·카카오의 액세스/리프레시 토큰을 회원 문서에 저장하지 않는다.
+- 병원 가입용 근로복지공단 API 키는 서버 환경변수 `COMWEL_API_KEY`로 보관하며 DB 병원 문서나 브라우저에 넣지 않는다.
 - 회원 탈퇴 시 활성 예약 취소와 자리 반환을 함께 처리하고, 과거 예약·이력은 기존 보관 정책에 따라 유지한다.
 
 수집 실행·재실행·복구 명령은 [병원 목록 운영 안내](hospital-catalog.md), 추천 기준과 제한은 [추천 흐름 문서](recommendations.md)를 참고한다.
@@ -644,7 +718,7 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 <details>
 <summary>기존 데이터 보정·동시 처리 등 구현 세부사항</summary>
 
-신규 일반·소셜 가입에는 이메일과 전화번호를 모두 요구한다. 이전 회원의 누락된 값은 임의로 만들지 않는다. 존재하는 유효한 연락처에만 `memberIdentityClaimed`를 적용하며 이메일만 있는 기존 관리자도 이메일 중복 검사 대상이다.
+신규 개인 일반·소셜 가입에는 이메일과 전화번호를 모두 요구한다. 병원 가입에는 이메일을 요구하지 않고 병원 전화번호도 DB에 없으면 빈칸으로 둔다. 이전 회원의 누락된 값은 임의로 만들지 않는다. 존재하는 유효한 개인 연락처에만 `memberIdentityClaimed`를 적용하며 이메일만 있는 기존 관리자도 이메일 중복 검사 대상이다.
 
 전화번호·이메일의 두 유일 인덱스를 준비한 후 구형 이름+전화번호 조합 인덱스 `user_name_phone_v1`을 제거한다. 이름은 가입 차단 여부가 아니라 가입 방식 안내 조건에 사용한다. 이름+전화번호 일치를 먼저 확인하고, 없으면 이름+이메일 일치를 확인한다.
 
@@ -667,6 +741,7 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 | 확인할 내용 | 코드 |
 | --- | --- |
 | 회원가입·로그인·프로필 완료·비밀번호 변경 | [AuthService.java](../backend/src/main/java/kr/dmu/hospital/auth/AuthService.java) |
+| 병원 가입·로그인·사업자번호 대조 | [HospitalAccountService.java](../backend/src/main/java/kr/dmu/hospital/auth/HospitalAccountService.java), [ComwelClient.java](../backend/src/main/java/kr/dmu/hospital/auth/ComwelClient.java), [HospitalBusinessMatch.java](../backend/src/main/java/kr/dmu/hospital/auth/HospitalBusinessMatch.java) |
 | 회원 중복 방지 인덱스와 인증 TTL | [UserIndexes.java](../backend/src/main/java/kr/dmu/hospital/auth/UserIndexes.java) |
 | 입력 정보 정규화와 중복 안내 | [MemberIdentity.java](../backend/src/main/java/kr/dmu/hospital/auth/MemberIdentity.java), [MemberIdentityConflict.java](../backend/src/main/java/kr/dmu/hospital/auth/MemberIdentityConflict.java) |
 | 소셜 가입 대기와 로그인 티켓 | [SocialSignups.java](../backend/src/main/java/kr/dmu/hospital/auth/SocialSignups.java), [SocialLoginTickets.java](../backend/src/main/java/kr/dmu/hospital/auth/SocialLoginTickets.java) |
@@ -675,8 +750,8 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 | 병원 기본 검색과 상세 캐시 병합 | [HospitalCatalog.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalCatalog.java), [HospitalService.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalService.java) |
 | 병원 기본·상세 인덱스 | [HospitalCatalogIndexes.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalCatalogIndexes.java), [HospitalIndexes.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalIndexes.java) |
 | 웹 추천 근거와 상담 사용량 | [HospitalExpertiseSearchService.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalExpertiseSearchService.java), [ChatUsageLimiter.java](../backend/src/main/java/kr/dmu/hospital/integration/ChatUsageLimiter.java) |
-| 가상 의료진·시간표·예약·이력 | [BookingService.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingService.java), [BookingIndexes.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingIndexes.java) |
+| 병원 의료진·일정 관리, 개인·병원 예약 권한·이력 | [BookingService.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingService.java), [HospitalManagementController.java](../backend/src/main/java/kr/dmu/hospital/booking/HospitalManagementController.java), [BookingIndexes.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingIndexes.java) |
 | 기본 정보 일일 수집·변경 비교·잠금 | [sync-hospital-catalog.mjs](../scripts/sync-hospital-catalog.mjs) |
 | 진료과 코드표 | [Departments.java](../backend/src/main/java/kr/dmu/hospital/integration/Departments.java) |
 
-확인 기준: 2026-11-22 현재 코드와 Atlas의 컬렉션·인덱스 메타데이터. 필드와 처리 방식을 바꿀 때 이 문서와 [API 계약](api-contract.md), [아키텍처](architecture.md)도 함께 갱신한다.
+확인 기준: 기존 2026-11-22 구조에 2026-11-25 병원 가입·관리 코드를 반영했다. 필드와 처리 방식을 바꿀 때 이 문서와 [API 계약](api-contract.md), [아키텍처](architecture.md)도 함께 갱신한다.

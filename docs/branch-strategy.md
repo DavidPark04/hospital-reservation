@@ -45,7 +45,7 @@ flowchart LR
 
 1. `main`에 병합된 커밋의 SHA를 확인합니다. `main` push의 `Application checks` 또는 `Repository checks`가 끝나면 `Vercel production`이 시작됩니다. 같은 SHA에서 두 검사의 최신 실행이 모두 성공해야 다음 단계로 진행합니다. 다른 검사가 진행 중이면 변경 없이 종료하고, 그 검사가 완료될 때 다시 확인합니다. 이미 같은 SHA를 성공적으로 배포했다면 자동 중복 배포는 건너뜁니다.
 2. 워크플로는 최신 `main`을 다시 확인하고 `develop`을 해당 SHA로 fast-forward합니다. 두 이력이 갈라져 있으면 실행이 중단되므로 각 브랜치에만 있는 커밋부터 확인합니다.
-3. 같은 워크플로가 이 SHA를 Vercel에 배포합니다. 성공하면 `main`과 `develop` 끝의 SHA 및 운영 배포의 소스 SHA가 모두 같습니다. [Actions 배포 이력](https://github.com/DavidPark04/hospital-reservation/actions/workflows/vercel-production.yml)
+3. 같은 워크플로가 이 SHA를 Vercel에 배포합니다. 성공하면 `main`과 `develop` 끝의 SHA 및 운영 배포의 소스 SHA가 모두 같습니다. [Actions 배포 이력](https://github.com/medipick-dev/hospital-reservation/actions/workflows/vercel-production.yml)
 
 `GITHUB_TOKEN`으로 `develop`을 갱신하는 push는 새 push 워크플로를 실행하지 않습니다. 동기화와 배포를 한 워크플로에서 처리하는 이유입니다. [GitHub Actions의 토큰 동작](https://docs.github.com/en/actions/concepts/security/github_token)
 

@@ -1,6 +1,8 @@
 # 저장소 설정 현황
 
-아래 표는 2026-11-20 초기 설정 이력입니다. 팀원 승인 대기 없이 병합하도록 필수 승인 수를 0명으로 변경했습니다. 이후 공개 전환·자동 배포 상태는 마지막 절에 기록합니다.
+현재 저장소는 [medipick-dev/hospital-reservation](https://github.com/medipick-dev/hospital-reservation)입니다. 2026-11-25 확인 기준 공개 조직 저장소로 이전했으며, 아래 초기 설정·소유자 기록은 당시 이력입니다. 현재 이전 상태는 마지막 절에 기록합니다.
+
+아래 표는 2026-11-20 초기 설정 이력입니다. 팀원 승인 대기 없이 병합하도록 필수 승인 수를 0명으로 변경했습니다.
 
 | 항목 | 설정 |
 | --- | --- |
@@ -22,7 +24,7 @@
 
 초기 CI는 저장소 구조·문서 상대 링크·PR 제목·병합 경로를 확인했습니다. Java·React 앱 검사는 초기 설정 Issue #1·#2에서 계획했습니다. 처음 워크플로 파일만 등록한 실행은 검사 스크립트 미등록으로 실패했고, 전체 파일을 올린 뒤 두 브랜치에서 성공을 확인했습니다.
 
-설정 화면: [브랜치 보호](https://github.com/DavidPark04/hospital-reservation/settings/branches) · [공동 작업자](https://github.com/DavidPark04/hospital-reservation/settings/access) · [Actions](https://github.com/DavidPark04/hospital-reservation/actions)
+설정 화면: [브랜치 보호](https://github.com/medipick-dev/hospital-reservation/settings/branches) · [공동 작업자](https://github.com/medipick-dev/hospital-reservation/settings/access) · [Actions](https://github.com/medipick-dev/hospital-reservation/actions)
 
 기준: [GitHub 보호 브랜치 안내](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches). GitHub 요금제·설정이 달라지면 실제 적용 상태를 다시 확인합니다.
 
@@ -41,8 +43,14 @@ GitHub Actions의 배포 작업은 `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, 프로�
 
 ## 현재 브랜치 운영
 
-2026-11-21에 공동 작업자 계정으로 조회한 `main`·`develop`의 브랜치 보호 API는 HTTP 404를, 브랜치에 적용되는 규칙 조회는 빈 목록을 반환했습니다. 404 응답만으로 서버 측 보호 여부를 확정할 수 없습니다. [브랜치 설정](https://github.com/DavidPark04/hospital-reservation/settings/branches)
+2026-11-21에 공동 작업자 계정으로 조회한 `main`·`develop`의 브랜치 보호 API는 HTTP 404를, 브랜치에 적용되는 규칙 조회는 빈 목록을 반환했습니다. 404 응답만으로 서버 측 보호 여부를 확정할 수 없습니다. [현재 브랜치 설정](https://github.com/medipick-dev/hospital-reservation/settings/branches)
 
-기능·긴급 수정 모두 `main`으로 PR 한 개를 열고 스쿼시 병합합니다. `Vercel production`은 같은 `main` 커밋의 push에서 저장소 검사와 앱 검사가 모두 성공해야 `develop`을 fast-forward하고 그 커밋을 배포합니다. 이를 위해 Actions에 `develop` 참조를 갱신할 쓰기 권한이 필요합니다. 실행 결과와 배포 SHA는 Actions에서 확인합니다. [Vercel production 실행 기록](https://github.com/DavidPark04/hospital-reservation/actions/workflows/vercel-production.yml)
+기능·긴급 수정 모두 `main`으로 PR 한 개를 열고 스쿼시 병합합니다. `Vercel production`은 같은 `main` 커밋의 push에서 저장소 검사와 앱 검사가 모두 성공해야 `develop`을 fast-forward하고 그 커밋을 배포합니다. 이를 위해 Actions에 `develop` 참조를 갱신할 쓰기 권한이 필요합니다. 실행 결과와 배포 SHA는 Actions에서 확인합니다. [Vercel production 실행 기록](https://github.com/medipick-dev/hospital-reservation/actions/workflows/vercel-production.yml)
 
 기존 방식에서 전환할 때는 두 브랜치의 파일 트리가 같은지 확인한 뒤 시작점을 `main`의 같은 SHA로 한 번 맞춥니다. 이후 두 브랜치 이력이 갈라지면 워크플로가 동기화와 배포를 중단합니다. [브랜치 운영 절차](branch-strategy.md)
+
+## 조직 저장소 이전
+
+2026-11-25 GitHub API에서 기존 저장소와 같은 ID `1465066975`의 소유자가 `medipick-dev` 조직으로 변경된 것을 확인했습니다. 현재 주소는 `medipick-dev/hospital-reservation`이며 공개 상태입니다. 이전 주소의 리디렉션과 별개로 Actions의 `github.repository`에는 새 소유자가 포함되므로 운영 배포·자정 수집의 저장소 조건과 배포 준비 스크립트를 새 주소에 맞춥니다.
+
+배포·일일 수집의 성공 여부는 이전 사실만으로 판단하지 않고 해당 워크플로 실행 결과로 확인합니다. Vercel 운영 주소와 MongoDB 데이터베이스 이름은 저장소 이전으로 바뀌지 않습니다.

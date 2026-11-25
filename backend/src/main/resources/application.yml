@@ -35,6 +35,8 @@ app:
   hira:
     hospital-key: ${HIRA_HOSPITAL_KEY:}
     detail-key: ${HIRA_DETAIL_KEY:}
+  comwel:
+    api-key: ${COMWEL_API_KEY:}
 logging:
   level:
     org.mongodb.driver: WARN

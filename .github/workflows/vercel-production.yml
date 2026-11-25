@@ -20,7 +20,7 @@ jobs:
   deploy:
     name: Deploy production
     if: >-
-      github.repository == 'DavidPark04/hospital-reservation' &&
+      github.repository == 'medipick-dev/hospital-reservation' &&
       ((github.event_name == 'workflow_run' &&
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&

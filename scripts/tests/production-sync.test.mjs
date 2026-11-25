@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { deploymentSha, latestCheck, prepareProduction, hasSuccessfulDeployment } from '../prepare-production.mjs';
 
 const sha = 'a'.repeat(40), previous = 'b'.repeat(40), newer = 'c'.repeat(40);
-const repository = 'DavidPark04/hospital-reservation';
+const repository = 'medipick-dev/hospital-reservation';
 const good = { id: 1, head_sha: sha, head_branch: 'main', event: 'push', head_repository: { full_name: repository }, status: 'completed', conclusion: 'success', run_started_at: '2026-11-21T00:00:00Z' };
 function fixture(options = {}) {
   let main = options.main ?? sha, develop = options.develop ?? previous, patches = [];
@@ -35,6 +35,7 @@ function fixture(options = {}) {
 test('rejects fork, PR, develop, unsuccessful and malformed events before API use', () => {
   const env = { GITHUB_REPOSITORY: repository };
   assert.equal(deploymentSha('workflow_run', { workflow_run: good }, env), sha);
+  assert.throws(() => deploymentSha('workflow_run', { workflow_run: good }, { GITHUB_REPOSITORY: 'DavidPark04/hospital-reservation' }));
   for (const override of [{ event: 'pull_request' }, { head_branch: 'develop' }, { conclusion: 'failure' }, { head_repository: { full_name: 'other/repo' } }, { head_sha: '../main' }]) {
     assert.throws(() => deploymentSha('workflow_run', { workflow_run: { ...good, ...override } }, env));
   }

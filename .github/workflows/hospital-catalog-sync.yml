@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sync:
     name: Refresh hospital basics
-    if: github.repository == 'DavidPark04/hospital-reservation' && github.ref == 'refs/heads/main'
+    if: github.repository == 'medipick-dev/hospital-reservation' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
