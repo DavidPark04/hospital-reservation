@@ -8,6 +8,7 @@
 | 일반 가입 | POST `/api/auth/register` | 비회원 |
 | 아이디 로그인 | POST `/api/auth/login` | 비회원 |
 | 병원 사업자번호 조회 | POST `/api/auth/hospital/lookup` | 비회원 |
+| 가입할 병원 선택 | POST `/api/auth/hospital/lookup/select` | 후보를 조회한 비회원 |
 | 병원 가입·로그인 | POST `/api/auth/hospital/register`, `/api/auth/hospital/login` | 비회원 |
 | 내 정보·로그아웃 | GET `/api/auth/me`, POST `/api/auth/logout` | 회원 또는 유효한 가입 임시 토큰 |
 | 비밀번호 변경 | PATCH `/api/auth/password` | 가입 완료 LOCAL 회원·관리자, 현재 비밀번호 확인 |
@@ -38,13 +39,16 @@
 
 사업자번호 조회는 공단 사업장과 우편번호가 같은 활성 병원에서 지점명을 포함한 병원명, 시군구, 도로명, 건물번호를 대조합니다. 학교법인·의료법인 등 법인 유형과 식별 가능한 운영 주체의 표기 차이를 허용합니다. 명시된 법인이 다르면 일치 대상에서 제외합니다.
 
-층과 호수는 각각 두 자료에 모두 적힌 경우 일치해야 합니다. 한쪽에서 생략한 상세주소는 같은 사업장의 다른 공단 기록에 명시된 층·호와 충돌하지 않아야 합니다. 일치하는 병원이 두 곳 이상이면 조회 결과를 하나로 확정할 수 없어 409를 반환합니다.
+층과 호수는 각각 두 자료에 모두 적힌 경우 일치해야 합니다. 한쪽에서 생략한 상세주소는 같은 사업장의 다른 공단 기록에 명시된 층·호와 충돌하지 않아야 합니다.
 
-가입 화면은 DB 병원 기본정보로 병원명, 주소, 우편번호, 전화번호를 자동 입력합니다. `hospital.name`은 식별된 운영 법인 표기를 제외하고 병원명의 띄어쓰기와 분원 표기를 유지합니다. `hospital.address`는 DB에 기록된 층·호를 포함한 전체 주소입니다.
+병원명과 주소로 한 곳이 일치하면 바로 확인합니다. 여러 병원이 일치하면 가입 가능한 후보를 모두 반환합니다. 병원명이 직접 일치하는 곳이 없고 공단이 대학 의료원이나 운영 법인 명의로 응답하면, 같은 주소에서 같은 운영 주체를 확인할 수 있는 병원을 선택 후보로 반환합니다. 후보가 없으면 404, 이미 가입한 사업자번호이거나 모든 후보가 가입을 마쳤으면 409입니다.
+
+가입 화면에서 후보를 누르면 병원명과 주소를 보여 주고 선택 여부를 묻습니다. 취소하면 목록으로 돌아갑니다. 선택을 확정하면 DB 병원 기본정보의 병원명, 주소, 우편번호, 전화번호를 읽기 전용으로 채웁니다. `hospital.name`은 식별된 운영 법인 표기를 제외하고 병원명의 띄어쓰기와 분원 표기를 유지합니다. `hospital.address`는 DB에 기록된 층·호를 포함한 전체 주소입니다.
 
 | 동작 | 요청 | 응답·규칙 |
 | --- | --- | --- |
-| 사업자번호 조회 | `{businessNumber}` | `{businessNumber,hospital:{id,name,address,postalCode,tel},verificationToken}`. 공공 API 이름·주소와 DB 병원이 하나로 일치해야 성공 |
+| 사업자번호 조회 | `{businessNumber}` | 단일 직접 일치는 `{businessNumber,hospital,verificationToken}`. 선택이 필요하면 `{businessNumber,candidates,selectionToken}`. 각 병원에 `id,name,address,postalCode,tel` 포함 |
+| 가입할 병원 선택 | `{businessNumber,selectionToken,hospitalId}` | 제시한 후보인지와 현재 DB 기본정보를 확인한 뒤 `{businessNumber,hospital,verificationToken}` 반환. 선택 토큰은 일회용이며 가입 확인의 만료 시각은 최초 조회로부터 15분 |
 | 병원 가입 | `{businessNumber,password,verificationToken}` | `{token,user}`. 조회 확인은 15분간 유효하고 한 번 사용. 서버가 DB 기본정보를 다시 확인 |
 | 병원 로그인 | `{businessNumber,password}` | `{token,user}`. 사업자번호는 하이픈 제거 후 10자리. User에 `role:HOSPITAL,hospitalId,businessNumber` 포함 |
 | 의료진 등록 | `{name,departmentCode,specialty?}` | Doctor 응답. 신규 `active:true,isVirtual:false` |

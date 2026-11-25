@@ -6,6 +6,16 @@
 .business-lookup-row{display:flex;gap:8px;align-items:center}.business-lookup-row input{min-width:0;flex:1}.business-lookup-row button{flex:none;white-space:nowrap;padding-inline:15px}
 .verified-hospital{display:grid;gap:14px;padding:18px;background:#f7faff;border:1px solid #dce7f3;border-radius:14px}
 .verified-title{display:flex;align-items:center;gap:8px;margin:0;color:#365d8b;font-weight:700;font-size:14px}
+.hospital-candidates{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.hospital-candidates button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:12px 14px;text-align:left;background:#fff;border:1px solid #cedcec;border-radius:10px;color:#28598c}
+.hospital-candidates button:enabled:hover,.hospital-candidates button:focus-visible{border-color:#4778a9;background:#f4f8fc}
+.hospital-candidates button>svg{flex:none}
+.hospital-candidate-info{display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
+.hospital-candidate-info strong{color:#23384e;font-size:14px}.hospital-candidate-info>span{color:#526579;font-size:13px;line-height:1.45}
+.hospital-choice-confirm{position:fixed;inset:0;margin:auto;width:min(390px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;border:1px solid #d7e1eb;border-radius:16px;background:#fff;color:#23384e;box-shadow:0 18px 64px #20324738}
+.hospital-choice-confirm::backdrop{background:#24344975}
+.hospital-choice-confirm h3{font-size:18px;line-height:1.4;margin:0 0 16px}
+.hospital-choice-confirm .hospital-candidate-info{gap:5px}.hospital-choice-confirm .notice{margin-top:12px}
 .verified-hospital .field{margin:0}.verified-hospital .field input,.verified-hospital .field textarea{background:#edf2f7;color:#526175;border-color:#e1e8ef;cursor:default}
 .verified-hospital textarea{resize:none;width:100%;padding:12px;font:inherit;border:1px solid #e1e8ef;border-radius:10px;line-height:1.5}
 .hospital-management{max-width:1160px}.hospital-summary{display:flex;align-items:center;gap:20px;padding:26px 30px;margin-bottom:25px}.hospital-summary-icon{display:grid;place-items:center;width:66px;height:66px;flex:none;background:#eef4fc;color:#5480b3;border-radius:20px}.hospital-summary h2{font-size:23px;margin:0 0 8px}.hospital-summary p{display:flex;gap:6px;align-items:flex-start;font-size:14px;color:#66768a;margin:0 0 7px;line-height:1.6}.hospital-summary p svg{flex:none;margin-top:4px}.hospital-summary small{font-size:12px;color:#8391a2}.hospital-registered{display:flex;align-items:center;gap:6px;white-space:nowrap;margin-left:auto;font-size:13px;color:#406b9c;background:#f0f6fe;padding:9px 13px;border-radius:20px}

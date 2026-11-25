@@ -28,7 +28,9 @@ final class HospitalBusinessMatch {
         boolean partial = false;
         boolean conflict = false;
         for (var business : businesses) {
-            Evidence evidence = compare(business, hospital, number);
+            if (!number.equals(business.get("saeopjaDrno"))
+                    || !HospitalName.matches(business.get("saeopjangNm"), hospital.getString("name"))) continue;
+            Evidence evidence = compareLocation(business, hospital);
             if (evidence == Evidence.EXACT) return true;
             if (evidence == Evidence.PARTIAL) partial = true;
             if (evidence == Evidence.CONFLICT) conflict = true;
@@ -37,9 +39,24 @@ final class HospitalBusinessMatch {
         return partial && !conflict;
     }
 
-    private static Evidence compare(Map<String, String> business, Document hospital, String number) {
-        if (!number.equals(business.get("saeopjaDrno"))
-                || !HospitalName.matches(business.get("saeopjangNm"), hospital.getString("name"))) return Evidence.UNRELATED;
+    static boolean isChoiceCandidate(List<Map<String, String>> businesses, Document hospital, String number) {
+        if (!Boolean.TRUE.equals(hospital.getBoolean("active"))) return false;
+        boolean candidate = false;
+        String clinic = hospital.getString("name");
+        for (var business : businesses) {
+            if (!number.equals(business.get("saeopjaDrno"))) continue;
+            String name = business.get("saeopjangNm");
+            boolean direct = HospitalName.matches(name, clinic);
+            if (!direct && !HospitalName.identifiesOperator(name, clinic)) continue;
+            Evidence evidence = compareLocation(business, hospital);
+            if (evidence == Evidence.UNRELATED) continue;
+            if (direct || evidence == Evidence.CONFLICT) return false;
+            candidate = true;
+        }
+        return candidate;
+    }
+
+    private static Evidence compareLocation(Map<String, String> business, Document hospital) {
         Document api = hospital.get("apiFields", Document.class);
         String post = business.getOrDefault("post", "").trim();
         if (api == null || post.isBlank() || !post.equals(api.getString("postNo"))) return Evidence.UNRELATED;
