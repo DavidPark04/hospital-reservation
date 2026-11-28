@@ -664,9 +664,7 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
   const idField=<label className="field">아이디
     <input name="loginId" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId}
       onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30}
-      pattern={'[A-Za-z0-9_\\-]{4,30}'} title={registering?'영문·숫자·_·- 사용 가능, 4~30자':undefined}
-      disabled={busy} placeholder="아이디 입력" aria-describedby={registering?'login-id-help':undefined}/>
-    {registering&&<small id="login-id-help" className="muted">영문·숫자·_·- 사용 가능, 4~30자</small>}
+      pattern={'[A-Za-z0-9_\\-]{4,30}'} disabled={busy} placeholder="아이디 입력"/>
   </label>;
   const formTitle=recovery?'비밀번호 찾기':registering?'회원가입':'로그인';
   const formClass=recovery?'recovery':registering?'register':'login';
