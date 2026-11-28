@@ -62,7 +62,7 @@ public class AuthService {
         if (normalizedName.isBlank()) throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
         if (mongo.exists(Query.query(Criteria.where("loginId").is(loginId)), "users")) throw loginIdConflict();
         String normalizedEmail = MemberIdentity.normalizedEmail(email);
-        requireAvailableContacts(normalizedName, phone, normalizedEmail);
+        requireAvailableContacts(phone, normalizedEmail);
         Document user = new Document("_id", UUID.randomUUID().toString()).append("name", name).append("loginId", loginId)
             .append("passwordHash", passwords.encode(password)).append("phone", phone).append("nameNormalized", normalizedName).append("memberIdentityClaimed", true)
             .append("email", email).append("emailNormalized", normalizedEmail).append("emailSource", "USER").append("emailVerified", true).append("phoneVerified", true)
@@ -76,7 +76,7 @@ public class AuthService {
         }
         catch (DuplicateKeyException error) {
             if (mongo.exists(Query.query(Criteria.where("loginId").is(loginId)), "users")) throw loginIdConflict();
-            requireAvailableContacts(normalizedName, phone, normalizedEmail);
+            requireAvailableContacts(phone, normalizedEmail);
             throw new ApiException(409, "이미 등록된 회원 정보입니다. 다시 확인해 주세요.");
         }
         return issue(user);
@@ -210,7 +210,7 @@ public class AuthService {
         String normalizedName = MemberIdentity.normalizedName(name);
         if (normalizedName.isBlank()) throw new ApiException(400, "이름은 1~40자로 입력해 주세요.");
         String normalizedEmail = MemberIdentity.normalizedEmail(email);
-        requireAvailableContacts(normalizedName, phone, normalizedEmail);
+        requireAvailableContacts(phone, normalizedEmail);
         for (int attempt = 0; attempt < 8; attempt++) {
             try {
                 Document member = transaction.execute(status -> {
@@ -219,7 +219,7 @@ public class AuthService {
                     Document signup = mongo.findOne(pending, Document.class, SocialSignups.COLLECTION);
                     if (!SocialSignups.live(signup)) throw signupExpired();
                     if (mongo.exists(Query.query(Criteria.where("socialIdentity").is(signup.getString("socialIdentity"))), "users")) throw signupExpired();
-                    requireAvailableContacts(normalizedName, phone, normalizedEmail);
+                    requireAvailableContacts(phone, normalizedEmail);
                     verification.consume(proof(body, "emailVerificationToken"), "SIGNUP", "EMAIL", normalizedEmail,
                             current.getId(), current.getTokenVersion());
                     verification.consume(proof(body, "phoneVerificationToken"), "SIGNUP", "PHONE", phone,
@@ -238,7 +238,7 @@ public class AuthService {
                 });
                 return issue(member);
             } catch (DuplicateKeyException error) {
-                requireAvailableContacts(normalizedName, phone, normalizedEmail);
+                requireAvailableContacts(phone, normalizedEmail);
                 if (attempt == 7) throw signupExpired();
             } catch (RuntimeException error) {
                 if (error instanceof ApiException || !retryable(error) || attempt == 7) throw error;
@@ -320,18 +320,11 @@ public class AuthService {
         }
         return false;
     }
-    private void requireAvailableContacts(String normalizedName, String phone, String normalizedEmail) {
-        Document phoneMember = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("phone").is(phone)), Document.class, "users");
-        if (hasMatchingName(phoneMember, normalizedName)) throw new MemberIdentityConflict(phoneMember.getString("authProvider"));
-        Document emailMember = mongo.findOne(Query.query(Criteria.where("memberIdentityClaimed").is(true).and("emailNormalized").is(normalizedEmail)), Document.class, "users");
-        if (hasMatchingName(emailMember, normalizedName)) throw new MemberIdentityConflict(emailMember.getString("authProvider"));
-        if (phoneMember != null || emailMember != null) {
-            throw new ApiException(409, "이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.");
+    private void requireAvailableContacts(String phone, String normalizedEmail) {
+        Criteria contact = new Criteria().orOperator(Criteria.where("phone").is(phone), Criteria.where("emailNormalized").is(normalizedEmail));
+        if (mongo.exists(Query.query(new Criteria().andOperator(Criteria.where("memberIdentityClaimed").is(true), contact)), "users")) {
+            throw new MemberIdentityConflict();
         }
-    }
-    private static boolean hasMatchingName(Document member, String normalizedName) {
-        return member != null && member.get("name") instanceof String name
-                && normalizedName.equals(MemberIdentity.normalizedName(name));
     }
     private <T> T inTransaction(Supplier<T> work) {
         for (int attempt = 0; ; attempt++) {

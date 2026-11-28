@@ -266,27 +266,24 @@ class SocialLoginSecurityTest {
         mvc.perform(post("/api/auth/social/profile").contentType("application/json").content("{}"))
             .andExpect(status().isUnauthorized());
     }
-    @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
-    void identityConflictReturnsExactProviderAdviceForEverySignupEndpoint(String existingProvider) throws Exception {
-        String message = existingProvider.equals("KAKAO") ? "이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."
-            : existingProvider.equals("GOOGLE") ? "이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요."
-            : "이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.";
-        when(auth.register(anyMap())).thenThrow(new MemberIdentityConflict(existingProvider));
+    @Test void identityConflictNeverReturnsProviderAdviceFromSignupEndpoints() throws Exception {
+        String message = "이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.";
+        when(auth.register(anyMap())).thenThrow(new MemberIdentityConflict());
         mvc.perform(post("/api/auth/register").contentType("application/json").content("{}"))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
-            .andExpect(jsonPath("$.existingAuthProvider").value(existingProvider))
+            .andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
             .andExpect(jsonPath("$.message").value(message))
-            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(3)));
+            .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(2)));
         for (String incomingProvider : List.of("GOOGLE", "KAKAO")) {
             UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending").append("name", "")
                 .append("role", "USER").append("authProvider", incomingProvider).append("profileComplete", false));
             when(auth.authenticate("pending-token")).thenReturn(pending);
-            doThrow(new MemberIdentityConflict(existingProvider)).when(auth).completeSocialProfile(anyMap());
+            doThrow(new MemberIdentityConflict()).when(auth).completeSocialProfile(anyMap());
             mvc.perform(post("/api/auth/social/profile").header("Authorization", "Bearer pending-token").contentType("application/json").content("{}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"))
-                .andExpect(jsonPath("$.existingAuthProvider").value(existingProvider))
+                .andExpect(jsonPath("$.existingAuthProvider").doesNotExist())
                 .andExpect(jsonPath("$.message").value(message))
-                .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(3)));
+                .andExpect(jsonPath("$.*", org.hamcrest.Matchers.hasSize(2)));
         }
     }
 

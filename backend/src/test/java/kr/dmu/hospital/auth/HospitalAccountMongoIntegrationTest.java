@@ -16,6 +16,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import kr.dmu.hospital.common.ApiException;
+import kr.dmu.hospital.booking.BookingIndexes;
+import kr.dmu.hospital.booking.BookingService;
+import kr.dmu.hospital.member.MemberService;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -104,6 +107,39 @@ class HospitalAccountMongoIntegrationTest {
         assertEquals(409, assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER))).getStatus());
         assertEquals(1, mongo.getCollection("users").countDocuments());
         assertEquals(1, mongo.getCollection(HospitalAccountService.REGISTRATIONS).countDocuments());
+    }
+
+    @Test void administratorDeletionRequiresFreshLookupForRejoiningAndNeverRevivesOldSessionsOrSchedules() {
+        new BookingIndexes(mongo).run(new DefaultApplicationArguments(new String[0]));
+        var transactionManager = new MongoTransactionManager(mongo.getMongoDatabaseFactory());
+        var booking = new BookingService(mongo, transactionManager);
+        var members = new MemberService(mongo, booking, transactionManager, new BCryptPasswordEncoder());
+        var firstLookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        var unusedLookup = accounts.lookup(Map.of("businessNumber", NUMBER));
+        var initialSession = accounts.register(registration(firstLookup));
+        String oldToken = (String) initialSession.get("token");
+        UserPrincipal oldAccount = auth.authenticate(oldToken);
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(oldAccount, null, List.of()));
+        String doctorId = booking.createDoctor("기존 의료진", "01", "내과").getString("id");
+        String date = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(3).toString();
+        var slots = booking.createManagedSlots(doctorId, date, "09:00", "10:00", 30, 4);
+        Document catalog = mongo.findById("test-hospital", Document.class, "hospitals");
+        mongo.insert(new Document("_id", "admin").append("loginId", "admin").append("role", "ADMIN"), "users");
+        members.delete("admin", oldAccount.getId());
+        assertThrows(JwtException.class, () -> auth.authenticate(oldToken));
+        assertEquals(401, assertThrows(ApiException.class, () -> accounts.login(Map.of("businessNumber", NUMBER, "password", PASSWORD))).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> accounts.register(registration(unusedLookup))).getStatus());
+        var renewed = accounts.register(registration(accounts.lookup(Map.of("businessNumber", NUMBER))));
+        UserPrincipal newAccount = auth.authenticate((String) renewed.get("token"));
+        assertNotEquals(oldAccount.getId(), newAccount.getId());
+        assertEquals("test-hospital", newAccount.getHospitalId());
+        assertEquals(NUMBER, newAccount.getBusinessNumber());
+        assertEquals(catalog, mongo.findById("test-hospital", Document.class, "hospitals"));
+        assertThrows(JwtException.class, () -> auth.authenticate(oldToken));
+        assertFalse(mongo.findById(doctorId, Document.class, "doctors").getBoolean("active"));
+        for (Document slot : slots) assertTrue(mongo.findById(slot.getString("id"), Document.class, "timeSlots").getBoolean("closed"));
+        assertTrue(booking.doctors("test-hospital", "01").isEmpty());
+        assertEquals(409, assertThrows(ApiException.class, () -> accounts.lookup(Map.of("businessNumber", NUMBER))).getStatus());
     }
 
     @Test void expiredChangedAndForgedProofsCannotCreateAnAccount() {

@@ -1,8 +1,9 @@
 import {api} from './api';
+import type {AuthProvider} from './api';
 
 export type EmailPurpose = 'SIGNUP'|'EMAIL_CHANGE';
 export type PhonePurpose = 'SIGNUP'|'PASSWORD_CHANGE'|'WITHDRAWAL'|'PASSWORD_RESET';
-export type VerificationProof = {verificationToken:string;expiresIn:number;contact:string};
+export type VerificationProof = {verificationToken:string;expiresIn:number;contact:string;existingAuthProvider?:AuthProvider};
 export type VerificationConfig = {emailEnabled:boolean;phoneEnabled:boolean;firebase:{apiKey:string;authDomain:string;projectId:string}};
 
 export function validMobilePhone(value:string){return /^01[016789][0-9]{7,8}$/.test(value.replace(/\D/g,''));}

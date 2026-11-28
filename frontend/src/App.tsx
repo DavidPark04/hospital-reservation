@@ -15,6 +15,7 @@ import PhoneVerification from './PhoneVerification';
 import HospitalAuthForm, {formatBusinessNumber} from './HospitalAuthForm';
 import HospitalManagement from './HospitalManagement';
 import EmailVerification from './EmailVerification';
+import MemberConflictNotice from './MemberConflictNotice';
 import PasswordRecovery from './PasswordRecovery';
 import {validMobilePhone} from './contactVerification';
 import {CHAT_MESSAGE_LIMIT, chatConversationLimit, chatFollowUpOptions, chatLocation, chatLocationSelection, chatRecommendations, chatRequest, isEmergencyResult, safeRecommendationSources, straightLineDistance} from './chatPresentation';
@@ -462,11 +463,12 @@ function MembershipWithdrawal({user,returnCode,onReturnHandled,onSuccess}:{user:
 
 function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolean;login:()=>void;notify:(message:string)=>void}){
   const queryClient=useQueryClient();
+  const [memberType,setMemberType]=useState<'personal'|'hospital'>('personal');
   const [deleteTarget,setDeleteTarget]=useState<Member|null>(null);
   const members=useQuery({queryKey:['admin-members',user?.id],queryFn:()=>api<{items:Member[]}>('/admin/members'),enabled:ready&&user?.role==='ADMIN'});
   const remove=useMutation({
     mutationFn:(member:Member)=>{
-      if(user?.role!=='ADMIN'||member.id===user.id||member.role!=='USER')throw new Error('본인과 관리자 계정은 삭제할 수 없어요.');
+      if(user?.role!=='ADMIN'||member.id===user.id||!['USER','HOSPITAL'].includes(member.role))throw new Error('본인과 관리자 계정은 삭제할 수 없어요.');
       return api<DeleteMemberResult>(`/admin/members/${encodeURIComponent(member.id)}`,{method:'DELETE'});
     },
     onSuccess:result=>{
@@ -475,29 +477,53 @@ function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolea
       queryClient.invalidateQueries({queryKey:['reservations']});
       queryClient.invalidateQueries({queryKey:['slots']});
       queryClient.invalidateQueries({queryKey:['admin-slots']});
+      queryClient.invalidateQueries({queryKey:['hospitals']});
+      queryClient.invalidateQueries({queryKey:['hospital']});
+      queryClient.invalidateQueries({queryKey:['doctors']});
+      queryClient.invalidateQueries({queryKey:['hospital-manage']});
       setDeleteTarget(null);
       notify(result.canceledReservations>0?`회원을 삭제하고 진행 중인 예약 ${result.canceledReservations}건을 취소했어요.`:result.message);
     }
   });
+  const personalMembers=members.data?.items.filter(member=>member.role!=='HOSPITAL')||[];
+  const hospitalMembers=members.data?.items.filter(member=>member.role==='HOSPITAL')||[];
+  const hospitalTab=memberType==='hospital';
+  const visibleMembers=hospitalTab?hospitalMembers:personalMembers;
   if(!ready)return <div className="page-wrap"><Loading text="관리자 권한을 확인하고 있어요"/></div>;
-  if(!user)return <EmptyPage icon={<ShieldCheck/>} title="관리자 로그인이 필요해요" body="관리자 계정으로 회원목록을 확인하고 일반 회원을 삭제할 수 있어요." action="로그인하기" onAction={login}/>;
+  if(!user)return <EmptyPage icon={<ShieldCheck/>} title="관리자 로그인이 필요해요" body="관리자 계정으로 개인 회원과 병원 회원을 관리할 수 있어요." action="로그인하기" onAction={login}/>;
   if(user.role!=='ADMIN')return <EmptyPage icon={<ShieldCheck/>} title="관리자 전용 메뉴예요" body="내 회원 정보는 마이페이지에서 확인해 주세요." action="마이페이지로" onAction={()=>go('/mypage')}/>;
   return <div className="page-wrap members-page">
-    <div className="page-heading compact-heading"><div><span className="eyebrow">MEMBER MANAGEMENT</span><h1>회원목록</h1><p>가입한 회원을 확인하고 일반 회원 계정을 관리해요.</p></div><span className="admin-badge"><ShieldCheck size={17}/>관리자</span></div>
-    <section className="panel members-panel" aria-labelledby="member-list-title">
-      <div className="section-heading"><div><h2 id="member-list-title">전체 회원 {members.data&&<span className="member-count">{members.data.items.length}명</span>}</h2><p>본인과 관리자 계정은 삭제할 수 없어요.</p></div><button className="button secondary small" onClick={()=>members.refetch()} disabled={members.isFetching}><RefreshCw size={16} className={members.isFetching?'spin':''}/>새로고침</button></div>
-      {members.isLoading?<Loading text="회원목록을 불러오고 있어요"/>:members.isError?<ErrorState error={members.error} retry={()=>members.refetch()}/>:members.data?.items.length?<div className="member-table-wrap"><table className="member-table"><thead><tr><th scope="col">이름</th><th scope="col">아이디</th><th scope="col">로그인 방식</th><th scope="col">이메일</th><th scope="col">전화번호</th><th scope="col">회원 구분</th><th scope="col">가입일</th><th scope="col">관리</th></tr></thead><tbody>{members.data.items.map(member=><tr key={member.id}>
-        <td data-label="이름"><strong>{member.name}</strong>{member.id===user.id&&<span className="self-badge">본인</span>}</td>
-        <td data-label="아이디">{member.role==='HOSPITAL'?formatBusinessNumber(member.businessNumber||''):member.loginId}</td>
-        <td data-label="로그인 방식"><span className={`login-method ${(member.authProvider||'LOCAL').toLowerCase()}`}>{member.role==='HOSPITAL'?'사업자등록번호':loginMethod(member.authProvider)}</span></td>
-        <td data-label="이메일">{member.role==='HOSPITAL'?<span className="muted">해당 없음</span>:member.email||<span className="muted">등록하지 않음</span>}</td>
+    <div className="page-heading compact-heading"><div><span className="eyebrow">MEMBER MANAGEMENT</span><h1>회원목록</h1><p>개인 회원과 병원 회원을 구분해 계정을 관리해요.</p></div><span className="admin-badge"><ShieldCheck size={17}/>관리자</span></div>
+    <div className="tabs" role="tablist" aria-label="회원 유형" onKeyDown={event=>{
+      if(remove.isPending||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();
+      const next=event.key==='Home'?'personal':event.key==='End'?'hospital':hospitalTab?'personal':'hospital';
+      setMemberType(next);document.getElementById('member-tab-'+next)?.focus();
+    }}>
+      {(['personal','hospital'] as const).map(type=><button id={'member-tab-'+type} key={type} role="tab" type="button" className={memberType===type?'selected':''}
+        aria-selected={memberType===type} aria-controls="member-list-panel" tabIndex={memberType===type?0:-1} disabled={remove.isPending} onClick={()=>setMemberType(type)}>
+        {type==='personal'?'개인 회원':'병원 회원'}{members.data&&<span>{type==='personal'?personalMembers.length:hospitalMembers.length}</span>}
+      </button>)}
+    </div>
+    <section id="member-list-panel" className="panel members-panel" role="tabpanel" aria-labelledby={'member-tab-'+memberType} tabIndex={0}>
+      <div className="section-heading"><div><h2 id="member-list-title">{hospitalTab?'병원 회원':'개인 회원'} {members.data&&<span className="member-count">{visibleMembers.length}{hospitalTab?'곳':'명'}</span>}</h2><p>{hospitalTab?'사업자등록번호로 가입한 병원 계정을 관리해요.':'본인과 관리자 계정은 삭제할 수 없어요.'}</p></div><button className="button secondary small" onClick={()=>members.refetch()} disabled={members.isFetching}><RefreshCw size={16} className={members.isFetching?'spin':''}/>새로고침</button></div>
+      {members.isLoading?<Loading text="회원목록을 불러오고 있어요"/>:members.isError?<ErrorState error={members.error} retry={()=>members.refetch()}/>:visibleMembers.length?<div className="member-table-wrap"><table className="member-table"><thead><tr><th scope="col">{hospitalTab?'병원명':'이름'}</th><th scope="col">{hospitalTab?'사업자등록번호':'아이디'}</th>{!hospitalTab&&<><th scope="col">로그인 방식</th><th scope="col">이메일</th></>}<th scope="col">전화번호</th>{!hospitalTab&&<th scope="col">회원 구분</th>}<th scope="col">가입일</th><th scope="col">관리</th></tr></thead><tbody>{visibleMembers.map(member=><tr key={member.id}>
+        <td data-label={hospitalTab?'병원명':'이름'}><strong>{member.name}</strong>{member.id===user.id&&<span className="self-badge">본인</span>}</td>
+        <td data-label={hospitalTab?'사업자등록번호':'아이디'}>{hospitalTab?formatBusinessNumber(member.businessNumber||''):member.loginId}</td>
+        {!hospitalTab&&<><td data-label="로그인 방식"><span className={`login-method ${(member.authProvider||'LOCAL').toLowerCase()}`}>{loginMethod(member.authProvider)}</span></td>
+        <td data-label="이메일">{member.email||<span className="muted">등록하지 않음</span>}</td></>}
         <td data-label="전화번호">{member.phone?formatPhone(member.phone):<span className="muted">미등록</span>}</td>
-        <td data-label="회원 구분">{member.role==='ADMIN'?'관리자':member.role==='HOSPITAL'?'병원 회원':'일반 회원'}</td>
+        {!hospitalTab&&<td data-label="회원 구분">{member.role==='ADMIN'?'관리자':'일반 회원'}</td>}
         <td data-label="가입일">{member.createdAt?<time dateTime={member.createdAt}>{fetchedLabel(member.createdAt)}</time>:'확인 불가'}</td>
-        <td data-label="관리">{member.role==='USER'&&member.id!==user.id?<button className="button quiet small" aria-label={`${member.name} (${member.loginId}) 회원 삭제`} onClick={()=>{remove.reset();setDeleteTarget(member);}} disabled={remove.isPending}>회원 삭제</button>:<span className="protected-member"><ShieldCheck size={14}/>삭제 불가</span>}</td>
-      </tr>)}</tbody></table></div>:<div className="empty-inline"><UserRound size={35}/><h3>등록된 회원이 없어요</h3><p>새 회원이 가입하면 이곳에 표시돼요.</p></div>}
+        <td data-label="관리">{['USER','HOSPITAL'].includes(member.role)&&member.id!==user.id?<button className="button quiet small" aria-label={`${member.name} (${hospitalTab?formatBusinessNumber(member.businessNumber||''):member.loginId}) 회원 삭제`} onClick={()=>{remove.reset();setDeleteTarget(member);}} disabled={remove.isPending}>회원 삭제</button>:<span className="protected-member"><ShieldCheck size={14}/>삭제 불가</span>}</td>
+      </tr>)}</tbody></table></div>:<div className="empty-inline">{hospitalTab?<Building2 size={35}/>:<UserRound size={35}/>}<h3>{hospitalTab?'등록된 병원 회원이 없어요':'등록된 개인 회원이 없어요'}</h3><p>{hospitalTab?'병원이 가입하면 이곳에 표시돼요.':'새 회원이 가입하면 이곳에 표시돼요.'}</p></div>}
     </section>
-    {deleteTarget&&<Dialog title="회원 계정을 삭제할까요?" close={()=>{if(!remove.isPending)setDeleteTarget(null);}}><p className="dialog-copy"><strong>{deleteTarget.name}</strong> · 아이디 {deleteTarget.loginId}</p><Notice tone="warning">계정을 삭제하면 이 회원은 더 이상 로그인할 수 없어요. 진행 중인 예약은 모두 취소되고, 해당 시간대의 예약 가능 인원이 복구돼요. 삭제한 계정은 되돌릴 수 없어요.</Notice>{remove.isError&&<Notice tone="error">{remove.error.message}</Notice>}<div className="dialog-actions"><button className="button secondary" onClick={()=>setDeleteTarget(null)} disabled={remove.isPending}>취소</button><button className="button danger" onClick={()=>remove.mutate(deleteTarget)} disabled={remove.isPending}>{remove.isPending?<><LoaderCircle size={17} className="spin"/>삭제 중</>:'회원 삭제'}</button></div></Dialog>}
+    {deleteTarget&&<Dialog title={deleteTarget.role==='HOSPITAL'?'병원 회원을 탈퇴 처리할까요?':'회원 계정을 삭제할까요?'} close={()=>{if(!remove.isPending)setDeleteTarget(null);}}>
+      <p className="dialog-copy"><strong>{deleteTarget.name}</strong> · {deleteTarget.role==='HOSPITAL'?`사업자등록번호 ${formatBusinessNumber(deleteTarget.businessNumber||'')}`:`아이디 ${deleteTarget.loginId}`}</p>
+      <Notice tone="warning">{deleteTarget.role==='HOSPITAL'?'병원 계정의 로그인이 차단되고 병원 검색과 새 예약 접수가 중지돼요. 이 병원의 예약 중인 예약은 모두 취소되며 의료진과 시간표도 예약을 받지 않는 상태로 바뀌어요. 기존 예약 이력과 병원 기본정보는 보관돼요.':'계정을 삭제하면 이 회원은 더 이상 로그인할 수 없어요. 진행 중인 예약은 모두 취소되고, 해당 시간대의 예약 가능 인원이 복구돼요.'} 삭제한 계정은 되돌릴 수 없어요.</Notice>
+      {remove.isError&&<Notice tone="error">{remove.error.message}</Notice>}
+      <div className="dialog-actions"><button className="button secondary" onClick={()=>setDeleteTarget(null)} disabled={remove.isPending}>취소</button><button className="button danger" onClick={()=>remove.mutate(deleteTarget)} disabled={remove.isPending}>{remove.isPending?<><LoaderCircle size={17} className="spin"/>삭제 중</>:'회원 삭제'}</button></div>
+    </Dialog>}
   </div>;
 }
 
@@ -526,23 +552,24 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
   const [accountType,setAccountType]=useState<'personal'|'hospital'>('personal');
   const [hospitalBusy,setHospitalBusy]=useState(false);
   const [emailToken,setEmailToken]=useState('');const [phoneToken,setPhoneToken]=useState('');
+  const [existingProvider,setExistingProvider]=useState<AuthProvider>();
   const [emailBusy,setEmailBusy]=useState(false);const [phoneBusy,setPhoneBusy]=useState(false);
   const [recovery,setRecovery]=useState(false);const [recoveryBusy,setRecoveryBusy]=useState(false);
   const [name,setName]=useState('');const [loginId,setLoginId]=useState('');const [password,setPassword]=useState('');const [email,setEmail]=useState('');const [phone,setPhone]=useState('');const [validationError,setValidationError]=useState('');
   const mutation=useMutation({mutationFn:()=>api<AuthResult>(`/auth/${mode}`,{method:'POST',body:JSON.stringify(mode==='login'?{loginId:loginId.trim(),password}:{name,loginId:loginId.trim(),password,email:email.trim(),phone:normalizePhone(phone),emailVerificationToken:emailToken,phoneVerificationToken:phoneToken})}),onSuccess});
   const busy=mutation.isPending||hospitalBusy||emailBusy||phoneBusy||recoveryBusy;
   const [preferredProvider,setPreferredProvider]=useState(initialPreferredProvider);
-  const existingProvider=mutation.error instanceof ApiError&&mutation.error.code==='MEMBER_ALREADY_EXISTS'?mutation.error.existingAuthProvider:undefined;
-  function existingLogin(){if(!existingProvider)return;setPreferredProvider(existingProvider);setMode('login');mutation.reset();setPassword('');setValidationError('');}
+  function existingLogin(){if(!existingProvider||busy)return;setPreferredProvider(existingProvider);setMode('login');mutation.reset();setPassword('');setValidationError('');setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}
   function submit(e:FormEvent){
     e.preventDefault();if(busy)return;
     if(mode==='register'&&(!email.trim()||email.trim().length>254)){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}
     if(mode==='register'&&!validMobilePhone(phone)){setValidationError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
     if(mode==='register'&&(!emailToken||!phoneToken)){setValidationError('이메일 인증과 휴대전화 인증을 완료해 주세요.');return;}
+    if(mode==='register'&&existingProvider)return;
     setValidationError('');mutation.mutate();
   }
   return <Dialog title={recovery?'비밀번호 찾기':mode==='login'?'반가워요. 로그인해 주세요':'함께 시작해 볼까요?'} close={()=>{if(!busy)close();}}>
-    <div className="auth-account-tabs" role="tablist" aria-label="회원 유형"><button type="button" role="tab" aria-selected={accountType==='personal'} disabled={busy} onClick={()=>{if(accountType==='personal'&&!recovery)return;setAccountType('personal');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setEmailToken('');setPhoneToken('');}}>개인</button><button type="button" role="tab" aria-selected={accountType==='hospital'} disabled={busy} onClick={()=>{setAccountType('hospital');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');}}>병원</button></div>
+    <div className="auth-account-tabs" role="tablist" aria-label="회원 유형"><button type="button" role="tab" aria-selected={accountType==='personal'} disabled={busy} onClick={()=>{if(accountType==='personal'&&!recovery)return;setAccountType('personal');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>개인</button><button type="button" role="tab" aria-selected={accountType==='hospital'} disabled={busy} onClick={()=>{setAccountType('hospital');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>병원</button></div>
     {accountType==='hospital'?<><p className="dialog-copy">{mode==='login'?'사업자등록번호로 로그인하고 우리 병원을 관리하세요.':'사업자등록번호로 병원을 조회한 뒤 비밀번호를 설정해 주세요.'}</p><HospitalAuthForm key={mode} mode={mode} onSuccess={onSuccess} onBusy={setHospitalBusy}/></>:<>
     {recovery?<PasswordRecovery onBack={()=>setRecovery(false)} onBusy={setRecoveryBusy}/>:<>
     <p className="dialog-copy">{mode==='login'?'로그인하고 예약 일정을 편하게 관리하세요.':'이메일과 휴대전화를 인증한 뒤 가입해 주세요.'}</p>
@@ -551,21 +578,21 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
     {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
     <form onSubmit={submit} className="auth-form">
       {mode==='register'&&<label className="field">이름<input autoComplete="name" value={name} onChange={e=>setName(e.target.value)} required minLength={1} maxLength={40} placeholder="이름"/></label>}
-      {mode==='register'&&<><label className="field">이메일<input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>{setEmail(e.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help" disabled={busy||!!emailToken}/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
+      {mode==='register'&&<><label className="field">이메일<input className={emailToken?'contact-locked':undefined} name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>{setEmail(e.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help" disabled={busy||!!emailToken}/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
         <EmailVerification purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy} disabled={mutation.isPending||phoneBusy}/></>}
-      {mode==='register'&&<><label className="field">휴대전화번호<PhoneInput name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
-        <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} disabled={mutation.isPending||emailBusy}/></>}
+      {mode==='register'&&<><label className="field">휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
+        <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} onExistingAccount={setExistingProvider} disabled={mutation.isPending||emailBusy}/>
+        {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy}/>}</>}
       <label className="field">아이디<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId} onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30} pattern={'[A-Za-z0-9_\\-]{4,30}'} title="영문, 숫자, 밑줄(_) 또는 하이픈(-)을 사용한 4~30자 아이디" aria-describedby="login-id-help" placeholder="아이디"/><small id="login-id-help" className="muted">영문, 숫자, _ 또는 -를 사용해 4~30자로 입력해 주세요. 영문 대소문자는 구분하지 않아요.</small></label>
       <label className="field">비밀번호<input type="password" autoComplete={mode==='login'?'current-password':'new-password'} value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} maxLength={100} placeholder={mode==='register'?'8자 이상 입력해 주세요':'비밀번호'}/></label>
       {(validationError||mutation.isError)&&<Notice tone="error">{validationError||mutation.error?.message}</Notice>}
-      {existingProvider&&<button className="button secondary full" type="button" onClick={existingLogin} disabled={mutation.isPending}>{loginMethod(existingProvider)}로 로그인하기</button>}
-      <button className="button primary full" type="submit" disabled={busy||(mode==='register'&&(!emailToken||!phoneToken))}>{mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:mode==='login'?'로그인':'회원가입'}</button>
+      <button className="button primary full" type="submit" disabled={busy||(mode==='register'&&(!emailToken||!phoneToken||!!existingProvider))}>{mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:mode==='login'?'로그인':'회원가입'}</button>
     </form>
     {mode==='login'&&<button className="text-button password-recovery-link" type="button" disabled={busy} onClick={()=>{setRecovery(true);mutation.reset();setValidationError('');setPassword('');}}>비밀번호 찾기</button>}
     {(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy}/>}
     </>}
     </>}
-    {!recovery&&<div className="auth-switch">{mode==='login'?'처음 방문하셨나요?':'이미 계정이 있으신가요?'}<button className="text-button" disabled={busy} onClick={()=>{setMode(mode==='login'?'register':'login');mutation.reset();setPassword('');setValidationError('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');}}>{mode==='login'?'회원가입':'로그인'}</button></div>}
+    {!recovery&&<div className="auth-switch">{mode==='login'?'처음 방문하셨나요?':'이미 계정이 있으신가요?'}<button className="text-button" disabled={busy} onClick={()=>{setMode(mode==='login'?'register':'login');mutation.reset();setPassword('');setValidationError('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>{mode==='login'?'회원가입':'로그인'}</button></div>}
     <div className="auth-note"><ShieldCheck size={16}/><span>{accountType==='hospital'?'병원 계정에는 이메일과 소셜 로그인을 사용하지 않아요.':'회원가입 후에는 본인의 예약만 조회할 수 있어요.'}</span></div>
   </Dialog>;
 }

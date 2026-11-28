@@ -1,6 +1,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import {CheckCircle2,LoaderCircle} from 'lucide-react';
 import {api,ApiError} from './api';
+import type {AuthProvider} from './api';
 import {canonicalPhone,phoneVerificationError,validMobilePhone} from './contactVerification';
 import type {PhonePurpose,VerificationProof} from './contactVerification';
 import {createPhoneChallenge} from './firebasePhone';
@@ -8,15 +9,15 @@ import type {PhoneChallenge} from './firebasePhone';
 import useVerificationCountdown from './useVerificationCountdown';
 import './contactVerification.css';
 
-type Props={purpose:PhonePurpose;phone:string;loginId?:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void};
+type Props={purpose:PhonePurpose;phone:string;loginId?:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;onExistingAccount?:(provider:AuthProvider|undefined)=>void};
 
-export default function PhoneVerification({purpose,phone,loginId='',onVerified,disabled=false,onBusy}:Props){
+export default function PhoneVerification({purpose,phone,loginId='',onVerified,disabled=false,onBusy,onExistingAccount}:Props){
   const inputId=useId();
   const contact=canonicalPhone(phone);
   const account=loginId.trim().toLowerCase();
   const context=purpose+'|'+phone+'|'+loginId;
   const current=useRef(context);current.current=context;
-  const callbacks=useRef({onVerified,onBusy});callbacks.current={onVerified,onBusy};
+  const callbacks=useRef({onVerified,onBusy,onExistingAccount});callbacks.current={onVerified,onBusy,onExistingAccount};
   const recaptcha=useRef<HTMLDivElement>(null);
   const challenge=useRef<PhoneChallenge|null>(null);
   const idToken=useRef('');
@@ -33,20 +34,20 @@ export default function PhoneVerification({purpose,phone,loginId='',onVerified,d
   const busy=stage==='sending'||stage==='confirming';
   useEffect(()=>{
     current.current=context;operation.current++;active.current=false;challenge.current?.dispose();challenge.current=null;idToken.current='';
-    setStage('idle');setCode('');setError('');setRetryAt(0);setVerifiedUntil(0);callbacks.current.onVerified('');
+    setStage('idle');setCode('');setError('');setRetryAt(0);setVerifiedUntil(0);callbacks.current.onVerified('');callbacks.current.onExistingAccount?.(undefined);
     return()=>{current.current='';operation.current++;challenge.current?.dispose();challenge.current=null;};
   },[context]);
   useEffect(()=>{callbacks.current.onBusy?.(busy);return()=>callbacks.current.onBusy?.(false);},[busy]);
-  useEffect(()=>{if(verifiedUntil&&verifiedSeconds===0){callbacks.current.onVerified('');setVerifiedUntil(0);setError('문자 인증 시간이 지났어요. 다시 인증해 주세요.');}},[verifiedUntil,verifiedSeconds]);
+  useEffect(()=>{if(verifiedUntil&&verifiedSeconds===0){callbacks.current.onVerified('');callbacks.current.onExistingAccount?.(undefined);setVerifiedUntil(0);setError('문자 인증 시간이 지났어요. 다시 인증해 주세요.');}},[verifiedUntil,verifiedSeconds]);
   function cancel(){
     operation.current++;active.current=false;challenge.current?.dispose();challenge.current=null;idToken.current='';
-    setStage('idle');setCode('');setError('');
+    setStage('idle');setCode('');setError('');callbacks.current.onExistingAccount?.(undefined);
   }
   async function send(){
     if(active.current||disabled||retrySeconds||!recaptcha.current)return;
     if(!validMobilePhone(contact)){setError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
     if(purpose==='PASSWORD_RESET'&&!/^[a-z0-9_-]{4,30}$/.test(account)){setError('가입한 아이디를 먼저 입력해 주세요.');return;}
-    const requested=context;const requestId=++operation.current;active.current=true;setStage('sending');setError('');setCode('');setVerifiedUntil(0);callbacks.current.onVerified('');
+    const requested=context;const requestId=++operation.current;active.current=true;setStage('sending');setError('');setCode('');setVerifiedUntil(0);callbacks.current.onVerified('');callbacks.current.onExistingAccount?.(undefined);
     challenge.current?.dispose();challenge.current=null;idToken.current='';
     try{
       const session=await createPhoneChallenge(recaptcha.current);
@@ -71,6 +72,8 @@ export default function PhoneVerification({purpose,phone,loginId='',onVerified,d
       if(current.current!==requested||operation.current!==requestId)return;
       if(canonicalPhone(result.contact)!==contact)throw new Error('휴대전화번호가 변경됐어요. 다시 인증해 주세요.');
       setVerifiedUntil(Date.now()+result.expiresIn*1000);callbacks.current.onVerified(result.verificationToken);
+      const provider=result.existingAuthProvider;
+      callbacks.current.onExistingAccount?.(purpose==='SIGNUP'&&(provider==='LOCAL'||provider==='GOOGLE'||provider==='KAKAO')?provider:undefined);
       challenge.current?.dispose();challenge.current=null;idToken.current='';setCode('');setStage('idle');
     }catch(reason){
       if(current.current!==requested||operation.current!==requestId)return;

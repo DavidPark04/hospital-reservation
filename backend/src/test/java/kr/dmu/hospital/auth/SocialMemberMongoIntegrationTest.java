@@ -97,7 +97,8 @@ class SocialMemberMongoIntegrationTest {
         Document originalAdmin = mongo.findById("existing-admin", Document.class, "users");
         Document google = members.signIn("google", google("subject")); setCurrent(google);
         ApiException duplicate = assertThrows(ApiException.class, () -> auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, Map.of("name", "회원", "email", " PERSONAL@example.com ", "phone", "021234567", "role", "ADMIN", "id", "existing-admin", "emailVerified", true))));
-        assertEquals(ApiException.class, duplicate.getClass()); assertEquals(409, duplicate.getStatus());
+        assertInstanceOf(MemberIdentityConflict.class, duplicate); assertEquals(409, duplicate.getStatus());
+        assertFalse(((MemberIdentityConflict) duplicate).toPublic().containsKey("existingAuthProvider"));
         assertEquals("이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.", duplicate.getMessage());
         assertEquals(originalAdmin, mongo.findById("existing-admin", Document.class, "users"));
         assertEquals(1, mongo.getCollection("users").countDocuments());

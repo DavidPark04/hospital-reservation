@@ -39,7 +39,7 @@ export default function EmailChange({user,onChanged}:{user:User;onChanged:(resul
     </div>
     {!open&&message&&<div className="notice password-success" role="status"><CheckCircle2 size={19}/><div>{message}</div></div>}
     {open&&<form className="auth-form password-change-form" onSubmit={submit}>
-      <label className="field" htmlFor="change-email">새 이메일<input id="change-email" type="email" autoComplete="email" maxLength={254} value={email}
+      <label className="field" htmlFor="change-email">새 이메일<input className={proof?'contact-locked':undefined} id="change-email" type="email" autoComplete="email" maxLength={254} value={email}
         onChange={event=>{setEmail(event.target.value);setProof('');update.reset();}} disabled={update.isPending||verifying||!!proof} required autoFocus/></label>
       <EmailVerification purpose="EMAIL_CHANGE" email={email} onVerified={setProof} onBusy={setVerifying} disabled={update.isPending}/>
       {update.isError&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{update.error.message}</div></div>}

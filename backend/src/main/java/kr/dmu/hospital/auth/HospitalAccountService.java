@@ -30,7 +30,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class HospitalAccountService {
     public static final String REGISTRATIONS = "hospitalRegistrations";
-    static final String VERIFICATIONS = "hospitalSignupVerifications";
+    public static final String VERIFICATIONS = "hospitalSignupVerifications";
     private final MongoTemplate mongo;
     private final PasswordEncoder passwords;
     private final AuthService auth;
