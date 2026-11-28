@@ -72,7 +72,7 @@ class HospitalCacheMongoTest {
         Map<String, Object> result = service.search("우리", "수원 영통", "01");
         List<?> items = (List<?>) result.get("items");
         assertEquals("CACHE", result.get("source"));
-        assertTrue(result.get("message").toString().contains("매일 갱신"));
+        assertTrue(result.get("message").toString().contains("지역별 일정에 따라 주 1회 갱신"));
         assertEquals(1, items.size());
         Map<?, ?> hospital = (Map<?, ?>) items.getFirst();
         assertEquals(id("match"), hospital.get("id"));
