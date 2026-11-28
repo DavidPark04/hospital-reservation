@@ -119,20 +119,24 @@ public class MemberService {
                         throw new ApiException(404, "회원을 찾을 수 없습니다.");
                     }
                     boolean hospital = "HOSPITAL".equals(user.getString("role"));
-                    if (hospital && withdrawal) {
-                        throw new ApiException(403, "병원 계정은 관리자를 통해 탈퇴할 수 있습니다.");
-                    }
                     if (!"USER".equals(user.getString("role")) && !hospital) {
                         throw new ApiException(403, withdrawal ? "관리자 계정은 탈퇴할 수 없습니다." : "관리자 계정은 삭제할 수 없습니다.");
                     }
                     if (withdrawal) {
-                        if (socialIdentity != null) verifySocialIdentity(user, socialIdentity, expectedTokenVersion);
-                        else if (user.getString("authProvider") == null || "LOCAL".equals(user.getString("authProvider"))) verifyPassword(user, password);
-                        else if (!Boolean.TRUE.equals(user.getBoolean("profileComplete"))) {
-                            throw new ApiException(403, "가입을 완료한 회원만 탈퇴할 수 있어요.");
+                        if (hospital) {
+                            if (socialIdentity != null || !"LOCAL".equals(user.getString("authProvider"))) {
+                                throw new ApiException(403, "병원 계정의 현재 비밀번호로 다시 확인해 주세요.");
+                            }
+                            verifyPassword(user, password);
+                        } else {
+                            if (socialIdentity != null) verifySocialIdentity(user, socialIdentity, expectedTokenVersion);
+                            else if (user.getString("authProvider") == null || "LOCAL".equals(user.getString("authProvider"))) verifyPassword(user, password);
+                            else if (!Boolean.TRUE.equals(user.getBoolean("profileComplete"))) {
+                                throw new ApiException(403, "가입을 완료한 회원만 탈퇴할 수 있어요.");
+                            }
+                            verification.consume(phoneVerificationToken, "WITHDRAWAL", "PHONE",
+                                    user.getString("phone"), userId, user.getInteger("tokenVersion", 0));
                         }
-                        verification.consume(phoneVerificationToken, "WITHDRAWAL", "PHONE",
-                                user.getString("phone"), userId, user.getInteger("tokenVersion", 0));
                     }
                     // Booking mutations also write this user document, so an in-flight
                     // reservation must finish before deletion or retry after it and fail.

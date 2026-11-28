@@ -7,6 +7,7 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
 import kr.dmu.hospital.auth.AuthService;
+import kr.dmu.hospital.auth.ComwelClient;
 import kr.dmu.hospital.auth.HospitalAccountService;
 import kr.dmu.hospital.auth.UserIndexes;
 import kr.dmu.hospital.auth.UserPrincipal;
@@ -339,7 +340,7 @@ class MemberMongoIntegrationTest {
         assertEquals(4, mongo.getCollection("users").countDocuments());
     }
 
-    @Test void hospitalAccountsExposeIdentifiersOnlyToTheAdminListAndCannotWithdrawThemselves() throws Exception {
+    @Test void hospitalAccountsExposeIdentifiersOnlyToTheAdminListAndCannotUseAdminDeletion() throws Exception {
         String hospitalUser = hospitalAccount();
         mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)),
                 new Update().set("hospitalId", "not-public").set("businessNumber", "not-public"), "users");
@@ -353,15 +354,49 @@ class MemberMongoIntegrationTest {
         signIn(userA);
         mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isForbidden());
         signIn(hospitalUser);
-        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
-                .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
         mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isForbidden());
         assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
         assertNotNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
     }
 
-    @Test void adminHospitalDeletionCancelsOnlyItsBookingsAndPreservesCatalogAndHistory() throws Exception {
+    @Test void hospitalWithdrawalRequiresItsCurrentPasswordWithoutChangingAnyData() throws Exception {
         String hospitalUser = hospitalAccount();
+        String hospitalToken = (String) hospitalAccounts().login(Map.of("businessNumber", "6911702710", "password", PASSWORD)).get("token");
+        String reservation = booking.create(userA, "hospital-password-check", "slot-1").getString("id");
+        Document memberBefore = mongo.findById(hospitalUser, Document.class, "users");
+        Document registrationBefore = mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS);
+        signIn(hospitalUser);
+        mvc.perform(delete("/api/members/me")).andExpect(status().isBadRequest());
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON).content("{\"password\":123}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"wrong-password\"}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.message").value("현재 비밀번호가 맞지 않습니다."));
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdraw(hospitalUser, "x".repeat(73))).getStatus());
+        assertEquals(memberBefore, mongo.findById(hospitalUser, Document.class, "users"));
+        assertEquals(registrationBefore, mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
+        assertEquals("RESERVED", mongo.findById(reservation, Document.class, "reservations").getString("status"));
+        assertEquals(1, count("slot-1"));
+        assertTrue(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
+        assertFalse(mongo.findById("slot-1", Document.class, "timeSlots").getBoolean("closed"));
+        assertEquals(hospitalUser, auth.authenticate(hospitalToken).getId());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"GOOGLE", "KAKAO", ""})
+    void hospitalWithdrawalRequiresLocalCredentialsAndCannotUseSocialIdentity(String provider) {
+        String hospitalUser = hospitalAccount();
+        assertEquals(403, assertThrows(ApiException.class,
+                () -> members.withdrawSocial(hospitalUser, "GOOGLE:fake", 0)).getStatus());
+        Update update = provider.isEmpty() ? new Update().unset("authProvider") : new Update().set("authProvider", provider);
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(hospitalUser)), update, "users");
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdraw(hospitalUser, PASSWORD)).getStatus());
+        assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
+        assertNotNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void hospitalDeletionAndSelfWithdrawalCancelOnlyItsBookingsAndPreserveCatalogAndHistory(boolean withdrawal) throws Exception {
+        String hospitalUser = hospitalAccount();
+        String hospitalToken = (String) hospitalAccounts().login(Map.of("businessNumber", "6911702710", "password", PASSWORD)).get("token");
         Document catalog = mongo.findById("hospital", Document.class, "hospitals");
         String first = booking.create(userA, "hospital-first", "slot-1").getString("id");
         String second = booking.create(userB, "hospital-second", "slot-2").getString("id");
@@ -378,8 +413,11 @@ class MemberMongoIntegrationTest {
         String other = booking.create(userB, "other-hospital", "other-slot").getString("id");
         Document otherBefore = mongo.findById(other, Document.class, "reservations");
         mongo.insert(new Document("_id", "old-business-proof").append("businessNumber", "6911702710"), HospitalAccountService.VERIFICATIONS);
-        signIn(ADMIN);
-        mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isOk())
+        String actor = withdrawal ? hospitalUser : ADMIN;
+        signIn(actor);
+        mvc.perform(delete(withdrawal ? "/api/members/me" : "/api/admin/members/" + hospitalUser)
+                .param("userId", userB).contentType(MediaType.APPLICATION_JSON)
+                .content(new Document("password", PASSWORD).append("userId", userB).toJson())).andExpect(status().isOk())
                 .andExpect(jsonPath("$.deletedUserId").value(hospitalUser)).andExpect(jsonPath("$.canceledReservations").value(2));
         assertNull(mongo.findById(hospitalUser, Document.class, "users"));
         assertNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
@@ -394,7 +432,7 @@ class MemberMongoIntegrationTest {
             assertEquals("CANCELED", reservation.getString("status"));
             assertNotNull(reservation.get("snapshot"));
         }
-        assertEquals(2, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", ADMIN).append("action", "CANCEL")));
+        assertEquals(2, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", actor).append("action", "CANCEL")));
         assertEquals(canceledBefore, mongo.findById(canceled, Document.class, "reservations"));
         assertEquals(otherBefore, mongo.findById(other, Document.class, "reservations"));
         assertTrue(mongo.findById("other-doctor", Document.class, "doctors").getBoolean("active"));
@@ -403,17 +441,22 @@ class MemberMongoIntegrationTest {
         assertNull(mongo.findById("old-business-proof", Document.class, HospitalAccountService.VERIFICATIONS));
         assertEquals(userA, auth.authenticate(tokenA).getId());
         assertEquals(userB, auth.authenticate(tokenB).getId());
+        assertThrows(JwtException.class, () -> auth.authenticate(hospitalToken));
+        assertEquals(401, assertThrows(ApiException.class,
+                () -> hospitalAccounts().login(Map.of("businessNumber", "6911702710", "password", PASSWORD))).getStatus());
         assertEquals(409, assertThrows(ApiException.class, () -> booking.create(userA, "after-closure", "slot-1")).getStatus());
         assertEquals(404, assertThrows(ApiException.class, () -> booking.editSlot("slot-1", 4, false)).getStatus());
         assertThrows(IllegalStateException.class, () -> booking.closeHospitalBookings("hospital", ADMIN));
     }
 
-    @Test void hospitalDeletionRollsBackEveryChangeWhenSlotAccountingIsInconsistent() {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void hospitalDeletionRollsBackEveryChangeWhenSlotAccountingIsInconsistent(boolean withdrawal) {
         String hospitalUser = hospitalAccount();
         String first = booking.create(userA, "hospital-first", "slot-1").getString("id");
         String second = booking.create(userB, "hospital-second", "slot-2").getString("id");
         mongo.updateFirst(Query.query(Criteria.where("_id").is("slot-2")), new Update().set("reservedCount", 0), "timeSlots");
-        assertEquals(409, assertThrows(ApiException.class, () -> members.delete(ADMIN, hospitalUser)).getStatus());
+        assertEquals(409, assertThrows(ApiException.class,
+                () -> deleteHospitalOrWithdraw(hospitalUser, withdrawal)).getStatus());
         assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
         assertNotNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
         assertTrue(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
@@ -421,13 +464,15 @@ class MemberMongoIntegrationTest {
         assertEquals(1, count("slot-1"));
         assertEquals("RESERVED", mongo.findById(first, Document.class, "reservations").getString("status"));
         assertEquals("RESERVED", mongo.findById(second, Document.class, "reservations").getString("status"));
-        assertEquals(0, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", ADMIN)));
+        assertEquals(0, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", withdrawal ? hospitalUser : ADMIN)));
     }
 
-    @Test void hospitalRegistrationOwnershipMismatchPreventsDeletingAnyAccountOrSchedule() {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void hospitalRegistrationOwnershipMismatchPreventsDeletingAnyAccountOrSchedule(boolean withdrawal) {
         String hospitalUser = hospitalAccount();
         mongo.updateFirst(Query.query(Criteria.where("_id").is("hospital")), new Update().set("userId", "other-owner"), HospitalAccountService.REGISTRATIONS);
-        assertEquals(409, assertThrows(ApiException.class, () -> members.delete(ADMIN, hospitalUser)).getStatus());
+        assertEquals(409, assertThrows(ApiException.class,
+                () -> deleteHospitalOrWithdraw(hospitalUser, withdrawal)).getStatus());
         assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
         assertEquals("other-owner", mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS).getString("userId"));
         assertTrue(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
@@ -702,6 +747,14 @@ class MemberMongoIntegrationTest {
                 .append("passwordHash", new BCryptPasswordEncoder().encode(PASSWORD)).append("createdAt", new Date()), "users");
         mongo.updateFirst(Query.query(Criteria.where("_id").is("hospital")), new Update().set("businessNumber", "6911702710"), HospitalAccountService.REGISTRATIONS);
         return "hospital-owner";
+    }
+
+    private HospitalAccountService hospitalAccounts() {
+        return new HospitalAccountService(mongo, new BCryptPasswordEncoder(), auth, new ComwelClient(""), transactionManager);
+    }
+
+    private Document deleteHospitalOrWithdraw(String userId, boolean withdrawal) {
+        return withdrawal ? members.withdraw(userId, PASSWORD) : members.delete(ADMIN, userId);
     }
 
     private Document deleteOrWithdraw(MemberService service, boolean withdrawal) {

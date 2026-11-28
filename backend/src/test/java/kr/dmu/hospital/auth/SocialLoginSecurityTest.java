@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import kr.dmu.hospital.common.ApiErrorHandler;
 import kr.dmu.hospital.config.SecurityConfig;
+import kr.dmu.hospital.member.MemberService;
+import kr.dmu.hospital.member.MyMemberController;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +63,8 @@ class SocialLoginSecurityTest {
         @Bean HospitalAccountController hospitalController(HospitalAccountService accounts) { return new HospitalAccountController(accounts); }
         @Bean ContactVerificationService contactVerification() { return mock(ContactVerificationService.class); }
         @Bean ContactVerificationController contactController(ContactVerificationService verification) { return new ContactVerificationController(verification); }
+        @Bean MemberService memberDeletion() { return mock(MemberService.class); }
+        @Bean MyMemberController myMemberController(MemberService members) { return new MyMemberController(members); }
         @Bean ApiErrorHandler errors() { return new ApiErrorHandler(); }
         @Bean ProtectedTestController protectedApis() { return new ProtectedTestController(); }
     }
@@ -71,16 +75,41 @@ class SocialLoginSecurityTest {
     @Autowired AuthService auth;
     @Autowired HospitalAccountService hospitalAccounts;
     @Autowired ContactVerificationService contactVerification;
+    @Autowired MemberService memberDeletion;
     @Autowired SocialMemberService members;
     @Autowired SocialLoginTickets tickets;
     @Autowired SocialLoginFlow flow;
     private MockMvc mvc;
     @BeforeEach void setUp() {
-        reset(auth, members, tickets, hospitalAccounts, contactVerification);
+        reset(auth, members, tickets, hospitalAccounts, contactVerification, memberDeletion);
         when(tickets.create(any())).thenReturn(SocialLoginTickets.randomValue());
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
     @AfterEach void tearDown() { SecurityContextHolder.clearContext(); }
+
+    @Test void hospitalCanWithdrawOnlyItselfWithTheCurrentMemberToken() throws Exception {
+        String body = "{\"password\":\" CurrentHospitalPassword! \",\"userId\":\"other-user\"}";
+        mvc.perform(delete("/api/members/me").contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        when(auth.authenticate("pending-token")).thenReturn(UserPrincipal.forSignup(new Document("_id", "pending")
+                .append("role", "USER").append("authProvider", "GOOGLE")));
+        mvc.perform(delete("/api/members/me").header("Authorization", "Bearer pending-token")
+                .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        verifyNoInteractions(memberDeletion);
+        UserPrincipal hospital = new UserPrincipal(new Document("_id", "hospital-owner").append("loginId", "hospital:1234567890")
+                .append("role", "HOSPITAL").append("authProvider", "LOCAL").append("profileComplete", true)
+                .append("hospitalId", "hospital").append("businessNumber", "1234567890"));
+        when(auth.authenticate("hospital-token")).thenReturn(hospital);
+        when(memberDeletion.withdrawVerified("hospital-owner", " CurrentHospitalPassword! ", null))
+                .thenReturn(new Document("deletedUserId", "hospital-owner").append("canceledReservations", 0));
+        mvc.perform(delete("/api/members/me").param("userId", "other-user").header("Authorization", "Bearer hospital-token")
+                .contentType("application/json").content(body)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.deletedUserId").value("hospital-owner"));
+        verify(memberDeletion).withdrawVerified("hospital-owner", " CurrentHospitalPassword! ", null);
+        mvc.perform(get("/api/reservations").header("Authorization", "Bearer hospital-token")).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/members/other-user").header("Authorization", "Bearer hospital-token"))
+                .andExpect(status().isForbidden());
+        verifyNoMoreInteractions(memberDeletion);
+    }
 
     @Test void pendingSocialSignupCanVerifyContactsWithItsOwnPrincipal() throws Exception {
         UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending-person").append("role", "USER")

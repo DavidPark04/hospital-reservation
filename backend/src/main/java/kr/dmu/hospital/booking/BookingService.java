@@ -47,7 +47,7 @@ public class BookingService {
         requireRegisteredHospital(hospitalId);
         if (!Departments.contains(departmentCode)) throw new ApiException(400, "지원하는 진료과를 선택해 주세요.");
         Query selection = Query.query(Criteria.where("hospitalId").is(hospitalId)
-                .and("departmentCode").is(departmentCode).and("active").is(true).and("isVirtual").is(false));
+                .and("departmentCode").is(departmentCode).and("active").is(true).and("isVirtual").is(false).and("deleted").ne(true));
         List<Document> result = mongo.find(selection.with(Sort.by("name", "_id")), Document.class, "doctors");
         List<Document> views = new ArrayList<>();
         for (Document doctor : result) {
@@ -58,6 +58,7 @@ public class BookingService {
 
     public List<Document> slots(String doctorId, String dateText, boolean admin) {
         Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
+        requireNotDeletedDoctor(doctor);
         if (!admin) {
             requireRegisteredHospital(doctor.getString("hospitalId"));
             requireActiveDoctor(doctor);
@@ -246,6 +247,7 @@ public class BookingService {
         }
         Document existing = requireDocument("timeSlots", slotId, "시간표를 찾을 수 없습니다.");
         Document doctor = requireDocument("doctors", existing.getString("doctorId"), "의료진을 찾을 수 없습니다.");
+        requireNotDeletedDoctor(doctor);
         lockRegisteredHospital(doctor.getString("hospitalId"));
         ensureFuture(existing.getDate("startAt"));
         Criteria criteria = Criteria.where("_id").is(slotId).and("startAt").gt(new Date()).and("reservedCount").lte(capacity);
@@ -272,7 +274,7 @@ public class BookingService {
 
     public List<Document> managedDoctors() {
         String hospitalId = requireHospitalManager(false).getString("_id");
-        List<Document> found = mongo.find(Query.query(Criteria.where("hospitalId").is(hospitalId).and("isVirtual").is(false))
+        List<Document> found = mongo.find(Query.query(Criteria.where("hospitalId").is(hospitalId).and("isVirtual").is(false).and("deleted").ne(true))
                 .with(Sort.by("name", "_id")), Document.class, "doctors");
         List<Document> result = new ArrayList<>();
         for (Document doctor : found) result.add(doctorView(doctor));
@@ -310,6 +312,30 @@ public class BookingService {
             mongo.save(doctor, "doctors");
             refreshManagedDepartments(hospitalId);
             return doctorView(doctor);
+        });
+    }
+
+    public Document deleteDoctor(String doctorId) {
+        return runWithRetry(() -> {
+            String hospitalId = requireHospitalManager(true).getString("_id");
+            Document doctor = mongo.findOne(Query.query(Criteria.where("_id").is(doctorId).and("hospitalId").is(hospitalId)
+                    .and("isVirtual").is(false)), Document.class, "doctors");
+            if (doctor == null) throw new ApiException(404, "우리 병원에 등록된 의료진을 찾을 수 없습니다.");
+            Document response = new Document("id", doctorId).append("deleted", true);
+            if (Boolean.TRUE.equals(doctor.getBoolean("deleted"))) return response;
+            Date now = new Date();
+            if (mongo.exists(Query.query(Criteria.where("doctorId").is(doctorId).and("status").is("RESERVED")
+                    .and("startAt").gt(now)), "reservations")) {
+                throw new ApiException(409, "예정된 예약이 있는 의료진은 삭제할 수 없습니다. 예약을 먼저 변경하거나 취소해 주세요.");
+            }
+            // Booking also writes this doctor, so deletion cannot commit alongside a new reservation.
+            doctor.put("active", false); doctor.put("deleted", true);
+            doctor.put("deletedAt", now); doctor.put("updatedAt", now);
+            mongo.save(doctor, "doctors");
+            mongo.updateMulti(Query.query(Criteria.where("doctorId").is(doctorId).and("startAt").gt(now).and("reservedCount").is(0)),
+                    new Update().set("closed", true), "timeSlots");
+            refreshManagedDepartments(hospitalId);
+            return response;
         });
     }
 
@@ -426,6 +452,7 @@ public class BookingService {
     private Document ownedDoctor(String id, String hospitalId) {
         Document doctor = mongo.findOne(Query.query(Criteria.where("_id").is(id).and("hospitalId").is(hospitalId).and("isVirtual").is(false)), Document.class, "doctors");
         if (doctor == null) throw new ApiException(404, "우리 병원에 등록된 의료진을 찾을 수 없습니다.");
+        requireNotDeletedDoctor(doctor);
         return doctor;
     }
 
@@ -450,8 +477,12 @@ public class BookingService {
         }
     }
 
+    private void requireNotDeletedDoctor(Document doctor) {
+        if (Boolean.TRUE.equals(doctor.getBoolean("deleted"))) throw new ApiException(404, "삭제된 의료진입니다. 의료진 목록을 다시 확인해 주세요.");
+    }
+
     private void requireActiveDoctor(Document doctor) {
-        if (!Boolean.TRUE.equals(doctor.getBoolean("active")) || !Boolean.FALSE.equals(doctor.getBoolean("isVirtual"))) {
+        if (Boolean.TRUE.equals(doctor.getBoolean("deleted")) || !Boolean.TRUE.equals(doctor.getBoolean("active")) || !Boolean.FALSE.equals(doctor.getBoolean("isVirtual"))) {
             throw new ApiException(409, "현재 예약을 받는 의료진이 아닙니다. 다른 의료진을 선택해 주세요.");
         }
     }
@@ -460,7 +491,7 @@ public class BookingService {
         Document doctor = requireDocument("doctors", id, "의료진을 찾을 수 없습니다.");
         requireActiveDoctor(doctor);
         // Updating this document makes concurrent department/availability edits conflict with this booking.
-        Document locked = mongo.findAndModify(Query.query(Criteria.where("_id").is(id).and("active").is(true).and("isVirtual").is(false)),
+        Document locked = mongo.findAndModify(Query.query(Criteria.where("_id").is(id).and("active").is(true).and("isVirtual").is(false).and("deleted").ne(true)),
                 new Update().inc("bookingVersion", 1), FindAndModifyOptions.options().returnNew(true), Document.class, "doctors");
         if (locked == null) throw new ApiException(409, "의료진의 예약 설정이 변경되었습니다. 다시 확인해 주세요.");
         return locked;
@@ -489,7 +520,7 @@ public class BookingService {
     }
 
     private void refreshManagedDepartments(String hospitalId) {
-        Query query = Query.query(Criteria.where("hospitalId").is(hospitalId).and("active").is(true).and("isVirtual").is(false));
+        Query query = Query.query(Criteria.where("hospitalId").is(hospitalId).and("active").is(true).and("isVirtual").is(false).and("deleted").ne(true));
         query.fields().include("departmentCode");
         Set<String> uniqueCodes = new TreeSet<>();
         for (Document doctor : mongo.find(query, Document.class, "doctors")) uniqueCodes.add(doctor.getString("departmentCode"));

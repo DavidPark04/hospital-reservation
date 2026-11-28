@@ -3,14 +3,14 @@ import type {FormEvent,ReactNode} from 'react';
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query';
 import {AlertCircle,Building2,CalendarDays,CalendarCheck2,CheckCircle2,Clock3,ClipboardList,LoaderCircle,MapPin,Plus,RefreshCw,Settings2,ShieldCheck,Stethoscope,X} from 'lucide-react';
 import {api,dateLabel,DEPARTMENTS,queryString,timeLabel,today} from './api';
-import type {AuthResult,Department,Doctor,HospitalAccountInfo,HospitalReservation,Slot,User} from './api';
+import type {AuthResult,DeleteMemberResult,Department,Doctor,HospitalAccountInfo,HospitalReservation,Slot,User} from './api';
 import {formatPhone} from './phoneFormatting';
 import {formatBusinessNumber} from './HospitalAuthForm';
 import PasswordChange from './PasswordChange';
 import './hospitalManagement.css';
 
 type ManagedHospital=HospitalAccountInfo & {availableDepartments?:Department[]};
-type PortalProps={user:User|null;login:()=>void;notify:(message:string)=>void;onPasswordChanged:(result:AuthResult,previousToken:string)=>void};
+type PortalProps={user:User|null;login:()=>void;notify:(message:string)=>void;onPasswordChanged:(result:AuthResult,previousToken:string)=>void;onWithdrawn:(result:DeleteMemberResult)=>void};
 type Refresh=()=>void;
 const base='/hospital/manage';
 function ErrorNotice({error,retry}:{error:unknown;retry?:()=>void}){return <div className="notice error" role="alert"><AlertCircle size={19}/><div>{error instanceof Error?error.message:'요청을 처리하지 못했어요.'}{retry&&<button type="button" className="text-button" onClick={retry}><RefreshCw size={14}/>다시 시도</button>}</div></div>;}
@@ -24,7 +24,7 @@ function Modal({title,children,busy,close}:{title:string;children:ReactNode;busy
   return <div className="dialog-overlay" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)close();}}><div className="dialog hospital-dialog" ref={ref} role="dialog" aria-modal="true" aria-labelledby={heading} tabIndex={-1}><div className="dialog-heading"><h2 id={heading}>{title}</h2><button type="button" className="icon-button" onClick={close} disabled={busy} aria-label="창 닫기"><X size={21}/></button></div>{children}</div></div>;
 }
 
-export default function HospitalManagement({user,login,notify,onPasswordChanged}:PortalProps){
+export default function HospitalManagement({user,login,notify,onPasswordChanged,onWithdrawn}:PortalProps){
   const queryClient=useQueryClient();const [tab,setTab]=useState<'doctors'|'schedule'|'reservations'|'account'>('doctors');
   const hospital=useQuery({queryKey:['hospital-manage',user?.id,'hospital'],queryFn:()=>api<ManagedHospital>(base+'/hospital'),enabled:user?.role==='HOSPITAL'});
   const doctors=useQuery({queryKey:['hospital-manage',user?.id,'doctors'],queryFn:()=>api<{items:Doctor[]}>(base+'/doctors'),enabled:user?.role==='HOSPITAL'});
@@ -42,8 +42,27 @@ export default function HospitalManagement({user,login,notify,onPasswordChanged}
         {tab==='schedule'&&<SchedulePanel userId={user.id} doctors={staff} refresh={refresh} notify={notify}/>}
         {tab==='reservations'&&<ReservationsPanel userId={user.id} doctors={staff} refresh={refresh} notify={notify}/>}
       </>}
-      {tab==='account'&&<section className="panel hospital-info-panel"><h2>병원 기본정보</h2><p className="muted">가입 시 공공정보와 대조한 병원 정보예요. 이 화면에서는 수정할 수 없어요.</p><dl className="profile-details"><div><dt>사업자등록번호</dt><dd>{formatBusinessNumber(profile.businessNumber||user.businessNumber||'')}</dd></div><div><dt>병원명</dt><dd>{profile.name}</dd></div><div><dt>주소</dt><dd>{profile.address}</dd></div><div><dt>우편번호</dt><dd>{profile.postalCode||'미제공'}</dd></div><div><dt>전화번호</dt><dd>{profile.tel?formatPhone(profile.tel):<span className="muted">미제공</span>}</dd></div><div><dt>등록한 진료과</dt><dd>{profile.departments?.map(d=>d.name).join(' · ')||'의료진 등록 후 표시돼요'}</dd></div></dl><PasswordChange user={user} onChanged={onPasswordChanged}/></section>}
+      {tab==='account'&&<section className="panel hospital-info-panel"><h2>병원 기본정보</h2><p className="muted">가입 시 공공정보와 대조한 병원 정보예요. 이 화면에서는 수정할 수 없어요.</p><dl className="profile-details"><div><dt>사업자등록번호</dt><dd>{formatBusinessNumber(profile.businessNumber||user.businessNumber||'')}</dd></div><div><dt>병원명</dt><dd>{profile.name}</dd></div><div><dt>주소</dt><dd>{profile.address}</dd></div><div><dt>우편번호</dt><dd>{profile.postalCode||'미제공'}</dd></div><div><dt>전화번호</dt><dd>{profile.tel?formatPhone(profile.tel):<span className="muted">미제공</span>}</dd></div><div><dt>등록한 진료과</dt><dd>{profile.departments?.map(d=>d.name).join(' · ')||'의료진 등록 후 표시돼요'}</dd></div></dl><PasswordChange user={user} onChanged={onPasswordChanged}/><HospitalWithdrawal onWithdrawn={onWithdrawn}/></section>}
     </>}
+  </div>;
+}
+
+function HospitalWithdrawal({onWithdrawn}:{onWithdrawn:(result:DeleteMemberResult)=>void}){
+  const [open,setOpen]=useState(false);const [password,setPassword]=useState('');const requestInFlight=useRef(false);
+  const remove=useMutation({mutationFn:()=>api<DeleteMemberResult>('/members/me',{method:'DELETE',body:JSON.stringify({password})}),onSuccess:result=>{setPassword('');onWithdrawn(result);},onSettled:()=>{requestInFlight.current=false;}});
+  function close(){if(remove.isPending||requestInFlight.current)return;setOpen(false);setPassword('');remove.reset();}
+  function submit(event:FormEvent){event.preventDefault();if(!password||remove.isPending||requestInFlight.current)return;requestInFlight.current=true;remove.mutate();}
+  return <div className="profile-withdrawal">
+    <p>병원 회원 이용을 마치려면 회원 탈퇴를 진행할 수 있어요.</p>
+    <button className="text-button withdrawal-link" type="button" onClick={()=>{setPassword('');remove.reset();setOpen(true);}}>탈퇴하기</button>
+    {open&&<Modal title="병원 회원 탈퇴" close={close} busy={remove.isPending}>
+      <p className="dialog-copy">탈퇴하면 병원 계정이 삭제되고 예약 중인 예약이 모두 취소돼요. 등록한 의료진과 진료 일정은 종료되며, 지난 예약과 취소 내역은 유지돼요. 탈퇴한 계정은 복구할 수 없어요.</p>
+      <form className="auth-form withdrawal-form" onSubmit={submit}>
+        <label className="field">현재 비밀번호<input name="currentPassword" type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} required maxLength={100} disabled={remove.isPending} placeholder="현재 비밀번호를 입력해 주세요"/></label>
+        {remove.isError&&<ErrorNotice error={remove.error}/>}
+        <div className="dialog-actions withdrawal-actions"><button className="button secondary" type="button" onClick={close} disabled={remove.isPending}>취소</button><button className="button danger" type="submit" disabled={remove.isPending||!password}>{remove.isPending?<><LoaderCircle size={17} className="spin"/>탈퇴 처리 중</>:'탈퇴하기'}</button></div>
+      </form>
+    </Modal>}
   </div>;
 }
 
@@ -51,15 +70,40 @@ function DoctorsPanel({doctors,departments,refresh,notify}:{doctors:Doctor[];dep
   const [editing,setEditing]=useState<Doctor|null|undefined>();
   return <section className="panel hospital-section"><div className="section-heading"><div><h2>등록한 의료진 <span className="count-pill">{doctors.length}</span></h2><p>의료진의 진료과와 전문 분야를 설정하세요.</p></div><button className="button primary small" onClick={()=>setEditing(null)}><Plus size={17}/>의료진 등록</button></div>
     {doctors.length?<div className="managed-doctors">{doctors.map(doctor=><article className="managed-doctor" key={doctor.id}><div className="managed-doctor-icon"><Stethoscope size={27}/></div><div><span className={`status-badge ${doctor.active===false?'canceled':''}`}>{doctor.active===false?'예약 중지':'진료 중'}</span><h3>{doctor.name}</h3><p>{departments.find(d=>d.code===doctor.departmentCode)?.name||doctor.departmentCode}</p><small>{doctor.specialty||'전문 분야 미등록'}</small></div><button className="button outline small" onClick={()=>setEditing(doctor)}>수정</button></article>)}</div>:<div className="empty-inline"><Stethoscope size={35}/><h3>첫 의료진을 등록해 주세요</h3><p>의료진을 등록한 다음 진료 일정과 예약 정원을 설정할 수 있어요.</p></div>}
-    {editing!==undefined&&<DoctorEditor doctor={editing} departments={departments} close={()=>setEditing(undefined)} saved={()=>{setEditing(undefined);refresh();notify(editing?'의료진 정보를 수정했어요.':'의료진을 등록했어요.');}}/>}
+    {editing!==undefined&&<DoctorEditor doctor={editing} departments={departments} close={()=>setEditing(undefined)} saved={()=>{setEditing(undefined);refresh();notify(editing?'의료진 정보를 수정했어요.':'의료진을 등록했어요.');}} deleted={()=>{setEditing(undefined);refresh();notify('의료진을 삭제했어요.');}}/>}
   </section>;
 }
 
-function DoctorEditor({doctor,departments,close,saved}:{doctor:Doctor|null;departments:Department[];close:()=>void;saved:()=>void}){
+function DoctorEditor({doctor,departments,close,saved,deleted}:{doctor:Doctor|null;departments:Department[];close:()=>void;saved:()=>void;deleted:()=>void}){
   const [name,setName]=useState(doctor?.name||'');const [departmentCode,setDepartment]=useState(doctor?.departmentCode||departments[0]?.code||'01');const [specialty,setSpecialty]=useState(doctor?.specialty||'');const [active,setActive]=useState(doctor?.active!==false);
-  const save=useMutation({mutationFn:()=>api<Doctor>(base+'/doctors'+(doctor?'/'+encodeURIComponent(doctor.id):''),{method:doctor?'PATCH':'POST',body:JSON.stringify({name:name.trim(),departmentCode,specialty:specialty.trim(),...(doctor?{active}:{})})}),onSuccess:saved});
-  function submit(event:FormEvent){event.preventDefault();if(name.trim()&&!save.isPending)save.mutate();}
-  return <Modal title={doctor?'의료진 정보 수정':'의료진 등록'} close={close} busy={save.isPending}><form className="auth-form" onSubmit={submit}><label className="field">의료진 이름<input value={name} onChange={e=>setName(e.target.value)} required maxLength={50} autoComplete="off"/></label><label className="field">진료과<select value={departmentCode} onChange={e=>setDepartment(e.target.value)} required>{departments.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><label className="field">전문 분야 <small>선택</small><input value={specialty} onChange={e=>setSpecialty(e.target.value)} maxLength={100} placeholder="예) 무릎·어깨 진료"/></label>{doctor&&<label className="check-label"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/><span>이 의료진의 신규 예약 허용</span></label>}{doctor&&<p className="muted">예약을 중지해도 기존 예약은 유지돼요. 앞으로의 예약이 있는 의료진은 진료과를 변경할 수 없어요.</p>}{save.isError&&<ErrorNotice error={save.error}/>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={close} disabled={save.isPending}>취소</button><button type="submit" className="button primary" disabled={save.isPending||!name.trim()}>{save.isPending?'저장 중':'저장하기'}</button></div></form></Modal>;
+  const [confirmDelete,setConfirmDelete]=useState(false);const requestInFlight=useRef(false);const previousConfirm=useRef(false);
+  const deleteButton=useRef<HTMLButtonElement>(null);const keepButton=useRef<HTMLButtonElement>(null);
+  const save=useMutation({mutationFn:()=>api<Doctor>(base+'/doctors'+(doctor?'/'+encodeURIComponent(doctor.id):''),{method:doctor?'PATCH':'POST',body:JSON.stringify({name:name.trim(),departmentCode,specialty:specialty.trim(),...(doctor?{active}:{})})}),onSuccess:saved,onSettled:()=>{requestInFlight.current=false;}});
+  const remove=useMutation({mutationFn:()=>api<{deleted:boolean}>(base+'/doctors/'+encodeURIComponent(doctor!.id),{method:'DELETE'}),onSuccess:deleted,onError:()=>setConfirmDelete(false),onSettled:()=>{requestInFlight.current=false;}});
+  const busy=save.isPending||remove.isPending;
+  useEffect(()=>{if(confirmDelete)keepButton.current?.focus();else if(previousConfirm.current)deleteButton.current?.focus();previousConfirm.current=confirmDelete;},[confirmDelete]);
+  function submit(event:FormEvent){event.preventDefault();if(name.trim()&&!confirmDelete&&!busy&&!requestInFlight.current){requestInFlight.current=true;remove.reset();save.mutate();}}
+  function askDelete(){if(doctor&&!busy&&!requestInFlight.current){save.reset();remove.reset();setConfirmDelete(true);}}
+  function deleteDoctor(){if(doctor&&confirmDelete&&!busy&&!requestInFlight.current){requestInFlight.current=true;remove.mutate();}}
+  function dismiss(){if(!busy&&!requestInFlight.current){if(confirmDelete)setConfirmDelete(false);else close();}}
+  return <Modal title={confirmDelete?'의료진을 삭제할까요?':doctor?'의료진 정보 수정':'의료진 등록'} close={dismiss} busy={busy}>
+    {confirmDelete&&doctor?<>
+      <p className="dialog-copy"><strong>{doctor.name}</strong> 의료진을 등록 목록에서 삭제해요.</p>
+      <p className="muted">예정된 예약이 있다면 먼저 예약을 변경하거나 취소해 주세요. 삭제하면 남은 진료 일정은 닫히고, 지난 예약과 취소 내역은 유지돼요.</p>
+      <div className="dialog-actions"><button type="button" className="button secondary" ref={keepButton} onClick={dismiss} disabled={busy}>유지하기</button><button type="button" className="button danger" onClick={deleteDoctor} disabled={busy}>{remove.isPending?'삭제 중':'삭제하기'}</button></div>
+    </>:<form className="auth-form" onSubmit={submit}>
+      <label className="field">의료진 이름<input value={name} onChange={e=>setName(e.target.value)} required maxLength={50} autoComplete="off" disabled={busy}/></label>
+      <label className="field">진료과<select value={departmentCode} onChange={e=>setDepartment(e.target.value)} required disabled={busy}>{departments.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+      <label className="field">전문 분야 <small>선택</small><input value={specialty} onChange={e=>setSpecialty(e.target.value)} maxLength={100} placeholder="예) 무릎·어깨 진료" disabled={busy}/></label>
+      {doctor&&<label className="check-label"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)} disabled={busy}/><span>이 의료진의 신규 예약 허용</span></label>}
+      {doctor&&<p className="muted">예약을 중지해도 기존 예약은 유지돼요. 앞으로의 예약이 있는 의료진은 진료과를 변경할 수 없어요.</p>}
+      {save.isError&&<ErrorNotice error={save.error}/>}{remove.isError&&<ErrorNotice error={remove.error}/>}
+      <div className="dialog-actions doctor-editor-actions">
+        {doctor&&<button type="button" className="button quiet doctor-delete-action" ref={deleteButton} onClick={askDelete} disabled={busy}>삭제하기</button>}
+        <div className="doctor-save-actions"><button type="button" className="button secondary" onClick={dismiss} disabled={busy}>취소</button><button type="submit" className="button primary" disabled={busy||!name.trim()}>{save.isPending?'저장 중':'저장하기'}</button></div>
+      </div>
+    </form>}
+  </Modal>;
 }
 
 function SchedulePanel({userId,doctors,refresh,notify}:{userId:string;doctors:Doctor[];refresh:Refresh;notify:(message:string)=>void}){

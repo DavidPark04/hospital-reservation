@@ -30,6 +30,9 @@ public class HospitalManagementController {
         return booking.editDoctor(id, text(body, "name"), text(body, "departmentCode"), optionalText(body, "specialty"), bool(body, "active"));
     }
 
+    @DeleteMapping("/doctors/{id}")
+    public Document deleteDoctor(@PathVariable String id) { return booking.deleteDoctor(id); }
+
     @GetMapping("/slots")
     public Map<String, List<Document>> slots(@RequestParam String doctorId, @RequestParam String date) {
         return Map.of("items", booking.managedSlots(doctorId, date));

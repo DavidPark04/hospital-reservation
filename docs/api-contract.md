@@ -20,7 +20,7 @@
 | 제공자 콜백 | GET `/login/oauth2/code/{google\|kakao}` | OAuth state 검증 |
 | 소셜 결과 교환 | POST `/api/auth/social/exchange` | 같은 origin·일회용 HttpOnly 교환 쿠키 |
 | 소셜 가입 완료 | POST `/api/auth/social/profile` | 유효한 가입 임시 토큰 |
-| 개인 회원 탈퇴 | DELETE `/api/members/me` | 가입 완료 USER의 문자 인증. LOCAL은 현재 비밀번호도 확인 |
+| 회원 본인 탈퇴 | DELETE `/api/members/me` | USER는 문자 인증, LOCAL은 비밀번호도 확인. HOSPITAL은 현재 비밀번호 확인 |
 | 소셜 탈퇴 인증 시작 | POST `/api/auth/social/withdrawal/start` | 가입 완료 GOOGLE/KAKAO USER |
 | 소셜 탈퇴 확정 | POST `/api/auth/social/withdrawal/confirm` | 시작한 회원의 JWT·OAuth 재확인 쿠키·문자 인증 |
 | 소셜 탈퇴 취소 | POST `/api/auth/social/withdrawal/cancel` | 현재 회원의 JWT |
@@ -32,7 +32,7 @@
 | 예약 변경·취소 | PATCH·DELETE `/api/reservations/{id}` | 예약 소유자 |
 | 관리자 일정 | GET·POST `/api/admin/slots`, PATCH `/api/admin/slots/{id}` | ADMIN |
 | 회원 목록·삭제 | GET `/api/admin/members`, DELETE `/api/admin/members/{id}` | ADMIN |
-| 병원 정보·의료진 관리 | GET `/api/hospital/manage/hospital`, GET·POST `/api/hospital/manage/doctors`, PATCH `/api/hospital/manage/doctors/{id}` | HOSPITAL, 자기 병원 |
+| 병원 정보·의료진 관리 | GET `/api/hospital/manage/hospital`, GET·POST `/api/hospital/manage/doctors`, PATCH·DELETE `/api/hospital/manage/doctors/{id}` | HOSPITAL, 자기 병원 |
 | 병원 일정 관리 | GET·POST `/api/hospital/manage/slots`, PATCH `/api/hospital/manage/slots/{id}` | HOSPITAL, 자기 병원 |
 | 병원 예약 관리 | GET `/api/hospital/manage/reservations`, PATCH·DELETE `/api/hospital/manage/reservations/{id}` | HOSPITAL, 자기 병원 |
 
@@ -56,6 +56,7 @@
 | 병원 로그인 | `{businessNumber,password}` | `{token,user}`. 사업자번호는 하이픈 제거 후 10자리. User에 `role:HOSPITAL,hospitalId,businessNumber` 포함 |
 | 의료진 등록 | `{name,departmentCode,specialty?}` | Doctor 응답. 신규 `active:true,isVirtual:false` |
 | 의료진 수정 | `{name,departmentCode,specialty?,active}` | 자기 병원 의료진만 수정. 예정된 예약이 있으면 진료과 변경 거절 |
+| 의료진 삭제 | DELETE `/api/hospital/manage/doctors/{id}`, 본문 없음 | `{id,deleted:true}`. 자기 병원만 가능. 예정된 `RESERVED` 예약이 있으면 409. 반복 삭제는 같은 성공 응답 |
 | 일정 생성 | `{doctorId,date,startTime,endTime,intervalMinutes,capacity}` | `{items}`. 날짜는 오늘부터 365일 이내, 미래 시간만 생성. 간격 15~120분, 정원 1~100 |
 | 일정 수정 | `{capacity,closed}` | Slot 응답. 정원 0~100, 예약 인원 이하 축소·예약 있는 일정 휴진·지난 일정 수정 거절 |
 | 병원 예약 목록 | 선택 쿼리 `date=YYYY-MM-DD`, `status=RESERVED\|CANCELED` | `{items}`. 예약 응답에 `patientName,patientPhone`만 추가 |
@@ -63,7 +64,9 @@
 
 병원 정보 응답에는 기본정보와 `businessNumber`, 운영 진료과 `departments`, 의료진 등록용 `availableDepartments`가 있습니다. 병원명·주소·우편번호·전화번호는 읽기 전용이며 전화번호가 없으면 빈 문자열입니다. 등록된 병원이라도 의료진·일정을 직접 등록하기 전에는 예약 가능 항목이 비어 있습니다.
 
-모든 병원 관리 요청은 JWT 계정과 활성 `hospitalRegistrations` 소속을 서버에서 확인합니다. 병원 계정은 개인 예약 생성 및 개인 회원 탈퇴 기능을 사용할 수 없습니다. 사업자 정보 대조는 실제 운영자 신원 인증이 아니며, 실제 병원·환자가 이용하는 서비스로 운영하려면 별도 권한 확인 절차가 필요합니다. 현재 수업 프로젝트 구현에는 운영자 승인 절차가 없습니다.
+의료진 삭제는 `deleted:true`, `active:false`, `deletedAt` 기록, 미래의 빈 시간표 마감과 운영 진료과 갱신을 한 트랜잭션으로 처리합니다. 삭제된 의료진은 병원·개인 목록에서 제외하며 재수정·재활성화·일정 변경·신규 예약을 거절합니다. 이미 저장한 과거 예약·취소 이력은 유지합니다. 병원 수정 창에서 삭제 확인 후 요청하고, 예정 예약으로 인한 409는 예약 변경·취소 후 다시 시도하도록 안내합니다.
+
+모든 병원 관리 요청은 JWT 계정과 활성 `hospitalRegistrations` 소속을 서버에서 확인합니다. 병원 계정은 개인 예약을 생성할 수 없고, 병원 정보 화면에서 현재 비밀번호를 확인해 본인 탈퇴할 수 있습니다. 사업자 정보 대조는 실제 운영자 신원 인증이 아니며, 실제 병원·환자가 이용하는 서비스로 운영하려면 별도 권한 확인 절차가 필요합니다. 현재 수업 프로젝트 구현에는 운영자 승인 절차가 없습니다.
 
 ## 가입과 로그인
 
@@ -159,7 +162,9 @@ PATCH `/api/auth/email`은 `{email,emailVerificationToken}`을 받고 새 주소
 
 DELETE `/api/admin/members/{id}`는 관리자만 개인·병원 회원을 삭제할 수 있습니다. 개인 회원은 기존대로 회원 삭제·활성 예약 취소·정원 반환·요청 키 제거를 한 트랜잭션으로 처리합니다. 병원 회원은 계정과 일치하는 등록의 병원 ID·소유자·사업자등록번호를 확인하고, 계정·`hospitalRegistrations`·관련 요청 및 인증 자료를 삭제하면서 병원 의료진을 비활성화하고 일정을 닫습니다. 해당 병원의 `RESERVED` 예약을 취소하고 정원을 반환하며, 관리자 ID와 `CANCEL` 이벤트를 기록합니다. 이 전체 작업이 한 트랜잭션이므로 등록 정보 불일치(409)나 처리 실패 시 함께 되돌립니다.
 
-병원 기본 카탈로그와 의료진·일정 문서, 예약·이벤트 이력은 보존합니다. 삭제 후 공개 검색·신규 예약·기존 병원 계정의 로그인과 관리는 차단됩니다. 같은 병원은 사업자 조회부터 다시 진행해 새 계정으로 가입할 수 있으나 기존 의료진과 일정은 자동으로 활성화하지 않습니다. 병원 본인의 개인 회원 탈퇴 요청은 계속 허용하지 않습니다. 삭제 응답은 `{message,deletedUserId,canceledReservations}`를 유지합니다.
+병원 기본 카탈로그와 의료진·일정 문서, 예약·이벤트 이력은 보존합니다. 삭제 후 공개 검색·신규 예약·기존 병원 계정의 로그인과 관리는 차단됩니다. 같은 병원은 사업자 조회부터 다시 진행해 새 계정으로 가입할 수 있으나 기존 의료진과 일정은 자동으로 활성화하지 않습니다. 삭제 응답은 `{message,deletedUserId,canceledReservations}`를 유지합니다.
+
+병원 본인의 탈퇴는 DELETE `/api/members/me`에 `{password}`를 전송합니다. 서버가 현재 로그인한 LOCAL 병원 계정과 현재 비밀번호를 확인한 뒤 위와 같은 병원 정리 작업을 한 트랜잭션으로 실행합니다. 본문의 다른 회원 ID로 대상을 바꿀 수 없습니다. 병원 계정에는 문자 인증을 요구하지 않으며 개인 USER의 문자 인증과 ADMIN 탈퇴 금지는 그대로 유지합니다. 성공하면 `{message,deletedUserId,canceledReservations}`를 반환하고 모든 기존 세션은 사용할 수 없습니다. 화면에서는 로그인·캐시를 비우고 홈으로 이동합니다.
 
 ## 오류
 
