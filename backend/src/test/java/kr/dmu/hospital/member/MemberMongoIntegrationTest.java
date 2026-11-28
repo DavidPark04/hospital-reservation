@@ -2,6 +2,7 @@ package kr.dmu.hospital.member;
 
 import kr.dmu.hospital.auth.TestContactProofs;
 import com.mongodb.ConnectionString;
+import com.mongodb.MongoException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.result.DeleteResult;
@@ -45,6 +46,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -824,7 +826,15 @@ class MemberMongoIntegrationTest {
         String hospitalUser = hospitalAccount();
         CountDownLatch closureOwnsDoctors = new CountDownLatch(1);
         CountDownLatch releaseClosure = new CountDownLatch(1);
-        CountDownLatch operationReachedLock = new CountDownLatch(1);
+        CountDownLatch operationConflicted = new CountDownLatch(1);
+        CountDownLatch closureCommitted = new CountDownLatch(1);
+        AtomicReference<RuntimeException> conflict = new AtomicReference<>();
+        java.util.function.Consumer<RuntimeException> waitForClosure = error -> {
+            if (conflict.compareAndSet(null, error)) {
+                operationConflicted.countDown();
+                await(closureCommitted);
+            }
+        };
         AtomicBoolean firstClosure = new AtomicBoolean(true);
         MongoTemplate deletionMongo = new MongoTemplate(factory) {
             @Override public UpdateResult updateMulti(Query query, UpdateDefinition update, String collection) {
@@ -835,12 +845,20 @@ class MemberMongoIntegrationTest {
         };
         MongoTemplate operationMongo = new MongoTemplate(factory) {
             @Override public UpdateResult updateFirst(Query query, UpdateDefinition update, String collection) {
-                if (HospitalAccountService.REGISTRATIONS.equals(collection)) operationReachedLock.countDown();
-                return super.updateFirst(query, update, collection);
+                try {
+                    return super.updateFirst(query, update, collection);
+                } catch (RuntimeException error) {
+                    if (HospitalAccountService.REGISTRATIONS.equals(collection)) waitForClosure.accept(error);
+                    throw error;
+                }
             }
             @Override public <T> T findAndModify(Query query, UpdateDefinition update, FindAndModifyOptions options, Class<T> type, String collection) {
-                if ("doctors".equals(collection)) operationReachedLock.countDown();
-                return super.findAndModify(query, update, options, type, collection);
+                try {
+                    return super.findAndModify(query, update, options, type, collection);
+                } catch (RuntimeException error) {
+                    if ("doctors".equals(collection)) waitForClosure.accept(error);
+                    throw error;
+                }
             }
         };
         MemberService concurrentMembers = new MemberService(deletionMongo, new BookingService(deletionMongo, transactionManager), transactionManager, new BCryptPasswordEncoder());
@@ -848,7 +866,7 @@ class MemberMongoIntegrationTest {
         try (var executor = Executors.newFixedThreadPool(2)) {
             Future<Document> deleted = executor.submit(() -> concurrentMembers.delete(ADMIN, hospitalUser));
             try {
-                assertTrue(closureOwnsDoctors.await(10, TimeUnit.SECONDS));
+                assertTrue(closureOwnsDoctors.await(10, TimeUnit.SECONDS), "Closure must acquire its doctor write lock first.");
                 Future<Integer> attempted = executor.submit(() -> {
                     try {
                         switch (operation) {
@@ -860,16 +878,30 @@ class MemberMongoIntegrationTest {
                         return 200;
                     } catch (ApiException error) { return error.getStatus(); }
                 });
-                assertTrue(operationReachedLock.await(10, TimeUnit.SECONDS));
+                // BOOK already owns the slot before attempting the doctor write. Releasing
+                // closure before this write conflicts lets closure hit that slot lock and
+                // become the retry victim instead. Observe the actual aborted operation
+                // transaction, then let closure commit before allowing the operation retry.
+                assertTrue(operationConflicted.await(10, TimeUnit.SECONDS), "Concurrent operation must reach a MongoDB write conflict.");
+                assertTrue(transactionConflict(conflict.get()), "The blocked operation must fail with a transaction write conflict.");
                 releaseClosure.countDown();
                 assertEquals(0, deleted.get(20, TimeUnit.SECONDS).getInteger("canceledReservations"));
+                closureCommitted.countDown();
                 assertTrue(List.of(404, 409).contains(attempted.get(20, TimeUnit.SECONDS)));
                 assertEquals(3, mongo.getCollection("timeSlots").countDocuments());
                 assertEquals(0, mongo.getCollection("reservations").countDocuments());
                 assertEquals(0, count("slot-1"));
                 assertTrue(mongo.findById("slot-1", Document.class, "timeSlots").getBoolean("closed"));
-            } finally { releaseClosure.countDown(); }
+            } finally { releaseClosure.countDown(); closureCommitted.countDown(); }
         }
+    }
+
+    private boolean transactionConflict(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof MongoException mongoError && (mongoError.getCode() == 112
+                    || mongoError.hasErrorLabel("TransientTransactionError"))) return true;
+        }
+        return false;
     }
 
     private String hospitalAccount() {
