@@ -5,6 +5,7 @@ import com.mongodb.MongoException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.bson.Document;
@@ -145,14 +146,6 @@ public class UserIndexes implements ApplicationRunner {
             // Hospital phone numbers are official facility contact fields, not personal identity claims.
             if ("HOSPITAL".equals(user.getString("role"))) continue;
             Document contact = new Document("_id", user.getString("_id"));
-            // Only the trusted data seeder can set this flag; placeholder contacts claim no identity.
-            if (Boolean.TRUE.equals(user.getBoolean("testUser"))) {
-                if (!Boolean.FALSE.equals(user.getBoolean("memberIdentityClaimed"))
-                        || !Boolean.FALSE.equals(user.getBoolean("emailVerified")) || !Boolean.FALSE.equals(user.getBoolean("phoneVerified"))) {
-                    contacts.add(contact.append("testUser", true));
-                }
-                continue;
-            }
             if (MemberIdentity.complete(user)) {
                 Object rawPhone = user.get("phone");
                 if (rawPhone != null && !(rawPhone instanceof String)) throw invalidExistingContact();
@@ -176,9 +169,23 @@ public class UserIndexes implements ApplicationRunner {
                     contact.append("nameNormalized", MemberIdentity.normalizedName(name));
                 }
             }
-            contacts.add(contact);
+            // Validate every member above, but avoid a network write for already canonical contacts.
+            if (requiresContactBackfill(user, contact)) contacts.add(contact);
         }
         return contacts;
+    }
+    private boolean requiresContactBackfill(Document user, Document contact) {
+        if (contact.containsKey("phone") && !Objects.equals(user.get("phone"), contact.get("phone"))) return true;
+        if (Boolean.TRUE.equals(contact.getBoolean("clearBlankPhone")) && user.containsKey("phone")) return true;
+        for (String field : List.of("emailNormalized", "nameNormalized")) {
+            if (contact.containsKey(field)) {
+                if (!Objects.equals(user.get(field), contact.get(field))) return true;
+            } else if (user.containsKey(field)) return true;
+        }
+        if (contact.containsKey("phone") || contact.containsKey("emailNormalized")) {
+            return !Boolean.TRUE.equals(user.get("memberIdentityClaimed"));
+        }
+        return user.containsKey("memberIdentityClaimed");
     }
     private void backfillMemberContacts(List<Document> contacts) {
         // The read-only preflight runs before any migration or index changes.
@@ -186,11 +193,6 @@ public class UserIndexes implements ApplicationRunner {
         try {
             for (Document contact : contacts) {
                 Update update = new Update();
-                if (Boolean.TRUE.equals(contact.getBoolean("testUser"))) {
-                    mongo.updateFirst(Query.query(Criteria.where("_id").is(contact.getString("_id"))),
-                            update.set("memberIdentityClaimed", false).set("emailVerified", false).set("phoneVerified", false), "users");
-                    continue;
-                }
                 if (contact.containsKey("phone")) update.set("phone", contact.getString("phone"));
                 else if (Boolean.TRUE.equals(contact.getBoolean("clearBlankPhone"))) update.unset("phone");
                 if (contact.containsKey("emailNormalized")) update.set("emailNormalized", contact.getString("emailNormalized"));

@@ -203,8 +203,8 @@ class PersonalAccountVerificationMongoTest {
         String id = "test0001";
         mongo.insert(new Document("_id", id).append("loginId", id).append("name", id).append("role", "USER")
                 .append("authProvider", "LOCAL").append("passwordHash", passwords.encode(CURRENT)).append("testUser", true)
-                .append("phone", "01012345678").append("email", "test0001@example.com")
-                .append("emailNormalized", "test0001@example.com").append("memberIdentityClaimed", false)
+                .append("phone", "01000010001").append("email", "test0001@example.com")
+                .append("emailNormalized", "test0001@example.com").append("memberIdentityClaimed", true)
                 .append("phoneVerified", false).append("emailVerified", false).append("tokenVersion", 0), "users");
         String token = (String) auth.login(Map.of("loginId", id, "password", CURRENT)).get("token");
         assertEquals(id, authenticate(token).getId());
