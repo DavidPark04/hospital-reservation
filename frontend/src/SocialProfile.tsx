@@ -57,14 +57,30 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
   return <div className="page-wrap profile-signup-page"><section className="panel profile-signup-panel" aria-labelledby="profile-signup-title">
     <span className="profile-auth-complete"><CheckCircle2 size={18}/>{loginMethod(user.authProvider)} 인증 완료</span>
     <h1 id="profile-signup-title">회원가입을 마무리해 주세요</h1>
-    <p className="profile-signup-copy">{loginMethod(user.authProvider)} 인증이 완료됐어요.<br/>이름을 입력하고 이메일과 휴대전화를 인증해 주세요.</p>
+    <p className="profile-signup-copy">{loginMethod(user.authProvider)} 인증이 완료됐어요.<br/>이름을 입력하고 휴대전화와 이메일을 인증해 주세요.</p>
     <form className="auth-form" onSubmit={submit}>
       <label className="field" htmlFor="social-profile-name">이름<input id="social-profile-name" name="name" autoComplete="name" value={name} onChange={event=>setName(event.target.value)} onBlur={()=>setName(name.trim())} required minLength={1} maxLength={40} placeholder="사용할 이름을 입력해 주세요" disabled={busy}/></label>
-      <label className="field" htmlFor="social-profile-email">이메일<input className={emailToken?'contact-locked':undefined} id="social-profile-email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={event=>{setEmail(event.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="social-email-help" disabled={busy||!!emailToken}/><small id="social-email-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
-      <EmailVerification purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy} disabled={mutation.isPending||canceling||switching||phoneBusy||sessionExpired}/>
-      <label className="field" htmlFor="social-profile-phone">휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} id="social-profile-phone" name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
-      <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} onExistingAccount={setExistingProvider} disabled={mutation.isPending||canceling||switching||emailBusy||sessionExpired}/>
-      {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy} loading={switching}/>}
+      <div className="auth-contact-block">
+        <label className="field" htmlFor="social-profile-phone">휴대전화번호
+          <PhoneInput className={phoneToken?'contact-locked':undefined} id="social-profile-phone" name="phone" value={phone}
+            onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}}
+            required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/>
+        </label>
+        <PhoneVerification compact purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy}
+          onExistingAccount={setExistingProvider} disabled={mutation.isPending||canceling||switching||emailBusy||sessionExpired}/>
+        {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy} loading={switching}/>}
+      </div>
+      <div className="auth-contact-block">
+        <label className="field" htmlFor="social-profile-email">이메일
+          <input className={emailToken?'contact-locked':undefined} id="social-profile-email" name="email" type="email"
+            autoComplete="email" autoCapitalize="none" spellCheck={false} value={email}
+            onChange={event=>{setEmail(event.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())}
+            required maxLength={254} placeholder="example@email.com" aria-describedby="social-email-help" disabled={busy||!!emailToken}/>
+        </label>
+        <EmailVerification compact purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy}
+          disabled={mutation.isPending||canceling||switching||phoneBusy||sessionExpired}/>
+        <small id="social-email-help" className="verification-help social-contact-help">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small>
+      </div>
       {(validationError||mutation.isError)&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{sessionExpired?'가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요.':validationError||mutation.error?.message}</div></div>}
       {sessionExpired&&<button type="button" className="button secondary full" onClick={restartLogin} disabled={busy}>{switching?<><LoaderCircle size={18} className="spin"/>로그인 화면으로 이동 중</>:`${loginMethod(user.authProvider)}로 다시 인증하기`}</button>}
       <button type="submit" className="button primary full" disabled={busy||sessionExpired||!emailToken||!phoneToken||!!existingProvider}>{mutation.isPending?<><LoaderCircle size={18} className="spin"/>가입 정보 저장 중</>:'가입 완료'}</button>
