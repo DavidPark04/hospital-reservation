@@ -165,8 +165,6 @@
 .auth-dialog .auth-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .auth-dialog .auth-label-row button { margin: 0; padding: 0; font-size: .8rem; }
 
-:root:has(.profile-signup-page) { scrollbar-gutter: stable; }
-
 :is(.auth-dialog, .profile-signup-panel) .auth-contact-block {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 5rem;
@@ -283,11 +281,12 @@
 
 .auth-contact-block > .member-conflict-notice { grid-column: 1 / -1; }
 
-.dialog-overlay:has(.personal-signup-form) {
+.dialog-overlay:has(.personal-signup-form, > .auth-dialog--recovery) {
   align-items: flex-start;
   padding-block-start: clamp(12px, calc(50dvh - 22rem), 8dvh);
 }
-.dialog-overlay:has(.personal-signup-form) > .auth-dialog { max-height: 100%; }
+.dialog-overlay:has(.personal-signup-form, > .auth-dialog--recovery) > .auth-dialog { max-height: 100%; }
+.dialog.auth-dialog--recovery { scrollbar-gutter: stable; }
 
 .dialog.auth-dialog--stepped-signup {
   width: 532px;
