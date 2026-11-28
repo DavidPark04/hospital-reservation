@@ -89,6 +89,14 @@ flowchart LR
 
 상세 설계는 [아키텍처](docs/architecture.md), [API 계약](docs/api-contract.md), [DB 구조와 필드 설명](docs/database.md)를 함께 갱신합니다. 전국 기본 목록 수집·DB 적용·재실행 방법은 [병원 목록 운영 안내](docs/hospital-catalog.md)를 참고합니다.
 
+### 예약 흐름 핵심 ERD
+
+병원은 의료진별 진료 시간대를 등록하고, 개인 회원은 시간대를 선택해 예약합니다.
+
+![병원과 의료진, 의료진과 진료 시간대, 진료 시간대와 예약, 개인 회원과 예약의 일대다 관계](docs/erd/reservation-core.png)
+
+[ERDCloud 편집용 JSON](docs/erd/reservation-core.json) · [전체 컬렉션과 필드 설명](docs/database.md)
+
 ## 5. 계획서와 발표자료
 
 | 자료 | 위치 |
