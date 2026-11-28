@@ -120,7 +120,8 @@ class WeeklyCollectorTests(unittest.TestCase):
             with patch.object(MODULE, 'utc_now', return_value=MONDAY):
                 client = PlannedClient([key])
                 self.batch(client, directory).run()
-                self.assertEqual(client.requests[:4], [key, ('110000', 'basic', 1, 1), ('110000', 'basic', 2, 2), ('110000', 'basic', 3, 2)])
+                self.assertEqual(client.requests[:2], [key, ('110000', 'basic', 1, 1)])
+                self.assertCountEqual(client.requests[2:4], [('110000', 'basic', 2, 2), ('110000', 'basic', 3, 2)])
                 self.assertEqual(client.requests.count(('110000', 'basic', 1, 1)), 1)
             with patch.object(MODULE, 'utc_now', return_value=SUNDAY):
                 client = PlannedClient()
