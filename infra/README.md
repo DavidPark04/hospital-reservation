@@ -49,17 +49,19 @@ GitHub Actions에서 검사한 커밋을 배포하는 [공식 외부 CI 방식](
 
 자동 배포 토큰이 만료되면 기존 사이트는 유지되지만 새 배포 인증이 실패합니다. Vercel에서 같은 프로젝트 범위의 토큰을 다시 발급해 GitHub의 `VERCEL_TOKEN`만 교체한 뒤 `main` 재배포를 실행합니다.
 
-## 병원 기본 목록 일일 갱신
+## 병원 기본 목록 요일별 지역 갱신
 
-[Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 매일 `15:00 UTC`, 한국 시간 `00:00`에 실행하도록 예약합니다. 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 `hospitals`에서 추가·변경·비활성화할 문서만 적용합니다. 상세 3종은 이 작업에서 수집하지 않으며 `hospitalDetails`에 저장하는 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
+[Hospital basic catalog sync](../.github/workflows/hospital-catalog-sync.yml)는 월~토 한국 시간 `00:00`에 실행하도록 예약합니다. 월 서울, 화 경기, 수 부산·전남광주·경남, 목 대구·인천·경북, 금 전북·충남·대전, 토 충북·강원·울산·제주·세종·광주 별도 코드이며 일요일은 예약 실행이 없습니다. UTC 전날 15시의 여섯 cron을 각각 등록하고 원래 cron으로 요일을 선택하여, 지연 실행이나 재실행 중에도 대상 지역이 바뀌지 않게 합니다.
 
-Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API를 호출하거나 매일 재배포하지 않습니다. 일반 검색·AI 후보 조회는 기본 카탈로그 중 활성 등록 병원만 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다. 등록되지 않은 병원도 기본 카탈로그에서는 보존·갱신합니다.
+대상 지역의 기본 API 전체 목록과 지원 진료과별 목록을 모두 수집·검증한 뒤 해당 지역의 `hospitals`에서 추가·변경·비활성화할 문서만 적용합니다. 다른 지역은 이번 파일에 없다는 이유로 비활성화하지 않습니다. 500건 페이지로 시작하고 통신·서비스 오류가 최대 3회 계속되면 같은 조회 위치를 100건씩 나누어 재시도합니다. 상세 3종은 이 작업에서 수집하지 않으며 `hospitalDetails`에 저장하는 웹의 1시간 캐시를 유지합니다. 저장된 병원 내용이 같으면 문서를 다시 쓰지 않고 실행 성공 기록만 갱신합니다.
 
-GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각 완료를 보장하지 않습니다. 공개 저장소가 60일간 비활성 상태면 스케줄이 중지될 수 있습니다. Actions에서 다시 활성화하거나 **Run workflow → main**으로 실행하고 실제 완료 건수를 확인합니다. [GitHub 예약 실행 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+Repository secrets에 `HIRA_HOSPITAL_KEY`, `MONGODB_URI`를 등록해야 합니다. 수집·DB 적용은 GitHub runner에서 직접 진행하며 Vercel 운영 API·재배포와 별도로 동작합니다. 일반 검색·AI 후보 조회는 기본 카탈로그 중 활성 등록 병원만 읽고 웹 요청으로 기본 API 수집을 시작하지 않습니다. 등록되지 않은 병원도 기본 카탈로그에서는 보존·갱신합니다.
 
-처음 배포하기 전에 기본 카탈로그 적재를 완료하고, 일일 워크플로의 성공 결과를 별도로 확인합니다. 수동 수집·계획 확인·적용 명령과 실패 복구는 [병원 목록 운영 안내](../docs/hospital-catalog.md)를 따릅니다. 아직 실행되지 않은 워크플로나 문서 추가를 운영 갱신 완료로 기록하지 않습니다.
+GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각 시작·완료를 보장하지 않습니다. 공개 저장소가 60일간 비활성 상태면 스케줄이 중지될 수 있습니다. Actions에서 다시 활성화하거나 **Run workflow → main → day**에서 갱신할 요일 그룹(`monday`~`saturday`, 기본 `monday`)을 골라 실행하고 실제 완료 건수를 확인합니다. 수동 실행은 실행 당일이나 전국 전체로 자동 변경하지 않습니다. [GitHub 예약 실행 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
-이전 DB의 `hospitalBasicCatalog`·`hospitals`를 새 버전의 `hospitals`·`hospitalDetails`로 전환할 때는 [컬렉션 이름 전환 절차](../docs/hospital-catalog.md#기존-컬렉션-이름-전환)를 따릅니다. 운영 트래픽과 같은 DB의 쓰기 작업을 중지한 구간에 이름 전환·새 버전 배포를 모두 완료하며, 기존 요청과 일일 수집이 실행 중인 상태에서는 전환하지 않습니다.
+처음 배포하기 전에 기본 카탈로그 적재를 완료하고, 지역별 워크플로의 성공 결과를 별도로 확인합니다. `hospital-basic-last-run`은 마지막 성공 실행의 범위·건수이며 전국 DB 총건수를 뜻하지 않습니다. 지역별 성공·적용 시작 기준과 기존 전국 기준을 함께 사용해 이전 자료가 최신 결과를 덮어쓰지 못하게 합니다. 수동 수집·계획 확인·적용 명령과 실패 복구는 [병원 목록 운영 안내](../docs/hospital-catalog.md)를 따릅니다. 아직 실행되지 않은 워크플로나 문서 추가를 운영 갱신 완료로 기록하지 않습니다.
+
+이전 DB의 `hospitalBasicCatalog`·`hospitals`를 새 버전의 `hospitals`·`hospitalDetails`로 전환할 때는 [컬렉션 이름 전환 절차](../docs/hospital-catalog.md#기존-컬렉션-이름-전환)를 따릅니다. 운영 트래픽과 같은 DB의 쓰기 작업을 중지한 구간에 이름 전환·새 버전 배포를 모두 완료하며, 기존 요청과 예약 수집이 실행 중인 상태에서는 전환하지 않습니다.
 
 ## Production 환경변수
 
@@ -134,7 +136,7 @@ Identity Platform에서 Phone 공급업체를 활성화하고 승인 도메인�
 1. 프로젝트 소유자가 Vercel Production 환경변수와 GitHub Actions secrets를 적용합니다. 작업 브랜치에서 `main`으로 올린 PR의 저장소·프론트·백엔드 검사가 통과하면 Squash로 병합합니다.
 2. 병합 커밋의 `main` 푸시 검사 두 개와 Vercel production 결과를 확인합니다. 배포가 끝나면 `git ls-remote origin refs/heads/main refs/heads/develop`으로 두 브랜치가 배포한 SHA를 가리키는지 확인합니다.
 3. Vercel에서 두 service의 빌드와 Ready 상태를 확인합니다. React 화면 HTTP 200만으로 backend 성공을 판단하지 않습니다.
-4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 검색은 적재된 MongoDB 카탈로그의 활성 등록 병원만 반환하고 기본 API를 호출하지 않아야 합니다. 미등록 병원은 검색·추천·상세·신규 예약에 노출하지 않습니다. 일일 동기화 완료 건수와 이름·지역·관리 진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크도 확인합니다.
+4. `/`, `/login`, `/mypage` 직접 접속·새로고침, JS/CSS 자원, `/api/health`, `/api/meta`, 병원 검색을 확인합니다. 검색은 적재된 MongoDB 카탈로그의 활성 등록 병원만 반환하고 기본 API를 호출하지 않아야 합니다. 미등록 병원은 검색·추천·상세·신규 예약에 노출하지 않습니다. 지역별 동기화 대상·완료 건수와 이름·지역·관리 진료과 검색 결과를 함께 확인합니다. API 경로가 `index.html`을 돌려주지 않아야 합니다. 실제 병원 상세의 지도·길찾기 목적지, 좌표·SDK 실패 시 안내와 검색 링크도 확인합니다.
 5. 사용자 운영 callback 등록 후 일반 로그인·소셜 인증·추가 입력·중복 안내·로그아웃·관리자 목록을 검증합니다. 가입 미완료 자료는 `users`나 관리자 목록에 없어야 합니다.
 6. 사용자가 정한 시험 계정으로 개인/병원 가입·로그인, 기본정보 수정 차단, 의료진·일정·정원·휴진과 예약 생성·변경·취소를 확인합니다. 다른 병원 관리 요청이 차단되는지도 확인합니다. 서비스의 실제 계정을 임의로 생성·삭제하지 않습니다.
 7. 유휴 상태에서 서버가 다시 시작돼도 기존 회원·예약이 유지되고 로그인·검색이 다시 되는지 확인합니다. 운영 결과와 미완료 항목을 해당 PR 및 [진행 현황](../docs/progress-and-next.md)에 기록합니다.

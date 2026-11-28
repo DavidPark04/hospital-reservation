@@ -82,7 +82,7 @@ jobs:
       - name: Test daily hospital catalog collection and MongoDB updates
         run: |
           npm ci --ignore-scripts
-          python3 -m unittest discover -s scripts/tests -p 'test_hospital_catalog.py'
+          python3 -m unittest discover -s scripts/tests -p 'test_hospital_catalog*.py'
           node --test scripts/tests/hospital-catalog.test.mjs scripts/tests/hospital-collection-rename.test.mjs scripts/tests/backend-runtime.test.mjs
       - name: Require all tests to execute
         shell: bash

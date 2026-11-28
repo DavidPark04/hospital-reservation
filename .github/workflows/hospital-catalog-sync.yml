@@ -2,9 +2,27 @@ name: Hospital basic catalog sync
 
 on:
   schedule:
-    # 15:00 UTC is 00:00 Asia/Seoul. GitHub can delay scheduled jobs.
-    - cron: '0 15 * * *'
+    # Separate triggers retain the intended KST weekday across delays and re-runs.
+    - cron: '0 15 * * 0' # Monday 00:00 KST
+    - cron: '0 15 * * 1' # Tuesday 00:00 KST
+    - cron: '0 15 * * 2' # Wednesday 00:00 KST
+    - cron: '0 15 * * 3' # Thursday 00:00 KST
+    - cron: '0 15 * * 4' # Friday 00:00 KST
+    - cron: '0 15 * * 5' # Saturday 00:00 KST
   workflow_dispatch:
+    inputs:
+      day:
+        description: 'Region group to refresh (KST weekday; see README)'
+        type: choice
+        required: true
+        default: monday
+        options:
+          - monday
+          - tuesday
+          - wednesday
+          - thursday
+          - friday
+          - saturday
 
 permissions:
   contents: read
@@ -31,17 +49,25 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+      - name: Select scheduled region group
+        id: plan
+        run: python scripts/hospital-catalog-schedule.py
       - name: Install MongoDB client
         run: npm ci --ignore-scripts
-      - name: Collect every region and validate complete basic snapshot
+      - name: Collect selected regions and validate complete scoped snapshot
         env:
           HIRA_HOSPITAL_KEY: ${{ secrets.HIRA_HOSPITAL_KEY }}
-        run: python scripts/collect-hospital-catalog.py --directory .runtime/hospital-catalog --page-size 1000 --timeout 120 --workers 2 --maximum-calls 10000
-      - name: Apply changed records and retire missing records
+          CATALOG_REGIONS: ${{ steps.plan.outputs.regions }}
+        # Larger 1000-row responses can return HIRA code 99 before the HTTP timeout.
+        # Start at 500; the collector falls back to 100 without changing offsets.
+        run: python scripts/collect-hospital-catalog.py --directory .runtime/hospital-catalog --regions "$CATALOG_REGIONS" --page-size 500 --timeout 120 --workers 2 --maximum-calls 10000
+      - name: Apply changes and retire missing records only in selected regions
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: node scripts/sync-hospital-catalog.mjs --directory .runtime/hospital-catalog --apply
       - name: Publish counts
+        env:
+          CATALOG_PLAN_LABEL: ${{ steps.plan.outputs.label }}
         run: |
           python - <<'PY'
           import json, os
@@ -50,7 +76,8 @@ jobs:
           manifest = json.loads(Path('.runtime/hospital-catalog/catalog-manifest.json').read_text())
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
               regions = manifest['regionScopes']
-              output.write(f'Hospital basic catalog refreshed: {len(regions)}/17 region codes verified. Detailed API caching is unchanged.\n\n')
+              output.write(f"Hospital basic catalog refreshed: {os.environ['CATALOG_PLAN_LABEL']}.\n\n")
+              output.write(f'{len(regions)} selected region codes verified. Missing-record retirement is limited to these regions; detailed API caching is unchanged.\n\n')
               for field in ('rows', 'inserted', 'updated', 'reactivated', 'retired', 'unchanged', 'verified'):
                   output.write(f'- {field}: {result[field]}\n')
               output.write('\nRegional basic counts:\n\n')
