@@ -6,8 +6,10 @@ import {api,ApiError,beginSessionRenewal,clearToken,getToken} from './api';
 import type {AuthResult,User} from './api';
 import {loginMethod} from './SocialLogin';
 import {passwordChangeError} from './passwordValidation';
+import PhoneVerification from './PhoneVerification';
+import {formatPhone} from './phoneFormatting';
 
-type PasswordRequest={currentPassword:string;newPassword:string;sessionToken:string};
+type PasswordRequest={currentPassword:string;newPassword:string;sessionToken:string;phoneVerificationToken:string};
 
 export default function PasswordChange({user,onChanged}:{user:User;onChanged:(result:AuthResult,previousToken:string)=>void}){
   const [open,setOpen]=useState(false);
@@ -16,10 +18,12 @@ export default function PasswordChange({user,onChanged}:{user:User;onChanged:(re
   const [confirmation,setConfirmation]=useState('');
   const [error,setError]=useState('');
   const [success,setSuccess]=useState('');
+  const [phoneVerificationToken,setPhoneVerificationToken]=useState('');
+  const [verifying,setVerifying]=useState(false);
   const busy=useRef(false);
   const finishRenewal=useRef<(()=>void)|null>(null);
   const mutation=useMutation({
-    mutationFn:({currentPassword,newPassword}:PasswordRequest)=>api<AuthResult>('/auth/password',{method:'PATCH',body:JSON.stringify({currentPassword,newPassword})}),
+    mutationFn:({currentPassword,newPassword,phoneVerificationToken}:PasswordRequest)=>api<AuthResult>('/auth/password',{method:'PATCH',body:JSON.stringify({currentPassword,newPassword,phoneVerificationToken})}),
     onSuccess:(result,request)=>{
       onChanged(result,request.sessionToken);resetFields();setOpen(false);
       setSuccess('비밀번호를 변경했어요. 다음 로그인부터 새 비밀번호를 사용해 주세요.');
@@ -29,16 +33,17 @@ export default function PasswordChange({user,onChanged}:{user:User;onChanged:(re
     },
     onSettled:()=>{finishRenewal.current?.();finishRenewal.current=null;busy.current=false;}
   });
-  function resetFields(){setCurrentPassword('');setNewPassword('');setConfirmation('');setError('');}
-  function close(){if(busy.current)return;resetFields();mutation.reset();setOpen(false);}
+  function resetFields(){setCurrentPassword('');setNewPassword('');setConfirmation('');setError('');setPhoneVerificationToken('');}
+  function close(){if(busy.current||verifying)return;resetFields();mutation.reset();setOpen(false);}
   function submit(event:FormEvent){
-    event.preventDefault();if(busy.current)return;
+    event.preventDefault();if(busy.current||verifying)return;
     const message=passwordChangeError(currentPassword,newPassword,confirmation);
     if(message){setError(message);return;}
+    if(user.role==='USER'&&!phoneVerificationToken){setError('가입한 휴대전화 번호로 문자 인증을 완료해 주세요.');return;}
     const sessionToken=getToken();
     if(!sessionToken){window.dispatchEvent(new Event('auth-expired'));return;}
     setError('');setSuccess('');busy.current=true;finishRenewal.current=beginSessionRenewal(sessionToken);
-    mutation.mutate({currentPassword,newPassword,sessionToken});
+    mutation.mutate({currentPassword,newPassword,sessionToken,phoneVerificationToken});
   }
   const social=user.authProvider==='GOOGLE'||user.authProvider==='KAKAO';
   return <section className="password-settings" aria-labelledby="password-settings-title">
@@ -47,12 +52,15 @@ export default function PasswordChange({user,onChanged}:{user:User;onChanged:(re
     </div>
     {!social&&success&&<div className="notice password-success" role="status"><CheckCircle2 size={19}/><div>{success}</div></div>}
     {!social&&open&&<form className="auth-form password-change-form" onSubmit={submit}>
+      {user.role==='USER'&&<div className="field"><span>가입한 휴대전화</span><span>{user.phone?formatPhone(user.phone):'등록된 전화번호가 없어요.'}</span>
+        <PhoneVerification purpose="PASSWORD_CHANGE" phone={user.phone||''} onVerified={setPhoneVerificationToken} onBusy={setVerifying} disabled={mutation.isPending}/>
+      </div>}
       <label className="field" htmlFor="password-current">현재 비밀번호<input id="password-current" name="currentPassword" type="password" autoComplete="current-password" value={currentPassword} onChange={event=>{setCurrentPassword(event.target.value);setError('');}} required maxLength={100} disabled={mutation.isPending} autoFocus/></label>
       <label className="field" htmlFor="password-new">새 비밀번호<input id="password-new" name="newPassword" type="password" autoComplete="new-password" value={newPassword} onChange={event=>{setNewPassword(event.target.value);setError('');}} required minLength={8} maxLength={72} disabled={mutation.isPending} aria-describedby="password-new-help"/><small className="muted" id="password-new-help">8자 이상 입력해 주세요. 영문·숫자는 최대 72자, 한글은 최대 24자까지 사용할 수 있어요.</small></label>
       <label className="field" htmlFor="password-confirm">새 비밀번호 확인<input id="password-confirm" name="newPasswordConfirmation" type="password" autoComplete="new-password" value={confirmation} onChange={event=>{setConfirmation(event.target.value);setError('');}} required minLength={8} maxLength={72} disabled={mutation.isPending}/></label>
       {(error||mutation.isError)&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{error||mutation.error?.message}</div></div>}
       <p className="password-settings-help">변경 후 현재 로그인은 유지되고, 다른 곳에서 로그인한 세션은 종료돼요.</p>
-      <div className="password-change-actions"><button className="button secondary" type="button" onClick={close} disabled={mutation.isPending}>취소</button><button className="button primary" type="submit" disabled={mutation.isPending}>{mutation.isPending?<><LoaderCircle size={17} className="spin"/>변경 중</>:'변경하기'}</button></div>
+      <div className="password-change-actions"><button className="button secondary" type="button" onClick={close} disabled={mutation.isPending||verifying}>취소</button><button className="button primary" type="submit" disabled={mutation.isPending||verifying||(user.role==='USER'&&!phoneVerificationToken)}>{mutation.isPending?<><LoaderCircle size={17} className="spin"/>변경 중</>:'변경하기'}</button></div>
     </form>}
   </section>;
 }

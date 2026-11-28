@@ -34,6 +34,11 @@ public class UserIndexes implements ApplicationRunner {
 
     @Override public void run(ApplicationArguments args) {
         List<Document> contacts = memberContacts();
+        for (String collection : List.of(ContactVerificationService.CHALLENGES, ContactVerificationService.PROOFS,
+                ContactVerificationService.LIMITS, ContactVerificationService.PHONE_RECEIPTS)) {
+            mongo.getCollection(collection).createIndex(new Document("expiresAt", 1),
+                    new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("contact_verification_expiry_v1"));
+        }
         mongo.getCollection(MongoAuthorizationRequests.COLLECTION).createIndex(new Document("expiresAt", 1),
             new IndexOptions().expireAfter(0L, TimeUnit.SECONDS).name("oauth_authorization_expiry_v1"));
         mongo.getCollection(SocialLoginTickets.COLLECTION).createIndex(new Document("expiresAt", 1),

@@ -37,6 +37,12 @@ app:
     detail-key: ${HIRA_DETAIL_KEY:}
   comwel:
     api-key: ${COMWEL_API_KEY:}
+  verification:
+    smtp-username: ${SMTP_USERNAME:}
+    smtp-password: ${SMTP_PASSWORD:}
+    firebase-api-key: ${FIREBASE_API_KEY:}
+    firebase-auth-domain: ${FIREBASE_AUTH_DOMAIN:}
+    firebase-project-id: ${FIREBASE_PROJECT_ID:}
 logging:
   level:
     org.mongodb.driver: WARN

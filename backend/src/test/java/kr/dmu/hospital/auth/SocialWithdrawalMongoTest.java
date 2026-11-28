@@ -57,6 +57,7 @@ class SocialWithdrawalMongoTest {
     private SocialLoginTickets tickets;
     private SocialLoginFlow flow;
     private MockMvc mvc;
+    private static final String PHONE_PROOF = "test-phone-proof";
     private final SocialLoginSettings settings = new SocialLoginSettings("https://hospital.example", "https://hospital.example",
         "google-test", "google-secret", "kakao-test", "kakao-secret");
 
@@ -72,11 +73,11 @@ class SocialWithdrawalMongoTest {
             mongo.insert(new Document("_id", provider).append("loginId", provider + "_member").append("role", "USER")
                 .append("authProvider", provider.toUpperCase()).append("socialIdentity", provider.toUpperCase() + ":123")
                 .append("socialSubject", "123")
-                .append("profileComplete", true).append("tokenVersion", 2), "users");
+                .append("profileComplete", true).append("phone", "01012345678").append("tokenVersion", 2), "users");
         }
         requests = new MongoAuthorizationRequests(mongo, settings);
         members = mock(MemberService.class);
-        when(members.withdrawSocial(anyString(), anyString(), anyInt())).thenAnswer(call -> new Document("deletedUserId", call.getArgument(0))
+        when(members.withdrawSocial(anyString(), anyString(), anyInt(), eq(PHONE_PROOF))).thenAnswer(call -> new Document("deletedUserId", call.getArgument(0))
             .append("canceledReservations", 0).append("message", "회원 탈퇴가 완료되었습니다."));
         withdrawal = new SocialWithdrawalService(mongo, settings, requests, members);
         social = mock(SocialMemberService.class); tickets = mock(SocialLoginTickets.class);
@@ -103,10 +104,10 @@ class SocialWithdrawalMongoTest {
         String header = response.getHeaders("Set-Cookie").stream().filter(value -> value.startsWith(proof.getName() + "=")).findFirst().orElseThrow();
         assertTrue(header.contains("HttpOnly")); assertTrue(header.contains("Secure")); assertTrue(header.contains("SameSite=Strict"));
         signIn(provider);
-        mvc.perform(post("/api/auth/social/withdrawal/confirm").contentType("application/json").content("{}")
+        mvc.perform(post("/api/auth/social/withdrawal/confirm").contentType("application/json").content(new Document("phoneVerificationToken", PHONE_PROOF).toJson())
             .header("Origin", settings.getFrontendUrl()).cookie(proof))
             .andExpect(status().isOk()).andExpect(jsonPath("$.deletedUserId").value(provider));
-        verify(members).withdrawSocial(provider, provider.toUpperCase() + ":123", 2);
+        verify(members).withdrawSocial(provider, provider.toUpperCase() + ":123", 2, PHONE_PROOF);
         mvc.perform(post("/api/auth/social/withdrawal/confirm").contentType("application/json").content("{}")
             .header("Origin", settings.getFrontendUrl()).cookie(proof)).andExpect(status().isForbidden());
         verifyNoMoreInteractions(members);
@@ -132,8 +133,8 @@ class SocialWithdrawalMongoTest {
             .andExpect(status().isForbidden());
         mvc.perform(post("/api/auth/social/withdrawal/confirm?withdrawal=verified").contentType("application/json").content("{}")
             .header("Origin", settings.getFrontendUrl())).andExpect(status().isForbidden());
-        assertNotNull(withdrawal.confirm("google", proof));
-        verify(members).withdrawSocial("google", "GOOGLE:123", 2);
+        assertNotNull(withdrawal.confirm("google", proof, PHONE_PROOF));
+        verify(members).withdrawSocial("google", "GOOGLE:123", 2, PHONE_PROOF);
     }
 
     @Test void expiredProofAndLoggedOutSessionCannotBeReused() {
@@ -166,11 +167,11 @@ class SocialWithdrawalMongoTest {
 
     @Test void failedDeletionRollsBackProofConsumption() {
         String proof = proof("google");
-        when(members.withdrawSocial("google", "GOOGLE:123", 2)).thenThrow(new ApiException(409, "예약 처리 충돌"));
-        assertEquals(409, assertThrows(ApiException.class, () -> withdrawal.confirm("google", proof)).getStatus());
+        when(members.withdrawSocial("google", "GOOGLE:123", 2, PHONE_PROOF)).thenThrow(new ApiException(409, "예약 처리 충돌"));
+        assertEquals(409, assertThrows(ApiException.class, () -> withdrawal.confirm("google", proof, PHONE_PROOF)).getStatus());
         assertNotNull(mongo.findById(SocialLoginTickets.hash(proof), Document.class, SocialWithdrawalService.COLLECTION));
-        doReturn(new Document("deletedUserId", "google")).when(members).withdrawSocial("google", "GOOGLE:123", 2);
-        assertNotNull(withdrawal.confirm("google", proof));
+        doReturn(new Document("deletedUserId", "google")).when(members).withdrawSocial("google", "GOOGLE:123", 2, PHONE_PROOF);
+        assertNotNull(withdrawal.confirm("google", proof, PHONE_PROOF));
     }
 
     @Test void proofAndRealMemberDeletionShareOneRollbackAndCommit() {
@@ -181,10 +182,13 @@ class SocialWithdrawalMongoTest {
         MemberService actualMembers = new MemberService(mongo, booking,
             new MongoTransactionManager(mongo.getMongoDatabaseFactory()), new BCryptPasswordEncoder());
         SocialWithdrawalService actual = new SocialWithdrawalService(mongo, settings, requests, actualMembers);
-        assertEquals(409, assertThrows(ApiException.class, () -> actual.confirm("google", proof)).getStatus());
+        String phoneProof = TestContactProofs.phoneToken(mongo, "WITHDRAWAL", "google");
+        assertEquals(400, assertThrows(ApiException.class, () -> actual.confirm("google", proof)).getStatus());
+        assertEquals(409, assertThrows(ApiException.class, () -> actual.confirm("google", proof, phoneProof)).getStatus());
         assertNotNull(mongo.findById("google", Document.class, "users"));
         assertNotNull(mongo.findById(SocialLoginTickets.hash(proof), Document.class, SocialWithdrawalService.COLLECTION));
-        assertEquals("google", actual.confirm("google", proof).getString("deletedUserId"));
+        assertNotNull(mongo.findById(SocialLoginTickets.hash(phoneProof), Document.class, ContactVerificationService.PROOFS));
+        assertEquals("google", actual.confirm("google", proof, phoneProof).getString("deletedUserId"));
         assertNull(mongo.findById("google", Document.class, "users"));
         assertNull(mongo.findById(SocialLoginTickets.hash(proof), Document.class, SocialWithdrawalService.COLLECTION));
     }

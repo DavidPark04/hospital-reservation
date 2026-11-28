@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import javax.crypto.spec.SecretKeySpec;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.mongodb.MongoException;
@@ -34,13 +35,19 @@ public class AuthService {
     private final JwtEncoder encoder;
     private final JwtDecoder decoder;
     private final TransactionTemplate transaction;
+    private final ContactVerificationService verification;
     public AuthService(MongoTemplate mongo, PasswordEncoder passwords, String secret) {
         this(mongo, passwords, secret, new MongoTransactionManager(mongo.getMongoDatabaseFactory()));
     }
-    @Autowired
     public AuthService(MongoTemplate mongo, PasswordEncoder passwords, @Value("${app.jwt-secret}") String secret, MongoTransactionManager transactionManager) {
+        this(mongo, passwords, secret, transactionManager, new ContactVerificationService(mongo));
+    }
+    @Autowired
+    public AuthService(MongoTemplate mongo, PasswordEncoder passwords, @Value("${app.jwt-secret}") String secret,
+            MongoTransactionManager transactionManager, ContactVerificationService verification) {
         if (secret.length() < 32) throw new IllegalArgumentException("JWT_SECRET must be at least 32 characters.");
         this.mongo = mongo; this.passwords = passwords;
+        this.verification = verification;
         transaction = new TransactionTemplate(transactionManager); transaction.setTimeout(20);
         byte[] key = secret.getBytes(StandardCharsets.UTF_8);
         encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
@@ -58,9 +65,15 @@ public class AuthService {
         requireAvailableContacts(normalizedName, phone, normalizedEmail);
         Document user = new Document("_id", UUID.randomUUID().toString()).append("name", name).append("loginId", loginId)
             .append("passwordHash", passwords.encode(password)).append("phone", phone).append("nameNormalized", normalizedName).append("memberIdentityClaimed", true)
-            .append("email", email).append("emailNormalized", normalizedEmail).append("emailSource", "USER").append("emailVerified", false)
+            .append("email", email).append("emailNormalized", normalizedEmail).append("emailSource", "USER").append("emailVerified", true).append("phoneVerified", true)
             .append("role", "USER").append("authProvider", "LOCAL").append("tokenVersion", 0).append("createdAt", new Date());
-        try { mongo.insert(user, "users"); }
+        try {
+            inTransaction(() -> {
+                verification.consume(proof(body, "emailVerificationToken"), "SIGNUP", "EMAIL", normalizedEmail, "", 0);
+                verification.consume(proof(body, "phoneVerificationToken"), "SIGNUP", "PHONE", phone, "", 0);
+                return mongo.insert(user, "users");
+            });
+        }
         catch (DuplicateKeyException error) {
             if (mongo.exists(Query.query(Criteria.where("loginId").is(loginId)), "users")) throw loginIdConflict();
             requireAvailableContacts(normalizedName, phone, normalizedEmail);
@@ -104,9 +117,71 @@ public class AuthService {
         Query query = Query.query(new Criteria().andOperator(Criteria.where("_id").is(current.getId()),
             Criteria.where("passwordHash").is(hash), Criteria.where("authProvider").is(provider), version));
         Update update = new Update().set("passwordHash", passwords.encode(newPassword)).inc("tokenVersion", 1);
-        Document updated = mongo.findAndModify(query, update, FindAndModifyOptions.options().returnNew(true), Document.class, "users");
-        if (updated == null) throw passwordSessionExpired();
+        Document updated = inTransaction(() -> {
+            if ("USER".equals(user.getString("role"))) {
+                verification.consume(proof(body, "phoneVerificationToken"), "PASSWORD_CHANGE", "PHONE",
+                        user.getString("phone"), current.getId(), current.getTokenVersion());
+                update.set("phoneVerified", true);
+            }
+            Document changed = mongo.findAndModify(query, update, FindAndModifyOptions.options().returnNew(true), Document.class, "users");
+            if (changed == null) throw passwordSessionExpired();
+            return changed;
+        });
         return issue(updated);
+    }
+
+    public Map<String, Object> changeEmail(Map<String, Object> body) {
+        UserPrincipal current = CurrentUser.require();
+        if (!"USER".equals(current.getRole()) || !current.isProfileComplete() || current.isSignupPending()) {
+            throw new ApiException(403, "가입을 완료한 개인 회원만 이메일을 변경할 수 있어요.");
+        }
+        String email = email(body);
+        String normalized = MemberIdentity.normalizedEmail(email);
+        try {
+            Document changed = inTransaction(() -> {
+                Document user = mongo.findById(current.getId(), Document.class, "users");
+                if (user == null || user.getInteger("tokenVersion", 0) != current.getTokenVersion()) throw passwordSessionExpired();
+                if (normalized.equals(MemberIdentity.normalizedEmail(user.getString("email")))) {
+                    throw new ApiException(400, "새 이메일 주소를 입력해 주세요.");
+                }
+                if (mongo.exists(Query.query(Criteria.where("emailNormalized").is(normalized)
+                        .and("memberIdentityClaimed").is(true).and("_id").ne(current.getId())), "users")) {
+                    throw new ApiException(409, "이미 가입된 이메일 주소예요.");
+                }
+                verification.consume(proof(body, "emailVerificationToken"), "EMAIL_CHANGE", "EMAIL",
+                        normalized, current.getId(), current.getTokenVersion());
+                Update update = new Update().set("email", email).set("emailNormalized", normalized)
+                        .set("emailSource", "USER").set("emailVerified", true).inc("tokenVersion", 1);
+                return mongo.findAndModify(Query.query(Criteria.where("_id").is(current.getId())), update,
+                        FindAndModifyOptions.options().returnNew(true), Document.class, "users");
+            });
+            return issue(changed);
+        } catch (DuplicateKeyException error) {
+            throw new ApiException(409, "이미 가입된 이메일 주소예요.");
+        }
+    }
+
+    public Map<String, String> resetPassword(Map<String, Object> body) {
+        String id = loginId(body);
+        String newPassword = proof(body, "newPassword");
+        requireValidPassword(newPassword);
+        String hash = passwords.encode(newPassword);
+        inTransaction(() -> {
+            Document user = mongo.findOne(Query.query(Criteria.where("loginId").is(id).and("role").is("USER")),
+                    Document.class, "users");
+            if (user == null || (user.getString("authProvider") != null && !"LOCAL".equals(user.getString("authProvider")))
+                    || user.getString("passwordHash") == null) {
+                throw new ApiException(400, "아이디와 가입한 휴대전화 인증을 다시 확인해 주세요.");
+            }
+            verification.consume(proof(body, "phoneVerificationToken"), "PASSWORD_RESET", "PHONE",
+                    user.getString("phone"), user.getString("_id"), user.getInteger("tokenVersion", 0));
+            if (passwords.matches(newPassword, user.getString("passwordHash"))) {
+                throw new ApiException(400, "새 비밀번호는 현재 비밀번호와 다르게 입력해 주세요.");
+            }
+            return mongo.updateFirst(Query.query(Criteria.where("_id").is(user.getString("_id"))),
+                    new Update().set("passwordHash", hash).set("phoneVerified", true).inc("tokenVersion", 1), "users");
+        });
+        return Map.of("message", "비밀번호를 재설정했어요. 새 비밀번호로 로그인해 주세요.");
     }
     Map<String, Object> issueSocialSession(String userId, int tokenVersion) {
         return issueSocialSession(userId, tokenVersion, false);
@@ -145,11 +220,16 @@ public class AuthService {
                     if (!SocialSignups.live(signup)) throw signupExpired();
                     if (mongo.exists(Query.query(Criteria.where("socialIdentity").is(signup.getString("socialIdentity"))), "users")) throw signupExpired();
                     requireAvailableContacts(normalizedName, phone, normalizedEmail);
+                    verification.consume(proof(body, "emailVerificationToken"), "SIGNUP", "EMAIL", normalizedEmail,
+                            current.getId(), current.getTokenVersion());
+                    verification.consume(proof(body, "phoneVerificationToken"), "SIGNUP", "PHONE", phone,
+                            current.getId(), current.getTokenVersion());
                     String provider = signup.getString("authProvider");
                     Document user = new Document("_id", UUID.randomUUID().toString())
                         .append("loginId", provider.toLowerCase(Locale.ROOT) + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 22))
                         .append("authProvider", provider).append("socialSubject", signup.getString("socialSubject")).append("socialIdentity", signup.getString("socialIdentity"))
-                        .append("name", name).append("email", email).append("emailNormalized", normalizedEmail).append("phone", phone).append("emailSource", "USER").append("emailVerified", false)
+                        .append("name", name).append("email", email).append("emailNormalized", normalizedEmail).append("phone", phone).append("emailSource", "USER")
+                        .append("emailVerified", true).append("phoneVerified", true)
                         .append("nameNormalized", normalizedName).append("memberIdentityClaimed", true).append("profileComplete", true)
                         .append("profileCompletedAt", new Date()).append("createdAt", new Date()).append("role", "USER").append("tokenVersion", 0);
                     mongo.insert(user, "users");
@@ -252,6 +332,17 @@ public class AuthService {
     private static boolean hasMatchingName(Document member, String normalizedName) {
         return member != null && member.get("name") instanceof String name
                 && normalizedName.equals(MemberIdentity.normalizedName(name));
+    }
+    private <T> T inTransaction(Supplier<T> work) {
+        for (int attempt = 0; ; attempt++) {
+            try { return transaction.execute(status -> work.get()); }
+            catch (RuntimeException error) {
+                if (error instanceof ApiException || !retryable(error) || attempt >= 7) throw error;
+            }
+        }
+    }
+    private static String proof(Map<String, Object> body, String key) {
+        return body != null && body.get(key) instanceof String value ? value : "";
     }
     private static String text(Map<String, Object> body, String key) {
         Object value = body.get(key);

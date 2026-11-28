@@ -27,6 +27,7 @@ public class MyMemberController {
             throw new ApiException(403, "가입을 완료한 회원만 탈퇴할 수 있습니다.");
         }
         String password = body != null && body.get("password") instanceof String value ? value : null;
-        return members.withdraw(user.getId(), password);
+        String proof = body != null && body.get("phoneVerificationToken") instanceof String value ? value : null;
+        return members.withdrawVerified(user.getId(), password, proof);
     }
 }

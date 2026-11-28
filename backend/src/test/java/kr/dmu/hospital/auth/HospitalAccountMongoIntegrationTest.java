@@ -362,7 +362,7 @@ class HospitalAccountMongoIntegrationTest {
     @Test void hospitalPhoneDoesNotTakeOverPersonalDuplicateChecksOrStartupMigration() {
         mongo.updateFirst(Query.query(Criteria.where("_id").is("test-hospital")), new Update().set("tel", "0319030119"), "hospitals");
         accounts.register(registration(accounts.lookup(Map.of("businessNumber", NUMBER))));
-        auth.register(Map.of("loginId", "hospital_" + NUMBER, "password", PASSWORD, "name", "개인", "email", "person@example.com", "phone", "0319030119"));
+        auth.register(TestContactProofs.signup(mongo, Map.of("loginId", "hospital_" + NUMBER, "password", PASSWORD, "name", "개인", "email", "person@example.com", "phone", "0319030119")));
         new UserIndexes(mongo).run(new DefaultApplicationArguments(new String[0]));
         Document hospital = mongo.findOne(Query.query(Criteria.where("role").is("HOSPITAL")), Document.class, "users");
         assertFalse(hospital.containsKey("memberIdentityClaimed"));

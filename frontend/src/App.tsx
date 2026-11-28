@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock3, Hospital as HospitalIcon, Info, LoaderCircle, LogOut, MapPin, Menu, Phone, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Stethoscope, UserRound, X, AlertCircle, RefreshCw, CalendarCheck2, ExternalLink, Building2 } from 'lucide-react';
-import { api, ApiError, clearToken, dateLabel, DEPARTMENTS, departmentName, fetchedLabel, getToken, normalizePhone, queryString, setToken, timeLabel, today, validPhone } from './api';
+import { api, ApiError, clearToken, dateLabel, DEPARTMENTS, departmentName, fetchedLabel, getToken, normalizePhone, queryString, setToken, timeLabel, today } from './api';
 import MedipickHome from './medipick/MedipickHome';
 import {DoctorPortrait} from './medipick/FilmVisual';
 import type {BookingDraft, HomeRecommendation} from './medipick/flow';
@@ -10,8 +10,13 @@ import {HOME_HOSPITAL_FILTERS} from './medipick/flow';
 import HospitalLocation from './HospitalLocation';
 import PhoneInput from './PhoneInput';
 import PasswordChange from './PasswordChange';
+import EmailChange from './EmailChange';
+import PhoneVerification from './PhoneVerification';
 import HospitalAuthForm, {formatBusinessNumber} from './HospitalAuthForm';
 import HospitalManagement from './HospitalManagement';
+import EmailVerification from './EmailVerification';
+import PasswordRecovery from './PasswordRecovery';
+import {validMobilePhone} from './contactVerification';
 import {CHAT_MESSAGE_LIMIT, chatConversationLimit, chatFollowUpOptions, chatLocation, chatLocationSelection, chatRecommendations, chatRequest, isEmergencyResult, safeRecommendationSources, straightLineDistance} from './chatPresentation';
 import './chatRecommendations.css';
 import {formatPhone} from './phoneFormatting';
@@ -404,76 +409,51 @@ function MyPage({user,ready,login,withdrawalReturn,onWithdrawalReturnHandled,onW
       </dl>
       <div className="profile-actions"><a className="button primary" href="#/reservations"><CalendarDays size={18}/>내 예약 보기</a>{user.role==='ADMIN'&&<a className="button secondary" href="#/admin/members">회원목록</a>}</div>
       <PasswordChange key={user.id} user={user} onChanged={onPasswordChanged}/>
+      {user.role==='USER'&&<EmailChange key={'email-'+user.id} user={user} onChanged={onPasswordChanged}/>}
       {user.role==='USER'&&<MembershipWithdrawal key={user.id} user={user} returnCode={withdrawalReturn} onReturnHandled={onWithdrawalReturnHandled} onSuccess={onWithdrawn}/>}
     </section>
   </div>;
 }
 
-function withdrawalError(code:string){
-  if(code==='cancelled')return '본인 확인을 취소했어요. 회원 탈퇴는 진행되지 않았어요.';
-  if(code==='mismatch')return '현재 가입된 계정과 다른 계정이에요. 가입할 때 사용한 계정으로 다시 확인해 주세요.';
-  if(code==='session')return '본인 확인 시간이 지났어요. 다시 확인해 주세요.';
-  return '본인 확인을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.';
-}
-
 function MembershipWithdrawal({user,returnCode,onReturnHandled,onSuccess}:{user:User;returnCode:string;onReturnHandled:()=>void;onSuccess:(result:DeleteMemberResult)=>void}){
   const social=user.authProvider==='GOOGLE'||user.authProvider==='KAKAO';
-  const provider=loginMethod(user.authProvider);
   const [open,setOpen]=useState(!!returnCode);
-  const [verified,setVerified]=useState(returnCode==='verified');
-  const [redirecting,setRedirecting]=useState(false);
   const [password,setPassword]=useState('');
-  const [error,setError]=useState(returnCode&&returnCode!=='verified'?withdrawalError(returnCode):'');
+  const [phoneVerificationToken,setPhoneVerificationToken]=useState('');
+  const [verifying,setVerifying]=useState(false);
+  const [error,setError]=useState('');
   const busy=useRef(false);
-  const cancelRequest=useRef<Promise<unknown>|null>(null);
-  function showError(reason:unknown,fallback:string){
-    if(social&&reason instanceof ApiError&&reason.status===401){clearToken();window.dispatchEvent(new Event('auth-expired'));}
-    setError(reason instanceof Error?reason.message:fallback);
-  }
   const remove=useMutation({
-    mutationFn:()=>social
-      ?api<DeleteMemberResult>('/auth/social/withdrawal/confirm',{method:'POST',body:'{}',credentials:'same-origin'})
-      :api<DeleteMemberResult>('/members/me',{method:'DELETE',body:JSON.stringify({password})}),
-    onSuccess:result=>{setPassword('');onSuccess(result);},
-    onError:reason=>{setPassword('');if(social)setVerified(false);showError(reason,'회원 탈퇴를 완료하지 못했어요. 다시 시도해 주세요.');},
+    mutationFn:()=>api<DeleteMemberResult>('/members/me',{method:'DELETE',body:JSON.stringify({password,phoneVerificationToken})}),
+    onSuccess:result=>{setPassword('');setPhoneVerificationToken('');onSuccess(result);},
+    onError:reason=>{setError(reason.message);},
     onSettled:()=>{busy.current=false;}
   });
-  const start=useMutation({
-    mutationFn:async()=>{await cancelRequest.current;return api<{authorizationUrl:string}>('/auth/social/withdrawal/start',{method:'POST',body:'{}',credentials:'same-origin'});},
-    onSuccess:result=>{setRedirecting(true);window.location.assign(result.authorizationUrl);},
-    onError:reason=>{busy.current=false;setRedirecting(false);showError(reason,'본인 확인을 시작하지 못했어요. 다시 시도해 주세요.');}
-  });
-  const pending=remove.isPending||start.isPending||redirecting;
   useEffect(()=>{if(returnCode)onReturnHandled();},[returnCode,onReturnHandled]);
-  useEffect(()=>{
-    function restore(event:PageTransitionEvent){if(event.persisted){busy.current=false;start.reset();setVerified(false);setRedirecting(false);}}
-    window.addEventListener('pageshow',restore);return()=>window.removeEventListener('pageshow',restore);
-  },[start.reset]);
   function close(){
-    if(busy.current)return;
-    setOpen(false);setPassword('');setError('');setVerified(false);
-    if(social)cancelRequest.current=api('/auth/social/withdrawal/cancel',{method:'POST',body:'{}',credentials:'same-origin'}).catch(()=>{});
+    if(busy.current||verifying)return;
+    setOpen(false);setPassword('');setError('');setPhoneVerificationToken('');remove.reset();
   }
   function submit(event:FormEvent){
-    event.preventDefault();if(busy.current)return;
+    event.preventDefault();if(busy.current||verifying)return;
     if(!social&&!password){setError('현재 비밀번호를 입력해 주세요.');return;}
-    busy.current=true;setError('');
-    if(social&&!verified)start.mutate();else remove.mutate();
+    if(!phoneVerificationToken){setError('가입한 휴대전화 번호로 문자 인증을 완료해 주세요.');return;}
+    busy.current=true;setError('');remove.mutate();
   }
   return <div className="profile-withdrawal">
     <p>서비스 이용을 마치려면 회원 탈퇴를 진행할 수 있어요.</p>
-    <button className="text-button withdrawal-link" type="button" onClick={()=>{setPassword('');setError('');setVerified(false);setOpen(true);}}>회원 탈퇴</button>
+    <button className="text-button withdrawal-link" type="button" onClick={()=>{setPassword('');setError('');setPhoneVerificationToken('');setOpen(true);}}>회원 탈퇴</button>
     {open&&<Dialog title="회원 탈퇴" close={close}>
       <p className="dialog-copy">탈퇴하면 회원 정보가 삭제되고 예약 중인 예약이 모두 취소돼요. 탈퇴한 계정과 예약은 복구할 수 없어요.</p>
       <form className="auth-form withdrawal-form" onSubmit={submit}>
-        {social?<>
-          <Notice tone={verified?'success':'info'}>{verified?`${provider} 계정 확인을 마쳤어요. 아래 버튼을 누르면 회원 탈퇴가 완료돼요.`:`가입할 때 사용한 ${provider} 계정으로 다시 본인 확인을 진행해 주세요. 확인 후 마지막으로 탈퇴 여부를 선택할 수 있어요.`}</Notice>
-          <p className="withdrawal-help">메디픽에서 탈퇴하며 {provider} 계정 자체는 삭제되지 않아요.</p>
-        </>:<label className="field">현재 비밀번호<input name="currentPassword" type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} required maxLength={100} disabled={pending} placeholder="현재 비밀번호를 입력해 주세요"/></label>}
+        <div className="field"><span>가입한 휴대전화</span><span>{user.phone?formatPhone(user.phone):'등록된 전화번호가 없어요.'}</span>
+          <PhoneVerification purpose="WITHDRAWAL" phone={user.phone||''} onVerified={setPhoneVerificationToken} onBusy={setVerifying} disabled={remove.isPending}/>
+        </div>
+        {!social&&<label className="field">현재 비밀번호<input name="currentPassword" type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} required maxLength={100} disabled={remove.isPending} placeholder="현재 비밀번호를 입력해 주세요"/></label>}
         {error&&<Notice tone="error">{error}</Notice>}
         <div className="dialog-actions withdrawal-actions">
-          <button className="button secondary" type="button" onClick={close} disabled={pending}>취소</button>
-          <button className={`button ${social&&!verified?'primary':'danger'}`} type="submit" disabled={pending||(!social&&!password)}>{pending?<><LoaderCircle size={17} className="spin"/>{start.isPending||redirecting?'본인 확인으로 이동 중':'탈퇴 처리 중'}</>:social&&!verified?`${provider}로 확인하고 탈퇴`:'탈퇴하기'}</button>
+          <button className="button secondary" type="button" onClick={close} disabled={remove.isPending||verifying}>취소</button>
+          <button className="button danger" type="submit" disabled={remove.isPending||verifying||!phoneVerificationToken||(!social&&!password)}>{remove.isPending?<><LoaderCircle size={17} className="spin"/>탈퇴 처리 중</>:'탈퇴하기'}</button>
         </div>
       </form>
     </Dialog>}
@@ -545,32 +525,47 @@ function Dialog({title,children,close}:{title:string;children:ReactNode;close:()
 function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,initialPreferredProvider}:{mode:'login'|'register';setMode:(mode:'login'|'register')=>void;close:()=>void;onSuccess:(result:AuthResult)=>void;beforeSocialLogin:()=>void;socialError:string;initialPreferredProvider?:AuthProvider}){
   const [accountType,setAccountType]=useState<'personal'|'hospital'>('personal');
   const [hospitalBusy,setHospitalBusy]=useState(false);
+  const [emailToken,setEmailToken]=useState('');const [phoneToken,setPhoneToken]=useState('');
+  const [emailBusy,setEmailBusy]=useState(false);const [phoneBusy,setPhoneBusy]=useState(false);
+  const [recovery,setRecovery]=useState(false);const [recoveryBusy,setRecoveryBusy]=useState(false);
   const [name,setName]=useState('');const [loginId,setLoginId]=useState('');const [password,setPassword]=useState('');const [email,setEmail]=useState('');const [phone,setPhone]=useState('');const [validationError,setValidationError]=useState('');
-  const mutation=useMutation({mutationFn:()=>api<AuthResult>(`/auth/${mode}`,{method:'POST',body:JSON.stringify(mode==='login'?{loginId:loginId.trim(),password}:{name,loginId:loginId.trim(),password,email:email.trim(),phone:normalizePhone(phone)})}),onSuccess});
+  const mutation=useMutation({mutationFn:()=>api<AuthResult>(`/auth/${mode}`,{method:'POST',body:JSON.stringify(mode==='login'?{loginId:loginId.trim(),password}:{name,loginId:loginId.trim(),password,email:email.trim(),phone:normalizePhone(phone),emailVerificationToken:emailToken,phoneVerificationToken:phoneToken})}),onSuccess});
+  const busy=mutation.isPending||hospitalBusy||emailBusy||phoneBusy||recoveryBusy;
   const [preferredProvider,setPreferredProvider]=useState(initialPreferredProvider);
   const existingProvider=mutation.error instanceof ApiError&&mutation.error.code==='MEMBER_ALREADY_EXISTS'?mutation.error.existingAuthProvider:undefined;
   function existingLogin(){if(!existingProvider)return;setPreferredProvider(existingProvider);setMode('login');mutation.reset();setPassword('');setValidationError('');}
-  function submit(e:FormEvent){e.preventDefault();if(mode==='register'&&(!email.trim()||email.trim().length>254)){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}if(mode==='register'&&!validPhone(phone)){setValidationError('전화번호는 0으로 시작하는 9~11자리 국내 번호로 입력해 주세요.');return;}setValidationError('');mutation.mutate();}
-  return <Dialog title={mode==='login'?'반가워요. 로그인해 주세요':'함께 시작해 볼까요?'} close={()=>{if(!mutation.isPending&&!hospitalBusy)close();}}>
-    <div className="auth-account-tabs" role="tablist" aria-label="회원 유형"><button type="button" role="tab" aria-selected={accountType==='personal'} disabled={mutation.isPending||hospitalBusy} onClick={()=>{setAccountType('personal');mutation.reset();setValidationError('');setPassword('');}}>개인</button><button type="button" role="tab" aria-selected={accountType==='hospital'} disabled={mutation.isPending||hospitalBusy} onClick={()=>{setAccountType('hospital');mutation.reset();setValidationError('');setPassword('');setPreferredProvider(undefined);}}>병원</button></div>
+  function submit(e:FormEvent){
+    e.preventDefault();if(busy)return;
+    if(mode==='register'&&(!email.trim()||email.trim().length>254)){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}
+    if(mode==='register'&&!validMobilePhone(phone)){setValidationError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
+    if(mode==='register'&&(!emailToken||!phoneToken)){setValidationError('이메일 인증과 휴대전화 인증을 완료해 주세요.');return;}
+    setValidationError('');mutation.mutate();
+  }
+  return <Dialog title={recovery?'비밀번호 찾기':mode==='login'?'반가워요. 로그인해 주세요':'함께 시작해 볼까요?'} close={()=>{if(!busy)close();}}>
+    <div className="auth-account-tabs" role="tablist" aria-label="회원 유형"><button type="button" role="tab" aria-selected={accountType==='personal'} disabled={busy} onClick={()=>{if(accountType==='personal'&&!recovery)return;setAccountType('personal');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setEmailToken('');setPhoneToken('');}}>개인</button><button type="button" role="tab" aria-selected={accountType==='hospital'} disabled={busy} onClick={()=>{setAccountType('hospital');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');}}>병원</button></div>
     {accountType==='hospital'?<><p className="dialog-copy">{mode==='login'?'사업자등록번호로 로그인하고 우리 병원을 관리하세요.':'사업자등록번호로 병원을 조회한 뒤 비밀번호를 설정해 주세요.'}</p><HospitalAuthForm key={mode} mode={mode} onSuccess={onSuccess} onBusy={setHospitalBusy}/></>:<>
-    <p className="dialog-copy">{mode==='login'?'로그인하고 예약 일정을 편하게 관리하세요.':'간단한 회원가입으로 예약을 이용해 보세요.'}</p>
+    {recovery?<PasswordRecovery onBack={()=>setRecovery(false)} onBusy={setRecoveryBusy}/>:<>
+    <p className="dialog-copy">{mode==='login'?'로그인하고 예약 일정을 편하게 관리하세요.':'이메일과 휴대전화를 인증한 뒤 가입해 주세요.'}</p>
     {socialError&&<Notice tone="error">{socialError}</Notice>}
     {preferredProvider&&<Notice>{`${loginMethod(preferredProvider)}로 로그인해 주세요.`}</Notice>}
-    {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={mutation.isPending} preferredProvider={preferredProvider}/>}
+    {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
     <form onSubmit={submit} className="auth-form">
       {mode==='register'&&<label className="field">이름<input autoComplete="name" value={name} onChange={e=>setName(e.target.value)} required minLength={1} maxLength={40} placeholder="이름"/></label>}
-      {mode==='register'&&<label className="field">이메일<input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>setEmail(e.target.value)} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help"/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>}
-      {mode==='register'&&<label className="field">전화번호<PhoneInput name="phone" value={phone} onValueChange={setPhone} required placeholder="010-1234-5678"/><small className="muted">휴대전화 또는 지역번호를 포함한 국내 전화번호를 입력해 주세요.</small></label>}
+      {mode==='register'&&<><label className="field">이메일<input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>{setEmail(e.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help" disabled={busy||!!emailToken}/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
+        <EmailVerification purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy} disabled={mutation.isPending||phoneBusy}/></>}
+      {mode==='register'&&<><label className="field">휴대전화번호<PhoneInput name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
+        <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} disabled={mutation.isPending||emailBusy}/></>}
       <label className="field">아이디<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId} onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30} pattern={'[A-Za-z0-9_\\-]{4,30}'} title="영문, 숫자, 밑줄(_) 또는 하이픈(-)을 사용한 4~30자 아이디" aria-describedby="login-id-help" placeholder="아이디"/><small id="login-id-help" className="muted">영문, 숫자, _ 또는 -를 사용해 4~30자로 입력해 주세요. 영문 대소문자는 구분하지 않아요.</small></label>
       <label className="field">비밀번호<input type="password" autoComplete={mode==='login'?'current-password':'new-password'} value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} maxLength={100} placeholder={mode==='register'?'8자 이상 입력해 주세요':'비밀번호'}/></label>
       {(validationError||mutation.isError)&&<Notice tone="error">{validationError||mutation.error?.message}</Notice>}
       {existingProvider&&<button className="button secondary full" type="button" onClick={existingLogin} disabled={mutation.isPending}>{loginMethod(existingProvider)}로 로그인하기</button>}
-      <button className="button primary full" type="submit" disabled={mutation.isPending}>{mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:mode==='login'?'로그인':'회원가입'}</button>
+      <button className="button primary full" type="submit" disabled={busy||(mode==='register'&&(!emailToken||!phoneToken))}>{mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:mode==='login'?'로그인':'회원가입'}</button>
     </form>
-    {(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={mutation.isPending}/>}
+    {mode==='login'&&<button className="text-button password-recovery-link" type="button" disabled={busy} onClick={()=>{setRecovery(true);mutation.reset();setValidationError('');setPassword('');}}>비밀번호 찾기</button>}
+    {(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy}/>}
     </>}
-    <div className="auth-switch">{mode==='login'?'처음 방문하셨나요?':'이미 계정이 있으신가요?'}<button className="text-button" disabled={mutation.isPending||hospitalBusy} onClick={()=>{setMode(mode==='login'?'register':'login');mutation.reset();setPassword('');setValidationError('');setPreferredProvider(undefined);}}>{mode==='login'?'회원가입':'로그인'}</button></div>
+    </>}
+    {!recovery&&<div className="auth-switch">{mode==='login'?'처음 방문하셨나요?':'이미 계정이 있으신가요?'}<button className="text-button" disabled={busy} onClick={()=>{setMode(mode==='login'?'register':'login');mutation.reset();setPassword('');setValidationError('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');}}>{mode==='login'?'회원가입':'로그인'}</button></div>}
     <div className="auth-note"><ShieldCheck size={16}/><span>{accountType==='hospital'?'병원 계정에는 이메일과 소셜 로그인을 사용하지 않아요.':'회원가입 후에는 본인의 예약만 조회할 수 있어요.'}</span></div>
   </Dialog>;
 }

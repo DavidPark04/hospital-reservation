@@ -60,17 +60,18 @@ class AuthMongoIntegrationTest {
 
     @Test
     void signupAndLoginUseNormalizedIdWhileKeepingInternalIdAndPasswordPrivate() {
-        Map<String, Object> registered = auth.register(registration("  Patient_01-A  "));
+        Map<String, Object> registered = auth.register(TestContactProofs.signup(mongo, registration("  Patient_01-A  ")));
         Map<?, ?> user = (Map<?, ?>) registered.get("user");
         String id = (String) user.get("id");
         assertEquals("patient_01-a", user.get("loginId"));
         assertEquals("시험 회원", user.get("name"));
         assertEquals("USER", user.get("role"));
         assertNotEquals("patient_01-a", id);
-        assertEquals(9, user.size());
+        assertEquals(10, user.size());
         assertEquals("LOCAL", user.get("authProvider"));
         assertEquals(true, user.get("profileComplete"));
-        assertEquals(false, user.get("emailVerified"));
+        assertEquals(true, user.get("emailVerified"));
+        assertEquals(true, user.get("phoneVerified"));
         assertEquals("01012345678", user.get("phone"));
         assertEquals("Patient@Example.com", user.get("email"));
         assertFalse(user.containsKey("passwordHash"));
@@ -79,7 +80,8 @@ class AuthMongoIntegrationTest {
         assertEquals("patient_01-a", stored.getString("loginId"));
         assertEquals("patient@example.com", stored.getString("emailNormalized"));
         assertEquals("USER", stored.getString("emailSource"));
-        assertEquals(false, stored.getBoolean("emailVerified"));
+        assertEquals(true, stored.getBoolean("emailVerified"));
+        assertEquals(true, stored.getBoolean("phoneVerified"));
         assertNotEquals(PASSWORD, stored.getString("passwordHash"));
         assertTrue(passwords.matches(PASSWORD, stored.getString("passwordHash")));
 
@@ -91,7 +93,7 @@ class AuthMongoIntegrationTest {
 
     @Test
     void unknownIdAndIncorrectPasswordAreRejected() {
-        auth.register(registration("patient1"));
+        auth.register(TestContactProofs.signup(mongo, registration("patient1")));
         ApiException missing = assertThrows(ApiException.class,
                 () -> auth.login(Map.of("loginId", "absent1", "password", PASSWORD)));
         ApiException wrong = assertThrows(ApiException.class,
@@ -103,9 +105,9 @@ class AuthMongoIntegrationTest {
 
     @Test
     void duplicateIdsAreNormalizedAndProtectedByTheDatabaseUniqueIndex() {
-        auth.register(registration(" Patient1 "));
+        auth.register(TestContactProofs.signup(mongo, registration(" Patient1 ")));
         ApiException duplicate = assertThrows(ApiException.class,
-                () -> auth.register(registration("PATIENT1")));
+                () -> auth.register(TestContactProofs.signup(mongo, registration("PATIENT1"))));
         assertEquals(409, duplicate.getStatus());
         assertEquals("이미 사용 중인 아이디입니다.", duplicate.getMessage());
         assertThrows(DuplicateKeyException.class,
@@ -117,7 +119,7 @@ class AuthMongoIntegrationTest {
     @ValueSource(strings = {"", "abc", "abcdefghijklmnopqrstuvwxyz12345", "patient@example.com",
             "patient name", "patient.name", "회원아이디", "abcd/ef", "abcd+ef", "Kate"})
     void rejectsInvalidIdsDuringSignupAndLogin(String loginId) {
-        ApiException signup = assertThrows(ApiException.class, () -> auth.register(registration(loginId)));
+        ApiException signup = assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, registration(loginId))));
         ApiException login = assertThrows(ApiException.class,
                 () -> auth.login(Map.of("loginId", loginId, "password", PASSWORD)));
         assertEquals(400, signup.getStatus());
@@ -128,7 +130,7 @@ class AuthMongoIntegrationTest {
     @Test
     void emailOnlyRequestsAreRejected() {
         Map<String, Object> oldBody = Map.of("name", "시험 회원", "email", "patient@example.com", "password", PASSWORD);
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(oldBody)).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, oldBody))).getStatus());
         assertEquals(400, assertThrows(ApiException.class, () -> auth.login(oldBody)).getStatus());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }
@@ -136,14 +138,14 @@ class AuthMongoIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"abcd", "1234", "a_b-c", "abcdefghijklmnopqrstuvwxyz1234"})
     void acceptsIdsAtTheLengthBoundariesAndAllSupportedCharacters(String loginId) {
-        Map<String, Object> registered = auth.register(registration(loginId));
+        Map<String, Object> registered = auth.register(TestContactProofs.signup(mongo, registration(loginId)));
         assertEquals(loginId, auth.authenticate((String) registered.get("token")).getLoginId());
     }
 
     @Test
     void signupCannotChooseAdminRoleOrInternalIdentity() {
-        Map<String, Object> response = auth.register(Map.of("name", "시험 회원", "loginId", "patient1",
-                "password", PASSWORD, "phone", "01012345678", "email", "patient@example.com", "role", "ADMIN", "id", "admin-user", "tokenVersion", 99));
+        Map<String, Object> response = auth.register(TestContactProofs.signup(mongo, Map.of("name", "시험 회원", "loginId", "patient1",
+                "password", PASSWORD, "phone", "01012345678", "email", "patient@example.com", "role", "ADMIN", "id", "admin-user", "tokenVersion", 99)));
         UserPrincipal user = auth.authenticate((String) response.get("token"));
         assertEquals("USER", user.getRole());
         assertNotEquals("admin-user", user.getId());
@@ -168,19 +170,19 @@ class AuthMongoIntegrationTest {
 
     @Test
     void deletedUserTokenCannotAuthenticateEvenAfterTheLoginIdIsReused() {
-        Map<String, Object> original = auth.register(registration("patient1"));
+        Map<String, Object> original = auth.register(TestContactProofs.signup(mongo, registration("patient1")));
         String token = (String) original.get("token");
         String originalId = auth.authenticate(token).getId();
         mongo.getCollection("users").deleteOne(new Document("_id", originalId));
         assertThrows(JwtException.class, () -> auth.authenticate(token));
-        Map<String, Object> replacement = auth.register(registration("patient1"));
+        Map<String, Object> replacement = auth.register(TestContactProofs.signup(mongo, registration("patient1")));
         assertNotEquals(originalId, auth.authenticate((String) replacement.get("token")).getId());
         assertThrows(JwtException.class, () -> auth.authenticate(token));
     }
 
     @Test
     void logoutInvalidatesPreviousTokensAndNewLoginWorks() {
-        Map<String, Object> registered = auth.register(registration("patient1"));
+        Map<String, Object> registered = auth.register(TestContactProofs.signup(mongo, registration("patient1")));
         String token = (String) registered.get("token");
         UserPrincipal user = auth.authenticate(token);
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(user, null, List.of()));
@@ -220,8 +222,8 @@ class AuthMongoIntegrationTest {
     }
 
     @Test void registrationRequiresPhoneAndStoresNormalizedDomesticNumber() {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "email", "patient@example.com"))).getStatus());
-        Map<String, Object> response = auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", " 010-1234-5678 ", "email", "patient@example.com"));
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "email", "patient@example.com")))).getStatus());
+        Map<String, Object> response = auth.register(TestContactProofs.signup(mongo, Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", " 010-1234-5678 ", "email", "patient@example.com")));
         assertEquals("01012345678", ((Map<?, ?>) response.get("user")).get("phone"));
         String id = auth.authenticate((String) response.get("token")).getId();
         assertEquals("01012345678", mongo.findById(id, Document.class, "users").getString("phone"));
@@ -229,20 +231,20 @@ class AuthMongoIntegrationTest {
 
     @ParameterizedTest @ValueSource(strings = {"", "1234567890", "0101234", "010123456789", "010-ABCD-5678", "+821012345678"})
     void registrationRejectsInvalidPhone(String phone) {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", phone, "email", "patient@example.com"))).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, Map.of("name", "회원", "loginId", "newuser", "password", PASSWORD, "phone", phone, "email", "patient@example.com")))).getStatus());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }
 
     @Test void registrationRequiresEmail() {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser",
-            "password", PASSWORD, "phone", "01012345678"))).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, Map.of("name", "회원", "loginId", "newuser",
+            "password", PASSWORD, "phone", "01012345678")))).getStatus());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }
 
     @ParameterizedTest @ValueSource(strings = {"", "not-an-email", ".bad@example.com", "bad..name@example.com", "bad.@example.com", "bad name@example.com"})
     void registrationRejectsInvalidEmail(String email) {
-        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(Map.of("name", "회원", "loginId", "newuser",
-            "password", PASSWORD, "phone", "01012345678", "email", email))).getStatus());
+        assertEquals(400, assertThrows(ApiException.class, () -> auth.register(TestContactProofs.signup(mongo, Map.of("name", "회원", "loginId", "newuser",
+            "password", PASSWORD, "phone", "01012345678", "email", email)))).getStatus());
         assertEquals(0, mongo.getCollection("users").countDocuments());
     }
 

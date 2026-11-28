@@ -16,6 +16,8 @@ public class UserPrincipal {
     private final String businessNumber;
     private final boolean profileComplete;
     private final boolean signupPending;
+    private final boolean emailVerified;
+    private final boolean phoneVerified;
     private final int tokenVersion;
     public UserPrincipal(Document user) {
         this(user, false);
@@ -23,6 +25,8 @@ public class UserPrincipal {
     public static UserPrincipal forSignup(Document signup) { return new UserPrincipal(signup, true); }
     private UserPrincipal(Document user, boolean signupPending) {
         this.signupPending = signupPending;
+        emailVerified = !signupPending && Boolean.TRUE.equals(user.getBoolean("emailVerified"));
+        phoneVerified = !signupPending && Boolean.TRUE.equals(user.getBoolean("phoneVerified"));
         tokenVersion = user.getInteger("tokenVersion", 0);
         id = user.getString("_id");
         loginId = signupPending ? "" : user.getString("loginId"); role = signupPending ? "USER" : user.getString("role");
@@ -48,7 +52,7 @@ public class UserPrincipal {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id); result.put("name", name); result.put("loginId", loginId); result.put("role", role);
         result.put("authProvider", authProvider);
-        result.put("profileComplete", profileComplete); result.put("emailVerified", false);
+        result.put("profileComplete", profileComplete); result.put("emailVerified", emailVerified); result.put("phoneVerified", phoneVerified);
         if (email != null && !email.isBlank()) result.put("email", email);
         if (phone != null && !phone.isBlank()) result.put("phone", phone);
         if ("HOSPITAL".equals(role)) { result.put("hospitalId", hospitalId); result.put("businessNumber", businessNumber); }

@@ -1,5 +1,6 @@
 package kr.dmu.hospital.member;
 
+import kr.dmu.hospital.auth.TestContactProofs;
 import com.mongodb.ConnectionString;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -82,8 +83,8 @@ class MemberMongoIntegrationTest {
         new UserIndexes(mongo).run(args);
         new BookingIndexes(mongo).run(args);
         auth = new AuthService(mongo, new BCryptPasswordEncoder(), "local-member-test-signing-key-at-least-32-characters");
-        tokenA = (String) auth.register(Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD, "phone", "010-1234-5678", "email", "patient-a@example.com")).get("token");
-        tokenB = (String) auth.register(Map.of("loginId", "patient-b", "name", "회원 나", "password", PASSWORD, "phone", "010-8765-4321", "email", "patient-b@example.com")).get("token");
+        tokenA = (String) auth.register(TestContactProofs.signup(mongo, Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD, "phone", "010-1234-5678", "email", "patient-a@example.com"))).get("token");
+        tokenB = (String) auth.register(TestContactProofs.signup(mongo, Map.of("loginId", "patient-b", "name", "회원 나", "password", PASSWORD, "phone", "010-8765-4321", "email", "patient-b@example.com"))).get("token");
         userA = auth.authenticate(tokenA).getId();
         userB = auth.authenticate(tokenB).getId();
         mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)),
@@ -158,7 +159,8 @@ class MemberMongoIntegrationTest {
         mongo.insert(new Document("_id", "other-withdrawal-proof").append("userId", userB), "social_withdrawal_proofs");
         signIn(userA);
         mvc.perform(delete("/api/members/me").param("userId", userB).contentType(MediaType.APPLICATION_JSON)
-                        .content(new Document("password", PASSWORD).append("userId", userB).toJson()))
+                        .content(new Document("password", PASSWORD).append("userId", userB)
+                                .append("phoneVerificationToken", TestContactProofs.phoneToken(mongo, "WITHDRAWAL", userA)).toJson()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("회원 탈퇴가 완료되었습니다."))
                 .andExpect(jsonPath("$.deletedUserId").value(userA)).andExpect(jsonPath("$.canceledReservations").value(1));
         assertNull(mongo.findById(userA, Document.class, "users"));
@@ -181,8 +183,8 @@ class MemberMongoIntegrationTest {
         assertEquals(1, count("slot-1"));
         assertEquals(401, assertThrows(ApiException.class, () -> booking.create(userA, "late-booking", "slot-2")).getStatus());
         assertEquals(List.of(userB, ADMIN), members.list(ADMIN).stream().map(user -> user.getString("id")).toList());
-        Map<String, Object> registered = auth.register(Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD,
-                "phone", "010-1234-5678", "email", "PATIENT-A@example.com"));
+        Map<String, Object> registered = auth.register(TestContactProofs.signup(mongo, Map.of("loginId", "patient-a", "name", "회원 가", "password", PASSWORD,
+                "phone", "010-1234-5678", "email", "PATIENT-A@example.com")));
         String newId = auth.authenticate((String) registered.get("token")).getId();
         assertNotEquals(userA, newId);
         assertTrue(booking.reservations(newId).isEmpty());
@@ -212,7 +214,8 @@ class MemberMongoIntegrationTest {
         mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().unset("authProvider")
                 .set("passwordHash", new BCryptPasswordEncoder().encode(password)), "users");
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdraw(userA, password.trim())).getStatus());
-        assertEquals(userA, members.withdraw(userA, password).getString("deletedUserId"));
+        assertEquals(userA, members.withdrawVerified(userA, password,
+                TestContactProofs.phoneToken(mongo, "WITHDRAWAL", userA)).getString("deletedUserId"));
         assertNull(mongo.findById(userA, Document.class, "users"));
     }
 
@@ -225,20 +228,21 @@ class MemberMongoIntegrationTest {
                 .set("socialSubject", subject).set("socialIdentity", identity).set("profileComplete", true).unset("passwordHash"), "users");
         signIn(userA);
         mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
-                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
+                        .content(new Document("password", PASSWORD).toJson())).andExpect(status().isBadRequest());
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, provider + ":9999999999", 0)).getStatus());
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, null, 0)).getStatus());
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userB, identity, 0)).getStatus());
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(ADMIN, identity, 0)).getStatus());
         assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, identity, 1)).getStatus());
         assertEquals(userA, auth.authenticate(tokenA).getId());
-        Document result = members.withdrawSocial(userA, identity, 0);
+        assertEquals(400, assertThrows(ApiException.class, () -> members.withdrawSocial(userA, identity, 0)).getStatus());
+        Document result = members.withdrawSocial(userA, identity, 0, TestContactProofs.phoneToken(mongo, "WITHDRAWAL", userA));
         assertEquals(userA, result.getString("deletedUserId"));
         assertEquals(0, result.getInteger("canceledReservations"));
         assertNull(mongo.findById(userA, Document.class, "users"));
         assertThrows(JwtException.class, () -> auth.authenticate(tokenA));
-        Map<String, Object> registered = auth.register(Map.of("loginId", "returned-member", "name", "다시 가입한 회원", "password", PASSWORD,
-                "phone", "010-1234-5678", "email", "patient-a@example.com"));
+        Map<String, Object> registered = auth.register(TestContactProofs.signup(mongo, Map.of("loginId", "returned-member", "name", "다시 가입한 회원", "password", PASSWORD,
+                "phone", "010-1234-5678", "email", "patient-a@example.com")));
         assertNotEquals(userA, auth.authenticate((String) registered.get("token")).getId());
     }
 
@@ -507,7 +511,7 @@ class MemberMongoIntegrationTest {
     }
 
     private Document deleteOrWithdraw(MemberService service, boolean withdrawal) {
-        return withdrawal ? service.withdraw(userA, PASSWORD) : service.delete(ADMIN, userA);
+        return withdrawal ? service.withdrawVerified(userA, PASSWORD, TestContactProofs.phoneToken(mongo, "WITHDRAWAL", userA)) : service.delete(ADMIN, userA);
     }
 
     private void signIn(String userId) {
