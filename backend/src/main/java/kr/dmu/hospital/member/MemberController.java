@@ -4,9 +4,6 @@ import kr.dmu.hospital.auth.CurrentUser;
 import org.bson.Document;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.Map;
-
 @RestController
 @RequestMapping("/api/admin/members")
 public class MemberController {
@@ -17,8 +14,11 @@ public class MemberController {
     }
 
     @GetMapping
-    public Map<String, List<Document>> list() {
-        return Map.of("items", members.list(CurrentUser.requireAdmin().getId()));
+    public Document list(@RequestParam(defaultValue = "all") String type,
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int pageSize) {
+        return members.search(CurrentUser.requireAdmin().getId(), type, q, page, pageSize);
     }
 
     @DeleteMapping("/{id}")

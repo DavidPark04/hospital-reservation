@@ -263,6 +263,49 @@ class MemberIdentityMongoTest {
         assertEquals(1, count("users"));
     }
 
+    @Test void temporaryMembersSharePlaceholderContactsWithoutClaimingRealMembersIdentityAcrossStartups() {
+        String hash = new BCryptPasswordEncoder().encode("TemporaryFixture2026!");
+        for (String id : List.of("test0001", "test0002")) {
+            mongo.insert(new Document("_id", id).append("loginId", id).append("name", id).append("role", "USER")
+                    .append("authProvider", "LOCAL").append("passwordHash", hash).append("testUser", true)
+                    .append("phone", "01012345678").append("email", id + "@example.com")
+                    .append("emailNormalized", id + "@example.com").append("memberIdentityClaimed", false)
+                    .append("emailVerified", true).append("phoneVerified", true).append("tokenVersion", 0), "users");
+        }
+        auth.register(TestContactProofs.signup(mongo, registration("realmember", "실제 회원", "01012345678", "test0001@example.com")));
+        indexes(); indexes();
+        for (String id : List.of("test0001", "test0002")) {
+            Document temporary = mongo.findById(id, Document.class, "users");
+            assertEquals(false, temporary.getBoolean("memberIdentityClaimed"));
+            assertEquals(false, temporary.getBoolean("phoneVerified"));
+            assertEquals(false, temporary.getBoolean("emailVerified"));
+            assertEquals("01012345678", temporary.getString("phone"));
+            assertEquals(id + "@example.com", temporary.getString("emailNormalized"));
+            String token = (String) auth.login(Map.of("loginId", id, "password", "TemporaryFixture2026!")).get("token");
+            assertEquals(id, auth.authenticate(token).getId());
+        }
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class, () -> auth.register(TestContactProofs.signup(mongo,
+                registration("duplicatedreal", "중복 실제 회원", "01012345678", "different@example.com")))));
+        List<Document> allIndexes = mongo.getCollection("users").listIndexes().into(new ArrayList<>());
+        for (String field : List.of("phone", "emailNormalized")) {
+            Document index = allIndexes.stream().filter(item -> new Document(field, 1).equals(item.get("key"))).findFirst().orElseThrow();
+            assertEquals(true, index.getBoolean("unique"));
+            assertEquals(true, index.get("partialFilterExpression", Document.class).getBoolean("memberIdentityClaimed"));
+        }
+    }
+
+    @Test void publicRegistrationCannotOptIntoTemporaryIdentityExemption() {
+        Map<String, Object> form = new java.util.HashMap<>(registration("claimedtest", "일반 회원", "01012345678", "normal@example.com"));
+        form.put("testUser", true); form.put("memberIdentityClaimed", false);
+        assertThrows(ApiException.class, () -> auth.register(form));
+        var session = auth.register(TestContactProofs.signup(mongo, form));
+        Document stored = mongo.findById(auth.authenticate((String) session.get("token")).getId(), Document.class, "users");
+        assertFalse(Boolean.TRUE.equals(stored.getBoolean("testUser")));
+        assertEquals(true, stored.getBoolean("memberIdentityClaimed"));
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class, () -> auth.register(TestContactProofs.signup(mongo,
+                registration("anotherreal", "다른 회원", "01012345678", "another@example.com")))));
+    }
+
     @Test void concurrentStartupPreservesContactsAndMigratesOneTemporarySignup() throws Exception {
         mongo.getCollection("users").createIndex(new Document("nameNormalized", 1).append("phone", 1),
             new IndexOptions().unique(true).name("user_name_phone_v1").partialFilterExpression(new Document("memberIdentityClaimed", true)));

@@ -18,9 +18,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Service
 public class MemberService {
@@ -47,14 +49,62 @@ public class MemberService {
 
     public List<Document> list(String adminId) {
         requireAdmin(adminId);
+        return memberDocuments(Query.query(memberSelection("all", ""))
+                .with(Sort.by(Sort.Direction.DESC, "createdAt", "_id")));
+    }
+
+    public Document search(String adminId, String type, String search, int page, int pageSize) {
+        requireAdmin(adminId);
+        if (type == null || !List.of("personal", "hospital", "all").contains(type) || search == null || search.length() > 100
+                || page < 1 || pageSize < 1 || pageSize > 100) {
+            throw new ApiException(400, "회원 유형, 검색어와 페이지 정보를 확인해 주세요.");
+        }
+        String text = Normalizer.normalize(search, Normalizer.Form.NFC).strip();
+        Criteria selection = memberSelection(type, text);
+        long total = mongo.count(Query.query(selection), "users");
+        int actualPage = (int) Math.min(page, Math.max(1L, (total + pageSize - 1) / pageSize));
+        Query query = Query.query(selection).with(Sort.by(Sort.Direction.DESC, "createdAt", "_id"))
+                .skip((long) (actualPage - 1) * pageSize).limit(pageSize);
+        long personalCount = mongo.count(Query.query(memberSelection("personal", "")), "users");
+        long hospitalCount = mongo.count(Query.query(memberSelection("hospital", "")), "users");
+        return new Document("items", memberDocuments(query)).append("total", total)
+                .append("page", actualPage).append("pageSize", pageSize)
+                .append("personalCount", personalCount).append("hospitalCount", hospitalCount);
+    }
+
+    private Criteria memberSelection(String type, String text) {
         Criteria completed = new Criteria().orOperator(
                 Criteria.where("authProvider").is(null),
                 Criteria.where("authProvider").is("LOCAL"),
                 Criteria.where("authProvider").in("GOOGLE", "KAKAO").and("profileComplete").is(true));
-        Query query = Query.query(completed).with(Sort.by(Sort.Direction.DESC, "createdAt", "_id"));
+        Criteria personal = Criteria.where("role").ne("HOSPITAL");
+        Criteria hospital = Criteria.where("role").is("HOSPITAL");
+        if (!text.isEmpty()) {
+            Criteria name = Criteria.where("name").regex(Pattern.compile(Pattern.quote(text), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
+            Pattern number = contactNumberPattern(text);
+            Criteria personalMatch = number == null ? name : new Criteria().orOperator(name, Criteria.where("phone").regex(number));
+            Criteria hospitalMatch = number == null ? Criteria.where("_id").exists(false) : Criteria.where("businessNumber").regex(number);
+            personal = new Criteria().andOperator(personal, personalMatch);
+            hospital = new Criteria().andOperator(hospital, hospitalMatch);
+        }
+        if ("personal".equals(type)) return new Criteria().andOperator(completed, personal);
+        if ("hospital".equals(type)) return new Criteria().andOperator(completed, hospital);
+        if (text.isEmpty()) return completed;
+        return new Criteria().andOperator(completed, new Criteria().orOperator(personal, hospital));
+    }
+
+    private Pattern contactNumberPattern(String text) {
+        if (!text.matches("[0-9\\s()\\-]+")) return null;
+        String digits = text.replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) return null;
+        // Normalized fields and older formatted contact fields match the same search.
+        return Pattern.compile(String.join("[\\s()\\-]*", digits.split("")));
+    }
+
+    private List<Document> memberDocuments(Query query) {
         query.fields().include("name").include("loginId").include("role").include("createdAt")
                 .include("authProvider").include("email").include("phone").include("profileComplete")
-                .include("hospitalId").include("businessNumber");
+                .include("hospitalId").include("businessNumber").include("testUser");
         List<Document> users = mongo.find(query, Document.class, "users");
         List<Document> result = new ArrayList<>();
         for (Document user : users) {
@@ -74,6 +124,7 @@ public class MemberService {
             if ("HOSPITAL".equals(user.getString("role"))) {
                 member.append("hospitalId", user.getString("hospitalId")).append("businessNumber", user.getString("businessNumber"));
             }
+            if (Boolean.TRUE.equals(user.getBoolean("testUser"))) member.append("testUser", true);
             result.add(member);
         }
         return result;

@@ -199,6 +199,32 @@ class PersonalAccountVerificationMongoTest {
         }
     }
 
+    @Test void temporaryMembersCanLoginButCannotUseContactProofsToMutateTheirAccounts() {
+        String id = "test0001";
+        mongo.insert(new Document("_id", id).append("loginId", id).append("name", id).append("role", "USER")
+                .append("authProvider", "LOCAL").append("passwordHash", passwords.encode(CURRENT)).append("testUser", true)
+                .append("phone", "01012345678").append("email", "test0001@example.com")
+                .append("emailNormalized", "test0001@example.com").append("memberIdentityClaimed", false)
+                .append("phoneVerified", false).append("emailVerified", false).append("tokenVersion", 0), "users");
+        String token = (String) auth.login(Map.of("loginId", id, "password", CURRENT)).get("token");
+        assertEquals(id, authenticate(token).getId());
+        Document before = mongo.findById(id, Document.class, "users");
+        String change = TestContactProofs.phoneToken(mongo, "PASSWORD_CHANGE", id);
+        assertEquals(403, assertThrows(ApiException.class, () -> auth.changePassword(Map.of(
+                "currentPassword", CURRENT, "newPassword", NEXT, "phoneVerificationToken", change))).getStatus());
+        String reset = TestContactProofs.phoneToken(mongo, "PASSWORD_RESET", id);
+        assertEquals(403, assertThrows(ApiException.class, () -> auth.resetPassword(Map.of(
+                "loginId", id, "newPassword", NEXT, "phoneVerificationToken", reset))).getStatus());
+        String email = TestContactProofs.seed(mongo, "EMAIL_CHANGE", "EMAIL", "new@example.com", id, 0);
+        assertEquals(403, assertThrows(ApiException.class, () -> auth.changeEmail(Map.of(
+                "email", "new@example.com", "emailVerificationToken", email))).getStatus());
+        String withdraw = TestContactProofs.phoneToken(mongo, "WITHDRAWAL", id);
+        assertEquals(403, assertThrows(ApiException.class, () -> members.withdrawVerified(id, CURRENT, withdraw)).getStatus());
+        for (String proof : List.of(change, reset, email, withdraw)) assertNotNull(receipt(proof));
+        assertEquals(before, mongo.findById(id, Document.class, "users"));
+        assertEquals(id, auth.authenticate(token).getId());
+    }
+
     private Map<String, Object> registration(String loginId, String phone) {
         return new HashMap<>(Map.of("loginId", loginId, "name", "인증 시험", "password", CURRENT,
                 "email", loginId.toLowerCase() + "@example.com", "phone", phone));

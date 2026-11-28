@@ -185,6 +185,49 @@ class ContactVerificationMongoTest {
         assertEquals(3, confirmed.size());
     }
 
+    @Test void signupPhoneDiscoveryIgnoresTemporaryMembersAndStillFindsARealMember() {
+        for (String id : List.of("test0001", "test0002")) {
+            mongo.save(user(id, "01012345678").append("testUser", true).append("memberIdentityClaimed", false), "users");
+        }
+        var withoutRealMember = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
+        assertFalse(withoutRealMember.containsKey("existingAuthProvider"));
+        mongo.save(user("real-member", "01012345678").append("authProvider", "KAKAO").append("profileComplete", true), "users");
+        time.set(time.get().plusSeconds(1));
+        var withRealMember = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
+        assertEquals("KAKAO", withRealMember.get("existingAuthProvider"));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"PASSWORD_CHANGE", "WITHDRAWAL", "PASSWORD_RESET"})
+    void temporaryMembersCannotGetPhoneProofsForAccountChanges(String purpose) {
+        Document temporary = user("test0001", "01012345678").append("testUser", true).append("memberIdentityClaimed", false);
+        mongo.save(temporary, "users");
+        if (!purpose.equals("PASSWORD_RESET")) login(temporary);
+        ApiException denied = assertThrows(ApiException.class, () -> verification.confirmPhone(
+                Map.of("purpose", purpose, "idToken", "provider-token", "loginId", "test0001")));
+        assertEquals(403, denied.getStatus());
+        assertTrue(denied.getMessage().contains("임시 회원"));
+        assertEquals(0, mongo.getCollection(ContactVerificationService.PROOFS).countDocuments());
+        assertEquals(0, mongo.getCollection(ContactVerificationService.PHONE_RECEIPTS).countDocuments());
+    }
+
+    @Test void temporaryMembersCannotSendAccountChangeEmailOrConsumePreviouslyCreatedProofs() {
+        Document account = user("test0001", "01012345678");
+        login(account);
+        var sent = verification.sendEmail(Map.of("purpose", "EMAIL_CHANGE", "email", "new@example.com"), "127.0.0.1");
+        String code = emailCode.get();
+        String proof = TestContactProofs.seed(mongo, "EMAIL_CHANGE", "EMAIL", "new@example.com", "test0001", 0);
+        mongo.save(account.append("testUser", true).append("memberIdentityClaimed", false), "users");
+        clearInvocations(mail);
+        assertEquals(403, assertThrows(ApiException.class, () -> verification.sendEmail(
+                Map.of("purpose", "EMAIL_CHANGE", "email", "another@example.com"), "127.0.0.1")).getStatus());
+        verify(mail, never()).sendCode(anyString(), anyString());
+        assertEquals(403, assertThrows(ApiException.class, () -> verification.confirmEmail(
+                Map.of("challengeId", sent.get("challengeId"), "code", code))).getStatus());
+        assertEquals(403, assertThrows(ApiException.class, () -> verification.consume(
+                proof, "EMAIL_CHANGE", "EMAIL", "new@example.com", "test0001", 0)).getStatus());
+        assertNotNull(mongo.findById(SocialLoginTickets.hash(proof), Document.class, ContactVerificationService.PROOFS));
+    }
+
     @ParameterizedTest @ValueSource(strings = {"PASSWORD_CHANGE", "WITHDRAWAL", "PASSWORD_RESET"})
     void nonSignupSmsDoesNotDiscloseProvider(String purpose) {
         Document account = user("person", "01012345678");

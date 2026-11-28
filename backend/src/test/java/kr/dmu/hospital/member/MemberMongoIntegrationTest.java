@@ -284,6 +284,138 @@ class MemberMongoIntegrationTest {
     }
 
     @Test
+    void personalSearchMatchesPartialNamesAndFormattedPhonesOnlyWithinPersonalMembers() throws Exception {
+        String hospitalUser = hospitalAccount();
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(hospitalUser)),
+                new Update().set("name", "회원 가 병원").set("phone", "01012345678"), "users");
+        signIn(ADMIN);
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "회원 가"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(userA))
+                .andExpect(jsonPath("$.personalCount").value(3)).andExpect(jsonPath("$.hospitalCount").value(1));
+        for (String phone : List.of("010-1234-5678", "01012345678", "1234", "(010) 1234-5678")) {
+            mvc.perform(get("/api/admin/members").param("type", "personal").param("q", phone))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
+                    .andExpect(jsonPath("$.items[0].id").value(userA));
+        }
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userB)), new Update().set("phone", "010-8765-4321"), "users");
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "87654321"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].id").value(userB));
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "관리자"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].id").value(ADMIN));
+        // Login IDs and email addresses are not the requested personal search fields.
+        for (String otherField : List.of("patient-a", "patient-a@example.com")) {
+            mvc.perform(get("/api/admin/members").param("type", "personal").param("q", otherField))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0));
+        }
+    }
+
+    @Test
+    void hospitalSearchUsesBusinessNumbersAndNeverFallsBackToAnUnfilteredList() throws Exception {
+        String hospitalUser = hospitalAccount();
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)),
+                new Update().set("businessNumber", "6911702710").set("name", "6911702710"), "users");
+        signIn(ADMIN);
+        for (String number : List.of("691-17-02710", "6911702710", "17-027")) {
+            mvc.perform(get("/api/admin/members").param("type", "hospital").param("q", number))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
+                    .andExpect(jsonPath("$.items[0].id").value(hospitalUser));
+        }
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(hospitalUser)),
+                new Update().set("businessNumber", "691-17-02710"), "users");
+        mvc.perform(get("/api/admin/members").param("type", "hospital").param("q", "6911702710"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1));
+        for (String invalid : List.of("시험 병원", "---", ".*", "691abc", "9999999999")) {
+            mvc.perform(get("/api/admin/members").param("type", "hospital").param("q", invalid))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0))
+                    .andExpect(jsonPath("$.items.length()").value(0)).andExpect(jsonPath("$.hospitalCount").value(1));
+        }
+        mvc.perform(get("/api/admin/members").param("q", "6911702710"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(2));
+    }
+
+    @Test
+    void personalSearchTreatsRegexCharactersAsLiteralTextAndIgnoresCase() throws Exception {
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().set("name", "Test.*[회원]"), "users");
+        signIn(ADMIN);
+        for (String text : List.of(".*", "[회원]", "  test.*  ")) {
+            mvc.perform(get("/api/admin/members").param("type", "personal").param("q", text))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
+                    .andExpect(jsonPath("$.items[0].id").value(userA));
+        }
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "^"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void pagedSearchIsBoundedStableAndClampsPagesAfterDeletion() throws Exception {
+        Date created = Date.from(Instant.parse("2026-02-01T00:00:00Z"));
+        for (int i = 1; i <= 120; i++) {
+            String id = "bulk-" + String.format("%04d", i);
+            mongo.insert(new Document("_id", id).append("loginId", id).append("name", "대량 회원 " + i)
+                    .append("role", "USER").append("authProvider", "LOCAL").append("createdAt", created), "users");
+        }
+        Document first = members.search(ADMIN, "personal", "대량 회원", 1, 50);
+        Document second = members.search(ADMIN, "personal", "대량 회원", 2, 50);
+        Document last = members.search(ADMIN, "personal", "대량 회원", Integer.MAX_VALUE, 50);
+        assertEquals(120L, first.getLong("total"));
+        assertEquals(123L, first.getLong("personalCount"));
+        assertEquals(50, first.getList("items", Document.class).size());
+        assertEquals(50, second.getList("items", Document.class).size());
+        assertEquals(20, last.getList("items", Document.class).size());
+        assertEquals(3, last.getInteger("page"));
+        assertEquals("bulk-0120", first.getList("items", Document.class).getFirst().getString("id"));
+        Set<String> ids = new java.util.HashSet<>();
+        for (Document page : List.of(first, second, last)) for (Document member : page.getList("items", Document.class)) {
+            assertTrue(ids.add(member.getString("id")), "Page results must not repeat members.");
+        }
+        assertEquals(120, ids.size());
+        mongo.remove(Query.query(Criteria.where("_id").regex("^bulk-00[012][0-9]$")), "users");
+        Document afterDeletion = members.search(ADMIN, "personal", "대량 회원", 3, 50);
+        assertEquals(2, afterDeletion.getInteger("page"));
+        assertEquals(91L, afterDeletion.getLong("total"));
+        signIn(ADMIN);
+        mvc.perform(get("/api/admin/members"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(50))
+                .andExpect(jsonPath("$.page").value(1)).andExpect(jsonPath("$.pageSize").value(50));
+        mvc.perform(get("/api/admin/members").param("q", "없음").param("page", "30"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.page").value(1)).andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void searchCountsCompletedMembersAndExposesOnlyTheTemporaryUserLabel() throws Exception {
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update().set("testUser", true)
+                .set("seedBatchId", "private-seed-batch").set("phoneVerified", false), "users");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userB)),
+                new Update().set("authProvider", "GOOGLE").set("profileComplete", false), "users");
+        hospitalAccount();
+        signIn(ADMIN);
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "회원"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.personalCount").value(2)).andExpect(jsonPath("$.hospitalCount").value(1))
+                .andExpect(jsonPath("$.items[0].testUser").value(true))
+                .andExpect(jsonPath("$.items[*].seedBatchId").doesNotExist())
+                .andExpect(jsonPath("$.items[*].phoneVerified").doesNotExist())
+                .andExpect(jsonPath("$.items[*].passwordHash").doesNotExist());
+    }
+
+    @Test
+    void searchRejectsInvalidArgumentsAndKeepsAdminAuthorization() throws Exception {
+        mvc.perform(get("/api/admin/members").param("type", "personal").param("q", "회원"))
+                .andExpect(status().isUnauthorized());
+        signIn(userA);
+        mvc.perform(get("/api/admin/members").param("type", "hospital").param("q", "691"))
+                .andExpect(status().isForbidden());
+        assertEquals(403, assertThrows(ApiException.class, () -> members.search(userA, "all", "", 1, 50)).getStatus());
+        signIn(ADMIN);
+        for (String[] invalid : List.of(new String[]{"type", "unknown"}, new String[]{"page", "0"},
+                new String[]{"page", "-1"}, new String[]{"page", "not-number"}, new String[]{"page", "2147483648"},
+                new String[]{"pageSize", "0"}, new String[]{"pageSize", "101"}, new String[]{"q", "a".repeat(101)})) {
+            mvc.perform(get("/api/admin/members").param(invalid[0], invalid[1])).andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
     void listExposesCompletedSocialProfilesAndExcludesLegacyPendingUsers() throws Exception {
         mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)), new Update()
                 .set("authProvider", "GOOGLE").set("email", "patient@example.test").set("emailSource", "USER")
