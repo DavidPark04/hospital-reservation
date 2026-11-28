@@ -63,7 +63,7 @@ public class HospitalService {
         for (Document row : rows) items.add(publicHospital(RegisteredHospitals.withManagedDepartments(
                 HospitalCatalog.combine(row, null), registrations.get(row.getString("_id"))), "CACHE"));
         return result(items, "CACHE", items.isEmpty() ? "등록된 병원 중 검색 결과를 찾지 못했어요. 지역이나 병원명을 바꿔 보세요."
-                : "메디픽 등록 병원입니다. 기본 정보는 매일 갱신하며 진료과와 일정은 병원에서 관리합니다.");
+                : "메디픽 등록 병원입니다. 기본 정보는 지역별 일정에 따라 주 1회 갱신하며 진료과와 일정은 병원에서 관리합니다.");
     }
 
     private List<Criteria> searchFilters(String name, String region, boolean exactName) {

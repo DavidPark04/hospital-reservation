@@ -53,4 +53,4 @@ GitHub Actions의 배포 작업은 `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, 프로�
 
 2026-11-25 GitHub API에서 기존 저장소와 같은 ID `1465066975`의 소유자가 `medipick-dev` 조직으로 변경된 것을 확인했습니다. 현재 주소는 `medipick-dev/hospital-reservation`이며 공개 상태입니다. 이전 주소의 리디렉션과 별개로 Actions의 `github.repository`에는 새 소유자가 포함되므로 운영 배포·자정 수집의 저장소 조건과 배포 준비 스크립트를 새 주소에 맞춥니다.
 
-배포·일일 수집의 성공 여부는 이전 사실만으로 판단하지 않고 해당 워크플로 실행 결과로 확인합니다. Vercel 운영 주소와 MongoDB 데이터베이스 이름은 저장소 이전으로 바뀌지 않습니다.
+배포·지역별 예약 수집의 성공 여부는 이전 사실만으로 판단하지 않고 해당 워크플로 실행 결과로 확인합니다. Vercel 운영 주소와 MongoDB 데이터베이스 이름은 저장소 이전으로 바뀌지 않습니다.
