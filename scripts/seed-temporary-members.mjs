@@ -6,7 +6,6 @@ import { MongoClient } from 'mongodb';
 
 export const BATCH = 'temporary-personal-test0001-test2000-v1';
 export const COUNT = 2000;
-export const PHONE = '01012345678';
 const BCRYPT = /^\$2[aby]\$1[0-6]\$[./A-Za-z0-9]{53}$/;
 
 export function temporaryMembers(passwordHashes, createdAt = new Date()) {
@@ -20,9 +19,9 @@ export function temporaryMembers(passwordHashes, createdAt = new Date()) {
     return {
       _id: `temporary-member-${name}`, name, nameNormalized: name, loginId: name,
       ...(passwordHashes ? { passwordHash: passwordHashes[index] } : {}),
-      phone: PHONE, email, emailNormalized: email, emailSource: 'TEST',
+      phone: `010${number}${number}`, email, emailNormalized: email, emailSource: 'TEST',
       role: 'USER', authProvider: 'LOCAL', profileComplete: true, tokenVersion: 0,
-      testUser: true, seedBatchId: BATCH, memberIdentityClaimed: false,
+      testUser: true, seedBatchId: BATCH, memberIdentityClaimed: true,
       emailVerified: false, phoneVerified: false, createdAt,
     };
   });
@@ -39,7 +38,8 @@ export async function preflightTemporaryMembers(db, session) {
     { loginId: { $in: planned.map(member => member.loginId) } },
     { emailNormalized: { $in: planned.map(member => member.emailNormalized) } },
     { email: { $regex: '^ex(?:0[0-9]{3}|1[0-9]{3}|2000)@gmail\\.com$', $options: 'i' } },
-    { phone: { $in: [PHONE, '010-1234-5678'] } }, { seedBatchId: BATCH },
+    { phone: { $in: planned.flatMap(member => [member.phone, `010-${member.phone.slice(3, 7)}-${member.phone.slice(7)}`]) } },
+    { seedBatchId: BATCH },
   ] }, { session }).toArray();
   const valid = new Set();
   for (const row of rows) {

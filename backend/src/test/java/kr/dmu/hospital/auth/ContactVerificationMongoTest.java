@@ -187,11 +187,14 @@ class ContactVerificationMongoTest {
 
     @Test void signupPhoneDiscoveryIgnoresTemporaryMembersAndStillFindsARealMember() {
         for (String id : List.of("test0001", "test0002")) {
-            mongo.save(user(id, "01012345678").append("testUser", true).append("memberIdentityClaimed", false), "users");
+            mongo.save(user(id, "010" + id.substring(4) + id.substring(4)).append("testUser", true).append("memberIdentityClaimed", true), "users");
         }
+        when(phones.verify(anyString())).thenAnswer(ignored -> new FirebasePhoneVerifier.PhoneIdentity("firebase-user", "01000010001", time.get()));
         var withoutRealMember = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
         assertFalse(withoutRealMember.containsKey("existingAuthProvider"));
-        mongo.save(user("real-member", "01012345678").append("authProvider", "KAKAO").append("profileComplete", true), "users");
+        mongo.save(user("real-member", "01012345678").append("authProvider", "KAKAO")
+                .append("profileComplete", true).append("memberIdentityClaimed", true), "users");
+        when(phones.verify(anyString())).thenAnswer(ignored -> new FirebasePhoneVerifier.PhoneIdentity("firebase-user", "01012345678", time.get()));
         time.set(time.get().plusSeconds(1));
         var withRealMember = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
         assertEquals("KAKAO", withRealMember.get("existingAuthProvider"));
@@ -199,8 +202,9 @@ class ContactVerificationMongoTest {
 
     @ParameterizedTest @ValueSource(strings = {"PASSWORD_CHANGE", "WITHDRAWAL", "PASSWORD_RESET"})
     void temporaryMembersCannotGetPhoneProofsForAccountChanges(String purpose) {
-        Document temporary = user("test0001", "01012345678").append("testUser", true).append("memberIdentityClaimed", false);
+        Document temporary = user("test0001", "01000010001").append("testUser", true).append("memberIdentityClaimed", true);
         mongo.save(temporary, "users");
+        when(phones.verify(anyString())).thenAnswer(ignored -> new FirebasePhoneVerifier.PhoneIdentity("firebase-user", "01000010001", time.get()));
         if (!purpose.equals("PASSWORD_RESET")) login(temporary);
         ApiException denied = assertThrows(ApiException.class, () -> verification.confirmPhone(
                 Map.of("purpose", purpose, "idToken", "provider-token", "loginId", "test0001")));
@@ -211,12 +215,12 @@ class ContactVerificationMongoTest {
     }
 
     @Test void temporaryMembersCannotSendAccountChangeEmailOrConsumePreviouslyCreatedProofs() {
-        Document account = user("test0001", "01012345678");
+        Document account = user("test0001", "01000010001");
         login(account);
         var sent = verification.sendEmail(Map.of("purpose", "EMAIL_CHANGE", "email", "new@example.com"), "127.0.0.1");
         String code = emailCode.get();
         String proof = TestContactProofs.seed(mongo, "EMAIL_CHANGE", "EMAIL", "new@example.com", "test0001", 0);
-        mongo.save(account.append("testUser", true).append("memberIdentityClaimed", false), "users");
+        mongo.save(account.append("testUser", true).append("memberIdentityClaimed", true), "users");
         clearInvocations(mail);
         assertEquals(403, assertThrows(ApiException.class, () -> verification.sendEmail(
                 Map.of("purpose", "EMAIL_CHANGE", "email", "another@example.com"), "127.0.0.1")).getStatus());

@@ -20,10 +20,14 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /** Contact uniqueness is tested only in a disposable loopback database. */
 @EnabledIfEnvironmentVariable(named = "MONGODB_TEST_URI", matches = ".+")
@@ -263,35 +267,96 @@ class MemberIdentityMongoTest {
         assertEquals(1, count("users"));
     }
 
-    @Test void temporaryMembersSharePlaceholderContactsWithoutClaimingRealMembersIdentityAcrossStartups() {
+    @Test void temporaryMembersKeepUniquePlaceholderContactsAndUnverifiedFlagsAcrossStartups() {
         String hash = new BCryptPasswordEncoder().encode("TemporaryFixture2026!");
         for (String id : List.of("test0001", "test0002")) {
+            String suffix = id.substring(4);
             mongo.insert(new Document("_id", id).append("loginId", id).append("name", id).append("role", "USER")
                     .append("authProvider", "LOCAL").append("passwordHash", hash).append("testUser", true)
-                    .append("phone", "01012345678").append("email", id + "@example.com")
-                    .append("emailNormalized", id + "@example.com").append("memberIdentityClaimed", false)
-                    .append("emailVerified", true).append("phoneVerified", true).append("tokenVersion", 0), "users");
+                    .append("phone", "010" + suffix + suffix).append("email", id + "@example.com")
+                    .append("emailNormalized", id + "@example.com").append("memberIdentityClaimed", true)
+                    .append("emailVerified", false).append("phoneVerified", false).append("tokenVersion", 0), "users");
         }
-        auth.register(TestContactProofs.signup(mongo, registration("realmember", "실제 회원", "01012345678", "test0001@example.com")));
+        auth.register(TestContactProofs.signup(mongo, registration("realmember", "실제 회원", "01012345678", "realmember@example.com")));
         indexes(); indexes();
         for (String id : List.of("test0001", "test0002")) {
             Document temporary = mongo.findById(id, Document.class, "users");
-            assertEquals(false, temporary.getBoolean("memberIdentityClaimed"));
+            assertEquals(true, temporary.getBoolean("memberIdentityClaimed"));
             assertEquals(false, temporary.getBoolean("phoneVerified"));
             assertEquals(false, temporary.getBoolean("emailVerified"));
-            assertEquals("01012345678", temporary.getString("phone"));
+            assertEquals("010" + id.substring(4) + id.substring(4), temporary.getString("phone"));
             assertEquals(id + "@example.com", temporary.getString("emailNormalized"));
             String token = (String) auth.login(Map.of("loginId", id, "password", "TemporaryFixture2026!")).get("token");
             assertEquals(id, auth.authenticate(token).getId());
         }
         assertGenericConflict(assertThrows(MemberIdentityConflict.class, () -> auth.register(TestContactProofs.signup(mongo,
-                registration("duplicatedreal", "중복 실제 회원", "01012345678", "different@example.com")))));
+                registration("duplicatephone", "중복 전화 회원", "01000010001", "different@example.com")))));
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class, () -> auth.register(TestContactProofs.signup(mongo,
+                registration("duplicateemail", "중복 이메일 회원", "01087654321", "test0001@example.com")))));
+        Document first = mongo.findById("test0001", Document.class, "users");
+        Document duplicatePhone = new Document(first).append("_id", "duplicate-phone").append("loginId", "duplicate-phone")
+                .append("email", "different@example.com").append("emailNormalized", "different@example.com");
+        Document duplicateEmail = new Document(first).append("_id", "duplicate-email").append("loginId", "duplicate-email")
+                .append("phone", "01087654321");
+        assertThrows(DuplicateKeyException.class, () -> mongo.insert(duplicatePhone, "users"));
+        assertThrows(DuplicateKeyException.class, () -> mongo.insert(duplicateEmail, "users"));
         List<Document> allIndexes = mongo.getCollection("users").listIndexes().into(new ArrayList<>());
         for (String field : List.of("phone", "emailNormalized")) {
             Document index = allIndexes.stream().filter(item -> new Document(field, 1).equals(item.get("key"))).findFirst().orElseThrow();
             assertEquals(true, index.getBoolean("unique"));
             assertEquals(true, index.get("partialFilterExpression", Document.class).getBoolean("memberIdentityClaimed"));
         }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"phone", "email"})
+    void temporaryFlagCannotHideDuplicateContactsFromStartupPreflight(String field) {
+        mongo.insert(new Document("_id", "test0001").append("loginId", "test0001").append("name", "test0001")
+                .append("role", "USER").append("authProvider", "LOCAL").append("testUser", true)
+                .append("phone", "01000010001").append("email", "test0001@example.com"), "users");
+        mongo.insert(new Document("_id", "test0002").append("loginId", "test0002").append("name", "test0002")
+                .append("role", "USER").append("authProvider", "LOCAL").append("testUser", true)
+                .append("phone", field.equals("phone") ? "01000010001" : "01000020002")
+                .append("email", field.equals("email") ? "test0001@example.com" : "test0002@example.com"), "users");
+        List<Document> before = mongo.getCollection("users").find().sort(new Document("_id", 1)).into(new ArrayList<>());
+        assertThrows(IllegalStateException.class, this::indexes);
+        assertEquals(before, mongo.getCollection("users").find().sort(new Document("_id", 1)).into(new ArrayList<>()));
+    }
+
+    @Test void startupOnlyWritesContactsThatNeedNormalizationOrStaleFieldRemoval() {
+        auth.register(TestContactProofs.signup(mongo, registration("realmember", "실제 회원", "01012345678", "real@example.com")));
+        mongo.insert(new Document("_id", "test0001").append("loginId", "test0001").append("name", "test0001")
+                .append("nameNormalized", "test0001").append("role", "USER").append("authProvider", "LOCAL").append("testUser", true)
+                .append("phone", "01000010001").append("email", "test0001@example.com").append("emailNormalized", "test0001@example.com")
+                .append("memberIdentityClaimed", true).append("phoneVerified", false).append("emailVerified", false), "users");
+        MongoTemplate tracked = spy(mongo);
+        UserIndexes startup = new UserIndexes(tracked);
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        verify(tracked, never()).updateFirst(any(Query.class), any(Update.class), eq("users"));
+
+        mongo.insert(new Document("_id", "legacy").append("loginId", "legacy").append("name", " Legacy  Member ")
+                .append("role", "USER").append("phone", "010-9876-5432").append("email", " Legacy@Example.com "), "users");
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        verify(tracked, times(1)).updateFirst(any(Query.class), any(Update.class), eq("users"));
+        Document legacy = mongo.findById("legacy", Document.class, "users");
+        assertEquals("01098765432", legacy.getString("phone"));
+        assertEquals("legacy@example.com", legacy.getString("emailNormalized"));
+        assertEquals("legacy member", legacy.getString("nameNormalized"));
+        assertEquals(true, legacy.getBoolean("memberIdentityClaimed"));
+        clearInvocations(tracked);
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        verify(tracked, never()).updateFirst(any(Query.class), any(Update.class), eq("users"));
+
+        mongo.insert(new Document("_id", "stale").append("loginId", "stale").append("role", "USER")
+                .append("phone", " ").append("emailNormalized", "stale@example.com").append("nameNormalized", "stale")
+                .append("memberIdentityClaimed", false), "users");
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        verify(tracked, times(1)).updateFirst(any(Query.class), any(Update.class), eq("users"));
+        Document stale = mongo.findById("stale", Document.class, "users");
+        for (String field : List.of("phone", "emailNormalized", "nameNormalized", "memberIdentityClaimed")) assertFalse(stale.containsKey(field));
+        clearInvocations(tracked);
+        startup.run(new DefaultApplicationArguments(new String[0]));
+        verify(tracked, never()).updateFirst(any(Query.class), any(Update.class), eq("users"));
     }
 
     @Test void publicRegistrationCannotOptIntoTemporaryIdentityExemption() {

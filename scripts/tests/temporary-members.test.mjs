@@ -2,20 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { MongoClient } from 'mongodb';
-import { BATCH, COUNT, PHONE, temporaryMembers, preflightTemporaryMembers, seedTemporaryMembers } from '../seed-temporary-members.mjs';
+import { BATCH, COUNT, temporaryMembers, preflightTemporaryMembers, seedTemporaryMembers } from '../seed-temporary-members.mjs';
 
 // A synthetic format-valid hash is sufficient here; Java auth integration tests verify BCrypt login.
 const hashes = Array(COUNT).fill('$2a$10$' + 'A'.repeat(53));
-test('fixed seed produces exactly requested identities without trusting the sample contacts', () => {
+test('fixed seed produces distinct requested contacts with ordinary uniqueness and unverified flags', () => {
   const rows = temporaryMembers(hashes);
   assert.equal(rows.length, 2000);
   assert.equal(rows[0].loginId, 'test0001');
   assert.equal(rows[0].email, 'ex0001@gmail.com');
   assert.equal(rows.at(-1).name, 'test2000');
   assert.equal(rows.at(-1).email, 'ex2000@gmail.com');
+  assert.equal(rows[0].phone, '01000010001');
+  assert.equal(rows.at(-1).phone, '01020002000');
   assert.equal(new Set(rows.map(row => row._id)).size, 2000);
-  assert(rows.every(row => row.phone === PHONE && row.authProvider === 'LOCAL' && row.role === 'USER'
-    && row.testUser && !row.memberIdentityClaimed && !row.phoneVerified && !row.emailVerified));
+  assert.equal(new Set(rows.map(row => row.phone)).size, 2000);
+  assert(rows.every((row, index) => row.phone === `010${String(index + 1).padStart(4, '0').repeat(2)}`
+    && row.authProvider === 'LOCAL' && row.role === 'USER'
+    && row.testUser && row.memberIdentityClaimed && !row.phoneVerified && !row.emailVerified));
   assert.throws(() => temporaryMembers(['plaintext']), /2000 BCrypt/);
 });
 
@@ -51,6 +55,7 @@ test('Mongo seed is atomic, idempotent, preserves unrelated accounts and keeps n
     assert.equal(await db.collection('users').countDocuments(), 2001);
     assert.deepEqual(await db.collection('users').findOne({ _id: ordinary._id }), ordinary);
     await assert.rejects(db.collection('users').insertOne({ _id: 'duplicate', loginId: 'duplicate', phone: ordinary.phone, memberIdentityClaimed: true }), error => error.code === 11000);
+    await assert.rejects(db.collection('users').insertOne({ _id: 'duplicate-test', loginId: 'duplicate-test', testUser: true, phone: '01000010001', memberIdentityClaimed: true }), error => error.code === 11000);
     await db.collection('users').updateOne({ _id: 'temporary-member-test0001' }, { $set: { name: 'edited' } });
     await assert.rejects(seedTemporaryMembers(client, db, hashes), /conflicts/);
     assert.equal((await db.collection('users').findOne({ _id: 'temporary-member-test0001' })).name, 'edited');
