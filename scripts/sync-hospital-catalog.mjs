@@ -63,8 +63,8 @@ export function updateFor(previous,document,now) {
 export function assertReasonableRemoval(existingActive,missing) {
   if(missing>Math.max(100,Math.floor(existingActive*.05)))throw new SyncError('unexpected_large_catalog_reduction');
 }
-export function assertReasonableRegionalRemoval(current,documents) {
-  const counts=Object.fromEntries(REGION_CODES.map(region=>[region,{active:0,missing:0}]));
+export function assertReasonableRegionalRemoval(current,documents,regions=REGION_CODES) {
+  const counts=Object.fromEntries(regions.map(region=>[region,{active:0,missing:0}]));
   for(const previous of current) {
     const region=previous.apiFields?.sidoCd;
     if(previous.active===false||!Object.hasOwn(counts,region))continue;
@@ -88,11 +88,18 @@ function hasExactKeys(value,keys) {
   return value!==null&&typeof value==='object'&&!Array.isArray(value)&&
     Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 }
-function validateRegionalScopes(manifest) {
-  if(!hasExactKeys(manifest.regionScopes,REGION_CODES))throw new SyncError('incomplete_regional_scopes');
+function snapshotRegions(manifest) {
+  if(manifest.schemaVersion!==3)return REGION_CODES;
+  const regions=manifest.regions;
+  if(!Array.isArray(regions)||!regions.length||regions.some(region=>!REGION_CODES.includes(region))||
+    JSON.stringify(regions)!==JSON.stringify(REGION_CODES.filter(region=>regions.includes(region))))throw new SyncError('invalid_selected_regions');
+  return regions;
+}
+function validateRegionalScopes(manifest,regions) {
+  if(!hasExactKeys(manifest.regionScopes,regions))throw new SyncError('incomplete_regional_scopes');
   const totals=Object.fromEntries(SCOPES.map(code=>[code,0]));
   const bounds=Object.fromEntries(SCOPES.map(code=>[code,{first:Infinity,last:-Infinity}]));
-  for(const region of REGION_CODES) {
+  for(const region of regions) {
     const entry=manifest.regionScopes[region];
     if(!entry||!hasExactKeys(entry.scopeCounts,SCOPES)||!hasExactKeys(entry.scopeTimes,SCOPES))throw new SyncError('incomplete_regional_scopes');
     for(const code of SCOPES) {
@@ -114,9 +121,13 @@ function validateRegionalScopes(manifest) {
 export async function validateSnapshot(directory,now=new Date()) {
   const manifest=JSON.parse(fs.readFileSync(path.join(directory,'catalog-manifest.json'),'utf8'));
   const filename=path.join(directory,'catalog.jsonl');
-  if(![1,2].includes(manifest.schemaVersion)||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!=='nationwide-with-department-memberships'||!Number.isInteger(manifest.rows)||manifest.rows<1)throw new SyncError('incomplete_catalog_snapshot');
+  const regions=snapshotRegions(manifest),scoped=manifest.schemaVersion===3;
+  const scope=scoped?'regions-with-department-memberships':'nationwide-with-department-memberships';
+  if(![1,2,3].includes(manifest.schemaVersion)||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!==scope||!Number.isSafeInteger(manifest.rows)||manifest.rows<(scoped&&regions.length<REGION_CODES.length?0:1))throw new SyncError('incomplete_catalog_snapshot');
+  if(!scoped&&Object.hasOwn(manifest,'regions'))throw new SyncError('incomplete_catalog_snapshot');
   if(manifest.schemaVersion===1&&Object.hasOwn(manifest,'regionScopes'))throw new SyncError('incomplete_catalog_snapshot');
-  if(canonical(manifest.departments||{})!==canonical(DEPARTMENTS)||manifest.scopeCounts?.basic!==manifest.rows)throw new SyncError('incomplete_department_scopes');
+  if(canonical(manifest.departments||{})!==canonical(DEPARTMENTS)||manifest.scopeCounts?.basic!==manifest.rows||
+    !hasExactKeys(manifest.scopeCounts,SCOPES)||!hasExactKeys(manifest.scopeTimes,SCOPES))throw new SyncError('incomplete_department_scopes');
   for(const code of Object.keys(DEPARTMENTS))if(!Number.isInteger(manifest.scopeCounts[code])||manifest.scopeCounts[code]<0)throw new SyncError('incomplete_department_scopes');
   const first=new Date(manifest.firstFetchedAt),last=new Date(manifest.lastFetchedAt),completed=new Date(manifest.completedAt);
   if(![first,last,completed].every(value=>Number.isFinite(value.getTime()))||now-first>48*3600_000||first>last||last>completed||completed-now>300_000)throw new SyncError('stale_or_invalid_snapshot_time');
@@ -127,13 +138,13 @@ export async function validateSnapshot(directory,now=new Date()) {
     scopeDates.push(start.getTime(),end.getTime());
   }
   if(Math.min(...scopeDates)!==first.getTime()||Math.max(...scopeDates)!==last.getTime())throw new SyncError('scope_time_bounds_mismatch');
-  const regional=manifest.schemaVersion===2;
-  if(regional)validateRegionalScopes(manifest);
+  const regional=manifest.schemaVersion===2||scoped;
+  if(regional)validateRegionalScopes(manifest,regions);
   const checksum=await fileHash(filename);
   if(checksum!==manifest.sha256)throw new SyncError('snapshot_checksum_mismatch');
   const documents=new Map();
   const departmentCounts=Object.fromEntries(Object.keys(DEPARTMENTS).map(code=>[code,0]));
-  const regionCounts=Object.fromEntries(REGION_CODES.map(region=>[region,Object.fromEntries(SCOPES.map(code=>[code,0]))]));
+  const regionCounts=Object.fromEntries(regions.map(region=>[region,Object.fromEntries(SCOPES.map(code=>[code,0]))]));
   for await(const row of readRows(filename)) {
     const doc=normalizeRow(row);
     if(documents.has(doc._id))throw new SyncError('duplicate_catalog_identity');
@@ -151,15 +162,40 @@ export async function validateSnapshot(directory,now=new Date()) {
   }
   if(documents.size!==manifest.rows)throw new SyncError('catalog_count_mismatch');
   for(const code of Object.keys(DEPARTMENTS))if(departmentCounts[code]!==manifest.scopeCounts[code])throw new SyncError('department_count_mismatch');
-  if(regional)for(const region of REGION_CODES)for(const code of SCOPES) {
+  if(regional)for(const region of regions)for(const code of SCOPES) {
     if(regionCounts[region][code]!==manifest.regionScopes[region].scopeCounts[code])throw new SyncError('regional_catalog_count_mismatch');
   }
   return {manifest,documents,filename,checksum};
 }
 function emit(event,fields={}) { console.log(JSON.stringify({event,...fields})); }
 
+function regionalGeneration(manifest,region) {
+  const times=manifest.regionScopes?.[region]?.scopeTimes;
+  if(!times)return {firstFetchedAt:manifest.firstFetchedAt,lastFetchedAt:manifest.lastFetchedAt,scopeTimes:manifest.scopeTimes};
+  const starts=Object.values(times).map(value=>new Date(value.firstFetchedAt).getTime());
+  const ends=Object.values(times).map(value=>new Date(value.lastFetchedAt).getTime());
+  return {firstFetchedAt:new Date(Math.min(...starts)),lastFetchedAt:new Date(Math.max(...ends)),scopeTimes:times};
+}
+function assertGenerationOrder(incoming,previous,reason='snapshot_older_than_started_generation') {
+  if(!previous)return;
+  if(previous.lastFetchedAt&&new Date(incoming.lastFetchedAt)<new Date(previous.lastFetchedAt))throw new SyncError(reason);
+  for(const [code,times] of Object.entries(previous.scopeTimes||{})) {
+    const next=incoming.scopeTimes?.[code];
+    if(!next||new Date(next.firstFetchedAt)<new Date(times.firstFetchedAt)||new Date(next.lastFetchedAt)<new Date(times.lastFetchedAt))throw new SyncError(reason);
+  }
+}
+const regionMarkerId=(kind,region)=>`hospital-basic-region-${kind}:${region}`;
+
 export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),progress=emit,heartbeatMs=30_000}={}) {
   const {manifest,documents}=snapshot;
+  const regions=snapshotRegions(manifest),scoped=manifest.schemaVersion===3;
+  const selected=new Set(regions),full=regions.length===REGION_CODES.length;
+  if(scoped) {
+    if(manifest.scope!=='regions-with-department-memberships'||!Number.isSafeInteger(manifest.rows)||manifest.rows<0||
+      (full&&manifest.rows===0)||manifest.rows!==documents.size)throw new SyncError('incomplete_catalog_snapshot');
+    validateRegionalScopes(manifest,regions);
+    for(const doc of documents.values())if(!selected.has(doc.apiFields?.sidoCd))throw new SyncError('invalid_hospital_region');
+  }
   if(await db.listCollections({name:'hospitalBasicCatalog'},{nameOnly:true}).hasNext())throw new SyncError('hospital_collection_migration_required');
   const catalog=db.collection(COLLECTION),runs=db.collection('hospitalImportRuns');
   const runId=crypto.randomUUID(),owner=crypto.randomUUID(),lockId='hospital-basic-sync-lock';
@@ -180,32 +216,47 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
       },heartbeatMs);
     }
     const latest=await runs.findOne({_id:'hospital-basic-current'});
-    if(latest?.lastFetchedAt instanceof Date&&new Date(manifest.lastFetchedAt)<latest.lastFetchedAt)throw new SyncError('snapshot_older_than_published_catalog');
     const highWater=await runs.findOne({_id:'hospital-basic-high-water'});
-    for(const previous of [latest,highWater]) {
-      if(!previous)continue;
-      if(previous.lastFetchedAt instanceof Date&&new Date(manifest.lastFetchedAt)<previous.lastFetchedAt)throw new SyncError('snapshot_older_than_started_generation');
-      for(const [code,times] of Object.entries(previous.scopeTimes||{})) {
-        const incoming=manifest.scopeTimes?.[code];
-        if(!incoming||new Date(incoming.firstFetchedAt)<new Date(times.firstFetchedAt)||new Date(incoming.lastFetchedAt)<new Date(times.lastFetchedAt))throw new SyncError('snapshot_older_than_started_generation');
-      }
+    const regionMarkers=new Map();
+    for await(const marker of runs.find({_id:{$in:REGION_CODES.flatMap(region=>['current','high-water'].map(kind=>regionMarkerId(kind,region)))}}))regionMarkers.set(marker._id,marker);
+    function checkRegion(incoming,region) {
+      assertGenerationOrder(incoming,latest&&regionalGeneration(latest,region),'snapshot_older_than_published_catalog');
+      assertGenerationOrder(incoming,highWater&&regionalGeneration(highWater,region));
+      assertGenerationOrder(incoming,regionMarkers.get(regionMarkerId('current',region)),'snapshot_older_than_published_catalog');
+      assertGenerationOrder(incoming,regionMarkers.get(regionMarkerId('high-water',region)));
     }
+    for(const region of regions)checkRegion(regionalGeneration(manifest,region),region);
     const current=new Map();
     for await(const row of catalog.find({},{projection:{_id:1,provider:1,active:1,basicSourceHash:1,catalogHash:1,'apiFields.sidoCd':1}})) {
       if(row.provider!=='HIRA'||typeof row.basicSourceHash!=='string'||typeof row.catalogHash!=='string')throw new SyncError('hospital_collection_migration_required');
       current.set(row._id,row);
     }
-    if(manifest.schemaVersion===2)assertReasonableRegionalRemoval(current.values(),documents);
+    // A hospital can move between regions. Reject a stale incoming move before
+    // it can overwrite a newer observation made in its current region.
+    for(const doc of documents.values()) {
+      const previousRegion=current.get(doc._id)?.apiFields?.sidoCd;
+      if(previousRegion&&previousRegion!==doc.apiFields?.sidoCd&&REGION_CODES.includes(previousRegion)) {
+        checkRegion(regionalGeneration(manifest,doc.apiFields.sidoCd),previousRegion);
+      }
+    }
+    const selectedCurrent=[...current.values()].filter(row=>!scoped||selected.has(row.apiFields?.sidoCd));
+    if(manifest.schemaVersion===2||scoped)assertReasonableRegionalRemoval(selectedCurrent,documents,regions);
+    const missing=selectedCurrent.filter(row=>row.active!==false&&!documents.has(row._id)).map(row=>row._id);
+    assertReasonableRemoval(selectedCurrent.filter(row=>row.active!==false).length,missing.length);
     if(apply) {
       await renewLock();
       // This marker survives failed/partial applies, so an older snapshot cannot
       // roll back records already written by a newer generation.
-      await runs.updateOne({_id:'hospital-basic-high-water'},{$set:{provider:'HIRA',kind:'BASIC',runId,startedAt:now,
-        firstFetchedAt:new Date(manifest.firstFetchedAt),lastFetchedAt:new Date(manifest.lastFetchedAt),
-        scopeTimes:manifest.scopeTimes,sourceHash:manifest.sha256}},{upsert:true});
+      for(const region of regions) {
+        const generation=regionalGeneration(manifest,region);
+        await runs.updateOne({_id:regionMarkerId('high-water',region)},{$set:{provider:'HIRA',kind:'BASIC',region,runId,startedAt:now,
+          firstFetchedAt:new Date(generation.firstFetchedAt),lastFetchedAt:new Date(generation.lastFetchedAt),
+          scopeTimes:generation.scopeTimes,sourceHash:manifest.sha256}},{upsert:true});
+      }
+      if(full)await runs.updateOne({_id:'hospital-basic-high-water'},{$set:{provider:'HIRA',kind:'BASIC',runId,startedAt:now,
+        firstFetchedAt:new Date(manifest.firstFetchedAt),lastFetchedAt:new Date(manifest.lastFetchedAt),regions,
+        scopeTimes:manifest.scopeTimes,regionScopes:manifest.regionScopes||{},sourceHash:manifest.sha256}},{upsert:true});
     }
-    const missing=[...current.values()].filter(row=>row.active!==false&&!documents.has(row._id)).map(row=>row._id);
-    assertReasonableRemoval([...current.values()].filter(row=>row.active!==false).length,missing.length);
     const totals={rows:documents.size,inserted:0,updated:0,reactivated:0,unchanged:0,retired:missing.length};
     const {BSON}=await import('mongodb');
     let approximateDocumentBytes=0;
@@ -219,8 +270,8 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
     }
     const stats=await db.stats();
     const storage={approximateDocumentBytes,currentDatabaseDataBytes:stats.dataSize,currentDatabaseIndexBytes:stats.indexSize};
-    progress('sync_plan',{...totals,...storage});
-    if(!apply)return {...totals,...storage,applied:false};
+    progress('sync_plan',{...totals,...storage,regions});
+    if(!apply)return {...totals,...storage,regions,applied:false};
     if(snapshot.filename&&await fileHash(snapshot.filename)!==snapshot.checksum)throw new SyncError('snapshot_changed_after_validation');
     await renewLock();
     await catalog.createIndex({provider:1,externalId:1},{unique:true,name:'catalog_provider_external_v1'});
@@ -232,7 +283,7 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
     await catalog.createIndex({departmentCodes:1,active:1,name:1,_id:1},{name:'catalog_department_name_v1'});
     await renewLock();
     await runs.insertOne({_id:runId,provider:'HIRA',kind:'BASIC',status:'IMPORTING',startedAt:now,
-      expectedRows:manifest.rows,sourceHash:manifest.sha256,scopeCounts:manifest.scopeCounts});
+      expectedRows:manifest.rows,sourceHash:manifest.sha256,scopeCounts:manifest.scopeCounts,regions});
     started=true;
     let batch=[],processed=0;
     async function flush() {
@@ -255,7 +306,7 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
       await catalog.updateMany({_id:{$in:missing.slice(start,start+500)},provider:'HIRA',active:{$ne:false}},{$set:{active:false,retiredAt:now,lastChangedAt:now}});
     }
     let verified=0;
-    for await(const row of catalog.find({provider:'HIRA',active:{$ne:false}})) {
+    for await(const row of catalog.find({provider:'HIRA',active:{$ne:false},...(scoped?{'apiFields.sidoCd':{$in:regions}}:{})})) {
       const recomputed=normalizeRow({apiFields:row.apiFields,departmentCodes:row.departmentCodes,fetchedAt:row.basicFetchedAt});
       if(recomputed._id!==row._id||recomputed.basicSourceHash!==row.basicSourceHash||recomputed.catalogHash!==row.catalogHash||documents.get(row._id)?.catalogHash!==recomputed.catalogHash||recomputed.name!==row.name||recomputed.address!==row.address||recomputed.tel!==row.tel||JSON.stringify(recomputed.location)!==JSON.stringify(row.location))throw new SyncError('database_catalog_verification_failed');
       verified++;
@@ -263,13 +314,24 @@ export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),prog
     }
     if(verified!==documents.size)throw new SyncError('database_catalog_count_mismatch');
     const completedAt=new Date();
-    const result={...totals,...storage,applied:true,verified,runId,completedAt:completedAt.toISOString()};
+    const result={...totals,...storage,regions,applied:true,verified,runId,completedAt:completedAt.toISOString()};
     await renewLock();
     await runs.updateOne({_id:runId},{$set:{status:'COMPLETE',completedAt,...totals,verified}});
     await renewLock();
-    await runs.updateOne({_id:'hospital-basic-current'},{$set:{provider:'HIRA',kind:'BASIC',status:'COMPLETE',runId,
+    for(const region of regions) {
+      const generation=regionalGeneration(manifest,region);
+      await runs.updateOne({_id:regionMarkerId('current',region)},{$set:{provider:'HIRA',kind:'BASIC',region,status:'COMPLETE',runId,completedAt,
+        firstFetchedAt:new Date(generation.firstFetchedAt),lastFetchedAt:new Date(generation.lastFetchedAt),
+        scopeTimes:generation.scopeTimes,sourceHash:manifest.sha256,
+        expectedRows:manifest.regionScopes?.[region]?.scopeCounts?.basic??null}},{upsert:true});
+    }
+    const summary={provider:'HIRA',kind:'BASIC',status:'COMPLETE',runId,regions,
       completedAt,firstFetchedAt:new Date(manifest.firstFetchedAt),lastFetchedAt:new Date(manifest.lastFetchedAt),
-      expectedRows:manifest.rows,sourceHash:manifest.sha256,scopeCounts:manifest.scopeCounts,scopeTimes:manifest.scopeTimes,...totals}},{upsert:true});
+      expectedRows:manifest.rows,sourceHash:manifest.sha256,scopeCounts:manifest.scopeCounts,scopeTimes:manifest.scopeTimes,
+      regionScopes:manifest.regionScopes||{},...totals};
+    if(full)await runs.updateOne({_id:'hospital-basic-current'},{$set:summary},{upsert:true});
+    await renewLock();
+    await runs.updateOne({_id:'hospital-basic-last-run'},{$set:summary},{upsert:true});
     progress('sync_complete',result);
     return result;
   }catch(error){

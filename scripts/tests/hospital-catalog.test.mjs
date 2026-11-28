@@ -138,6 +138,179 @@ async function rewriteRegionalRows(directory,manifest,values) {
   await writeManifest(directory,manifest);
 }
 
+function scopedSnapshot(documents,regions,stamp=time) {
+  const values=[...documents];
+  const counts=rows=>({basic:rows.length,...Object.fromEntries(Object.keys(DEPARTMENTS).map(code=>[code,rows.filter(value=>value.departmentCodes.includes(code)).length]))});
+  const manifest={schemaVersion:3,complete:true,source:'hospInfoServicev2/getHospBasisList',scope:'regions-with-department-memberships',
+    regions,rows:values.length,departments:DEPARTMENTS,scopeCounts:counts(values),scopeTimes:scopeTimes(stamp),
+    firstFetchedAt:stamp,lastFetchedAt:stamp,completedAt:stamp,sha256:'fixture-'+stamp,
+    regionScopes:Object.fromEntries(regions.map(region=>[region,{scopeCounts:counts(values.filter(value=>value.apiFields.sidoCd===region)),scopeTimes:scopeTimes(stamp)}]))};
+  return {manifest,documents:new Map(values.map(value=>[value._id,value]))};
+}
+function regionDocuments(region,count=8,stamp=time) {
+  return Array.from({length:count},(_,index)=>normalizeRow(row({apiFields:{...raw,ykiho:`${region}-${index}`,sidoCd:region},fetchedAt:stamp})));
+}
+function changedDocument(document,stamp,changes={}) {
+  return normalizeRow({apiFields:{...document.apiFields,...changes},departmentCodes:document.departmentCodes,fetchedAt:stamp});
+}
+async function writeScopedSnapshot(directory,snapshot) {
+  const values=[...snapshot.documents.values()].map(doc=>({apiFields:doc.apiFields,departmentCodes:doc.departmentCodes,fetchedAt:doc.basicFetchedAt.toISOString()}));
+  await rewriteRegionalRows(directory,snapshot.manifest,values);
+}
+async function withCatalogDb(check) {
+  const {MongoClient}=await import('mongodb');
+  const client=new MongoClient(process.env.MONGODB_TEST_URI);
+  await client.connect();
+  const db=client.db('catalog_sync_test_'+crypto.randomUUID().replaceAll('-',''));
+  try {await check(db);}finally{await db.dropDatabase();await client.close();}
+}
+
+test('selected-region snapshots validate only declared regions and allow an explicitly empty subset',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    const snapshot=scopedSnapshot(regionDocuments('110000'),['110000']);
+    await writeScopedSnapshot(directory,snapshot);
+    assert.equal((await validateSnapshot(directory,new Date(time))).documents.size,8);
+    for(const regions of [[],['110000','110000'],['990000'],['210000','110000'],'110000']) {
+      const bad=scopedSnapshot([],['240000']);
+      bad.manifest.regions=regions;
+      await writeScopedSnapshot(directory,bad);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),/invalid_selected_regions/);
+    }
+    const empty=scopedSnapshot([],['240000']);
+    await writeScopedSnapshot(directory,empty);
+    assert.equal((await validateSnapshot(directory,new Date(time))).documents.size,0);
+    const allEmpty=scopedSnapshot([],REGION_CODES);
+    await writeScopedSnapshot(directory,allEmpty);
+    await assert.rejects(validateSnapshot(directory,new Date(time)),/incomplete_catalog_snapshot/);
+    const downgrade=scopedSnapshot(regionDocuments('110000'),['110000']);
+    downgrade.manifest.schemaVersion=2;
+    downgrade.manifest.scope='nationwide-with-department-memberships';
+    await writeScopedSnapshot(directory,downgrade);
+    await assert.rejects(validateSnapshot(directory,new Date(time)),/incomplete_catalog_snapshot/);
+  });
+});
+
+test('selected-region manifest cannot smuggle unrelated rows or omit regions, departments, counts or times',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    for(const [change,error] of [
+      [snapshot=>{snapshot.manifest.regionScopes['210000']=snapshot.manifest.regionScopes['110000'];},/incomplete_regional_scopes/],
+      [snapshot=>{delete snapshot.manifest.regionScopes['110000'];},/incomplete_regional_scopes/],
+      [snapshot=>{delete snapshot.manifest.regionScopes['110000'].scopeTimes['80'];},/incomplete_regional_scopes/],
+      [snapshot=>{snapshot.manifest.regionScopes['110000'].scopeCounts.basic++;},/regional_scope_count_mismatch/],
+      [snapshot=>{snapshot.manifest.regionScopes['110000'].scopeTimes.basic.firstFetchedAt='2026-11-20T23:00:00.000Z';},/regional_scope_time_bounds_mismatch/],
+      [snapshot=>{snapshot.manifest.scopeCounts.extra=0;},/incomplete_department_scopes/],
+      [snapshot=>{snapshot.manifest.scopeTimes.extra=scopeTimes().basic;},/incomplete_department_scopes/],
+    ]) {
+      const snapshot=scopedSnapshot(regionDocuments('110000'),['110000']);
+      change(snapshot);
+      await writeScopedSnapshot(directory,snapshot);
+      await assert.rejects(validateSnapshot(directory,new Date(time)),error);
+    }
+    const outsider=scopedSnapshot(regionDocuments('110000'),['110000']);
+    const doc=[...outsider.documents.values()][0];
+    doc.apiFields.sidoCd='210000';
+    await writeScopedSnapshot(directory,outsider);
+    await assert.rejects(validateSnapshot(directory,new Date(time)),/invalid_hospital_region/);
+  });
+});
+
+test('Mongo scoped sync updates and retires only selected hospitals while preserving other regions and full baselines', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  await withCatalogDb(async db=>{
+    const seoul=regionDocuments('110000'),busan=regionDocuments('210000'),later='2026-11-21T01:00:00.000Z';
+    const full=scopedSnapshot([...seoul,...busan],REGION_CODES);
+    await applySnapshot(db,full,{apply:true,progress:()=>{}});
+    const catalog=db.collection('hospitals'),runs=db.collection('hospitalImportRuns');
+    const outside=await catalog.find({'apiFields.sidoCd':'210000'}).sort({_id:1}).toArray();
+    const globalCurrent=await runs.findOne({_id:'hospital-basic-current'}),globalHighWater=await runs.findOne({_id:'hospital-basic-high-water'});
+    const busanMarker=await runs.findOne({_id:'hospital-basic-region-current:210000'});
+    for(const name of ['users','reservations','hospitalDetails'])await db.collection(name).insertOne({_id:'preserved',sentinel:name});
+    const incoming=seoul.slice(0,-1).map((doc,index)=>changedDocument(doc,later,index===0?{addr:'changed address'}:{}));
+    incoming.push(normalizeRow(row({apiFields:{...raw,ykiho:'new-seoul',sidoCd:'110000'},fetchedAt:later})));
+    const snapshot=scopedSnapshot(incoming,['110000'],later);
+    const result=await applySnapshot(db,snapshot,{apply:true,progress:()=>{}});
+    assert.deepEqual({inserted:result.inserted,updated:result.updated,retired:result.retired,verified:result.verified},{inserted:1,updated:1,retired:1,verified:8});
+    assert.deepEqual(result.regions,['110000']);
+    assert.deepEqual(await catalog.find({'apiFields.sidoCd':'210000'}).sort({_id:1}).toArray(),outside);
+    assert.equal((await catalog.findOne({_id:seoul.at(-1)._id})).active,false);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-current'}),globalCurrent);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-high-water'}),globalHighWater);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-region-current:210000'}),busanMarker);
+    assert.deepEqual((await runs.findOne({_id:'hospital-basic-last-run'})).regions,['110000']);
+    for(const name of ['users','reservations','hospitalDetails'])assert.deepEqual(await db.collection(name).findOne({_id:'preserved'}),{_id:'preserved',sentinel:name});
+    const beforeRepeat=await catalog.find({}).sort({_id:1}).toArray();
+    assert.equal((await applySnapshot(db,snapshot,{apply:true,progress:()=>{}})).unchanged,8);
+    assert.deepEqual(await catalog.find({}).sort({_id:1}).toArray(),beforeRepeat);
+    const beforeEmpty=await runs.findOne({_id:'hospital-basic-region-high-water:210000'});
+    await assert.rejects(applySnapshot(db,scopedSnapshot([],['210000'],later),{apply:true,progress:()=>{}}),/unexpected_large_regional_reduction/);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-region-high-water:210000'}),beforeEmpty);
+    assert.equal((await applySnapshot(db,scopedSnapshot([],['240000'],later),{apply:true,progress:()=>{}})).verified,0);
+    assert.deepEqual(await catalog.find({}).sort({_id:1}).toArray(),beforeRepeat);
+  });
+});
+
+test('Mongo per-region generations permit unrelated older work but reject same-region and full rollback', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  await withCatalogDb(async db=>{
+    const a=regionDocuments('110000'),b=regionDocuments('210000');
+    await applySnapshot(db,scopedSnapshot([...a,...b],REGION_CODES),{apply:true,progress:()=>{}});
+    const t2='2026-11-21T02:00:00.000Z',t3='2026-11-21T03:00:00.000Z',t4='2026-11-21T04:00:00.000Z';
+    const newerA=scopedSnapshot(a.map(doc=>changedDocument(doc,t3)),['110000'],t3);
+    await applySnapshot(db,newerA,{apply:true,progress:()=>{}});
+    const olderB=scopedSnapshot(b.map(doc=>changedDocument(doc,t2)),['210000'],t2);
+    assert.equal((await applySnapshot(db,olderB,{apply:true,progress:()=>{}})).verified,8);
+    await assert.rejects(applySnapshot(db,scopedSnapshot(a.map(doc=>changedDocument(doc,t2)),['110000'],t2),{apply:true,progress:()=>{}}),/snapshot_older_than_published_catalog/);
+    const staleFull=scopedSnapshot([...a,...b].map(doc=>changedDocument(doc,t2)),REGION_CODES,t2);
+    await assert.rejects(applySnapshot(db,staleFull,{apply:true,progress:()=>{}}),/snapshot_older_than_published_catalog/);
+    const freshFull=scopedSnapshot([...a,...b].map(doc=>changedDocument(doc,t4)),REGION_CODES,t4);
+    assert.equal((await applySnapshot(db,freshFull,{apply:true,progress:()=>{}})).verified,16);
+    assert.equal((await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-current'})).lastFetchedAt.toISOString(),t4);
+  });
+});
+
+test('Mongo stale cross-region moves cannot overwrite newer observations even when unchanged rows keep old fetch times', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  await withCatalogDb(async db=>{
+    const a=regionDocuments('110000'),b=regionDocuments('210000'),moving=a[0];
+    const t2='2026-11-21T02:00:00.000Z',t3='2026-11-21T03:00:00.000Z',t4='2026-11-21T04:00:00.000Z',t5='2026-11-21T05:00:00.000Z',t6='2026-11-21T06:00:00.000Z';
+    await applySnapshot(db,scopedSnapshot([...a,...b],REGION_CODES),{apply:true,progress:()=>{}});
+    await applySnapshot(db,scopedSnapshot(a.map(doc=>changedDocument(doc,t2)),['110000'],t2),{apply:true,progress:()=>{}});
+    const moved=changedDocument(moving,t4,{sidoCd:'210000'});
+    await applySnapshot(db,scopedSnapshot([...b.map(doc=>changedDocument(doc,t4)),moved],['210000'],t4),{apply:true,progress:()=>{}});
+    const oldA=scopedSnapshot(a.map(doc=>changedDocument(doc,t3)),['110000'],t3);
+    const marker=await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-region-high-water:110000'});
+    await assert.rejects(applySnapshot(db,oldA,{apply:true,progress:()=>{}}),/snapshot_older_than_published_catalog/);
+    assert.deepEqual(await db.collection('hospitalImportRuns').findOne({_id:'hospital-basic-region-high-water:110000'}),marker);
+    await applySnapshot(db,scopedSnapshot([...b.map(doc=>changedDocument(doc,t5)),changedDocument(moved,t5)],['210000'],t5),{apply:true,progress:()=>{}});
+    assert.equal((await db.collection('hospitals').findOne({_id:moving._id})).basicFetchedAt.toISOString(),t4);
+    await assert.rejects(applySnapshot(db,scopedSnapshot(a.map(doc=>changedDocument(doc,t4)),['110000'],t4),{apply:true,progress:()=>{}}),/snapshot_older_than_published_catalog/);
+    assert.equal((await db.collection('hospitals').findOne({_id:moving._id})).apiFields.sidoCd,'210000');
+    const currentA=scopedSnapshot(a.map(doc=>changedDocument(doc,t6)),['110000'],t6);
+    assert.equal((await applySnapshot(db,currentA,{apply:true,progress:()=>{}})).updated,1);
+    assert.equal((await db.collection('hospitals').findOne({_id:moving._id})).apiFields.sidoCd,'110000');
+  });
+});
+
+test('Mongo interrupted scoped apply keeps regional high-water and does not block unrelated-region retries', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  await withCatalogDb(async db=>{
+    const a=regionDocuments('110000'),b=regionDocuments('210000'),t2='2026-11-21T02:00:00.000Z',t3='2026-11-21T03:00:00.000Z';
+    await applySnapshot(db,scopedSnapshot([...a,...b],REGION_CODES),{apply:true,progress:()=>{}});
+    const runs=db.collection('hospitalImportRuns'),catalog=db.collection('hospitals');
+    const globalBefore=await runs.findOne({_id:'hospital-basic-high-water'});
+    const newerA=scopedSnapshot(a.map(doc=>changedDocument(doc,t3,{addr:'newer address'})),['110000'],t3);
+    const interrupted={listCollections:(...args)=>db.listCollections(...args),stats:()=>db.stats(),collection:name=>name!=='hospitals'?db.collection(name):new Proxy(catalog,{get(target,key){
+      if(key==='bulkWrite')return async(...args)=>{await target.bulkWrite(...args);throw new Error('simulated_scoped_interruption');};
+      return typeof target[key]==='function'?target[key].bind(target):target[key];
+    }})};
+    await assert.rejects(applySnapshot(interrupted,newerA,{apply:true,progress:()=>{}}),/simulated_scoped_interruption/);
+    assert.equal((await runs.findOne({_id:'hospital-basic-region-high-water:110000'})).lastFetchedAt.toISOString(),t3);
+    assert.equal((await runs.findOne({_id:'hospital-basic-region-current:110000'})).lastFetchedAt.toISOString(),time);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-high-water'}),globalBefore);
+    await assert.rejects(applySnapshot(db,scopedSnapshot(a.map(doc=>changedDocument(doc,t2)),['110000'],t2),{apply:true,progress:()=>{}}),/snapshot_older_than_started_generation/);
+    const olderB=scopedSnapshot(b.map(doc=>changedDocument(doc,t2)),['210000'],t2);
+    assert.equal((await applySnapshot(db,olderB,{apply:true,progress:()=>{}})).verified,8);
+    assert.equal((await applySnapshot(db,newerA,{apply:true,progress:()=>{}})).unchanged,8);
+    assert.equal((await runs.findOne({_id:'hospital-basic-region-current:110000'})).lastFetchedAt.toISOString(),t3);
+  });
+});
+
 test('all 17 regional scopes validate without changing hospital fields, identities or update behavior',async()=>{
   await withRegionalSnapshot(async directory=>{
     const {manifest}=await regionalFixture(directory);

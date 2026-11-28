@@ -1,4 +1,4 @@
-"""Collect the complete HIRA basic catalogue by region, without detailed-information APIs."""
+"""Collect complete HIRA basic catalogues for selected regions, without detailed-information APIs."""
 
 import argparse
 import concurrent.futures
@@ -31,10 +31,31 @@ REGIONS = {'110000': '서울', '210000': '부산', '220000': '인천', '230000':
            '360000': '전남광주', '370000': '경북', '380000': '경남', '390000': '제주',
            '410000': '세종'}
 KST = dt.timezone(dt.timedelta(hours=9))
+TRANSIENT_RESULT_CODES = frozenset(('01', '02', '04', '05', '99'))
+RETRYABLE_PAGE_FAILURES = frozenset(('upstream_transport_failed', 'upstream_service_unavailable'))
 
 
 class CollectionError(Exception):
     """Only fixed, credential-free error identifiers may be put in this exception."""
+
+    def __init__(self, reason, result_code=None):
+        super().__init__(reason)
+        # Upstream messages can contain request details. Keep only a two-digit
+        # ASCII result code for diagnostics, never the raw message or URL.
+        self.result_code = result_code if isinstance(result_code, str) and len(result_code) == 2 and all('0' <= char <= '9' for char in result_code) else None
+
+    def diagnostic_fields(self):
+        return {'reason': str(self), **({'resultCode': self.result_code} if self.result_code is not None else {})}
+
+
+def normalize_regions(regions=None):
+    if regions is None:
+        return tuple(REGIONS)
+    if not isinstance(regions, (list, tuple)) or not regions or any(not isinstance(region, str) or region not in REGIONS for region in regions):
+        raise CollectionError('invalid_region_selection')
+    if len(set(regions)) != len(regions):
+        raise CollectionError('invalid_region_selection')
+    return tuple(region for region in REGIONS if region in regions)
 
 
 def timestamp():
@@ -114,9 +135,13 @@ def parse_page(payload, page, size):
         raise CollectionError('invalid_xml') from None
     code = (root.findtext('.//resultCode') or root.findtext('.//returnReasonCode') or '').strip()
     if code in ('22', '23'):
-        raise CollectionError('upstream_call_limit')
+        raise CollectionError('upstream_call_limit', code)
+    if code in TRANSIENT_RESULT_CODES:
+        # HIRA can return a service error (including 99) in an HTTP 200 body.
+        # Retry it within the same budget; it is never accepted as an empty page.
+        raise CollectionError('upstream_service_unavailable', code)
     if code != '00':
-        raise CollectionError('upstream_result_not_success')
+        raise CollectionError('upstream_result_not_success', code)
     body = root.find('.//body')
     if body is None:
         raise CollectionError('missing_body')
@@ -167,7 +192,7 @@ class Client:
             try:
                 return self._request_page(code, number, size, region)
             except CollectionError as error:
-                if str(error) != 'upstream_transport_failed' or not can_split:
+                if str(error) not in RETRYABLE_PAGE_FAILURES or not can_split:
                     raise
                 with self.lock:
                     self.small_pages = True
@@ -201,6 +226,7 @@ class Client:
             parameters['dgsbjtCd'] = code
         url = ENDPOINT + '?' + urllib.parse.urlencode(parameters)
         for attempt in range(3):
+            failure = CollectionError('upstream_transport_failed')
             with self.lock:
                 if self.cancel.is_set():
                     raise CollectionError('collection_canceled')
@@ -221,10 +247,15 @@ class Client:
                     raise CollectionError('upstream_http_rejected') from None
             except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError):
                 pass
+            except CollectionError as error:
+                if str(error) != 'upstream_service_unavailable':
+                    raise
+                failure = error
             if attempt < 2:
-                emit('request_retry', region=region, scope=code or 'basic', page=number, attempt=attempt + 1)
+                emit('request_retry', region=region, scope=code or 'basic', page=number, attempt=attempt + 1,
+                     **failure.diagnostic_fields())
                 time.sleep(attempt + 1)
-        raise CollectionError('upstream_transport_failed')
+        raise failure
 
 
 def validate_page(document, page, size, total, region=None):
@@ -378,22 +409,24 @@ def import_basic_cache(folder):
     return data, times
 
 
-def collect_regional_catalog(client, directory, page_size, workers, basic_cache=None):
+def collect_regional_catalog(client, directory, page_size, workers, basic_cache=None, regions=None):
+    selected = normalize_regions(regions)
     data, times, memberships, region_scopes = {}, {}, {}, {}
     cached_regions = None
     if basic_cache is not None:
         cached_data, cached_times = import_basic_cache(basic_cache)
-        cached_regions = {region: {} for region in REGIONS}
+        cached_regions = {region: {} for region in selected}
         for identity, row in cached_data.items():
             region = row.get('sidoCd')
             if region not in REGIONS:
                 raise CollectionError('basic_cache_invalid_region')
-            cached_regions[region][identity] = row
+            if region in cached_regions:
+                cached_regions[region][identity] = row
         if not cached_data:
             raise CollectionError('empty_regional_catalog')
 
-    for completed_regions, region in enumerate(REGIONS, 1):
-        emit('region_started', region=region, name=REGIONS[region], completed=completed_regions - 1, total=len(REGIONS))
+    for completed_regions, region in enumerate(selected, 1):
+        emit('region_started', region=region, name=REGIONS[region], completed=completed_regions - 1, total=len(selected))
         if cached_regions is None:
             basic, fetched, basic_times = collect_scope(client, directory, '', page_size, workers, region)
         else:
@@ -421,9 +454,9 @@ def collect_regional_catalog(client, directory, page_size, workers, basic_cache=
             region_times[code] = department_times
         region_scopes[region] = {'scopeCounts': region_counts, 'scopeTimes': region_times}
         emit('region_complete', region=region, name=REGIONS[region], completed=completed_regions,
-             total=len(REGIONS), rows=len(basic), collectedRows=len(data))
+             total=len(selected), rows=len(basic), collectedRows=len(data))
 
-    if not data:
+    if not data and len(selected) == len(REGIONS):
         raise CollectionError('empty_regional_catalog')
     # Never reintroduce an unfiltered national count query for final validation.
     for region, summary in region_scopes.items():
@@ -439,19 +472,22 @@ def collect_regional_catalog(client, directory, page_size, workers, basic_cache=
     return data, times, memberships, scope_counts, scope_times, region_scopes
 
 
-def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times, region_scopes):
+def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times, region_scopes, regions=None):
+    selected = normalize_regions(regions)
     if set(scope_times) != {'basic', *DEPARTMENTS}:
         raise CollectionError('incomplete_scope_times')
     checked_times = {}
     for code, values in scope_times.items():
         checked_times[code] = scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']])
     all_times = scope_time_range([value for timespan in checked_times.values() for value in timespan.values()])
-    if set(region_scopes) != set(REGIONS) or not data:
+    if set(region_scopes) != set(selected) or (not data and len(selected) == len(REGIONS)):
         raise CollectionError('incomplete_region_scopes')
-    actual_counts = {region: {code: 0 for code in checked_times} for region in REGIONS}
+    if set(scope_counts) != set(checked_times):
+        raise CollectionError('regional_scope_summary_mismatch')
+    actual_counts = {region: {code: 0 for code in checked_times} for region in selected}
     for identity, row in data.items():
         region = row.get('sidoCd')
-        if region not in REGIONS or identity != row.get('ykiho'):
+        if region not in selected or identity != row.get('ykiho'):
             raise CollectionError('invalid_regional_hospital_identity')
         actual_counts[region]['basic'] += 1
         for code in memberships[identity]:
@@ -481,8 +517,9 @@ def export_catalog(directory, data, times, memberships, scope_counts, calls, sco
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, destination)
-    manifest = {'schemaVersion': 2, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
-                'scope': 'nationwide-with-department-memberships', 'rows': len(data),
+    manifest = {'schemaVersion': 2 if regions is None else 3, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
+                'scope': 'nationwide-with-department-memberships' if regions is None else 'regions-with-department-memberships',
+                **({'regions': list(selected)} if regions is not None else {}), 'rows': len(data),
                 'departments': DEPARTMENTS, 'scopeCounts': scope_counts, 'requestCount': calls,
                 **all_times, 'scopeTimes': checked_times, 'regionScopes': region_scopes,
                 'completedAt': timestamp(), 'sha256': digest.hexdigest()}
@@ -495,6 +532,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=Path('.runtime/hospital-catalog') / dt.datetime.now(KST).date().isoformat())
     parser.add_argument('--basic-cache', type=Path)
+    parser.add_argument('--regions', help='Comma-separated HIRA region codes; omitted collects all regions')
     parser.add_argument('--page-size', type=int, default=1000)
     parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--workers', type=int, choices=(1, 2), default=2)
@@ -502,21 +540,22 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.page_size <= 1000 or not 1 <= args.timeout <= 300 or not 1 <= args.maximum_calls <= 10000:
         parser.error('Invalid page size, timeout, or maximum calls')
+    regions = normalize_regions([region.strip() for region in args.regions.split(',')]) if args.regions is not None else None
     key = os.environ.get('HIRA_HOSPITAL_KEY', '').strip()
     if not key:
         raise CollectionError('missing_hospital_api_key')
     with directory_lock(args.directory):
         client = Client(key, args.directory, args.timeout, args.maximum_calls)
         data, times, memberships, scope_counts, scope_times, region_scopes = collect_regional_catalog(
-            client, args.directory, args.page_size, args.workers, args.basic_cache)
-        export_catalog(args.directory, data, times, memberships, scope_counts, client.calls, scope_times, region_scopes)
+            client, args.directory, args.page_size, args.workers, args.basic_cache, regions)
+        export_catalog(args.directory, data, times, memberships, scope_counts, client.calls, scope_times, region_scopes, regions)
 
 
 if __name__ == '__main__':
     try:
         main()
     except CollectionError as error:
-        emit('collection_failed', reason=str(error))
+        emit('collection_failed', **error.diagnostic_fields())
         sys.exit(2)
     except KeyboardInterrupt:
         emit('collection_failed', reason='interrupted_checkpoints_preserved')

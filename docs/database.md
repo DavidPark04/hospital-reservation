@@ -471,13 +471,16 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `hospitalImportRuns` — 병원 기본 정보 수집 작업 기록
 
-병원별 의료 정보가 아니라 **“오늘 전체 목록을 잘 가져왔는가, 몇 개가 바뀌었는가?”를 기록하는 작업 일지**다. 한 컬렉션에 실행 기록과 3종 제어 문서가 들어가며, 모든 문서에 모든 필드가 있는 것은 아니다.
+병원별 의료 정보가 아니라 **“이번 대상 지역의 목록을 잘 가져왔는가, 몇 개가 바뀌었는가?”를 기록하는 작업 일지**다. 한 컬렉션에 실행 기록, 전국·지역별 적용 기준, 마지막 실행 요약과 잠금 문서가 들어가며, 모든 문서에 모든 필드가 있는 것은 아니다.
 
 | 문서의 `_id` | 뜻 |
 | --- | --- |
 | 실행마다 만든 UUID | 이번 수집 반영 작업 한 번의 시작·성공·실패 기록 |
-| `hospital-basic-current` | 가장 최근에 성공한 수집 실행을 가리키는 요약 |
-| `hospital-basic-high-water` | 적용을 시작한 가장 최신 수집본의 기준. 이전 자료로 되돌아가는 것을 방지 |
+| `hospital-basic-current` | 전국 17개 지역을 성공적으로 반영한 마지막 수집의 기존 기준. 부분 수집으로 덮어쓰지 않음 |
+| `hospital-basic-high-water` | 전국 수집 중 적용을 시작한 최신 기준. 부분 수집에서도 이전 전국 자료보다 오래된 역적용을 차단 |
+| `hospital-basic-region-current:<지역코드>` | 해당 지역에서 마지막으로 성공한 수집의 기준 |
+| `hospital-basic-region-high-water:<지역코드>` | 해당 지역에 적용을 시작한 최신 기준. 일부 반영 후 실패했어도 이전 자료의 덮어쓰기를 차단 |
+| `hospital-basic-last-run` | 지역·전국 구분 없이 마지막 성공 실행의 대상 지역·건수·시각 요약 |
 | `hospital-basic-sync-lock` | 두 수집 작업이 동시에 DB를 수정하지 않도록 하는 임시 잠금 |
 
 | 필드 | 타입 | 쉬운 설명 | 가상 예시·값 |
@@ -486,21 +489,24 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `runId` | string, 제어 문서 | current/high-water가 가리키는 실행 문서의 ID | `실행 UUID` |
 | `provider` | string | 자료 제공처 | `HIRA` |
 | `kind` | string | 수집 자료 종류 | `BASIC` |
+| `regions` | string[] | 이번 실행이 검증·반영하는 HIRA 지역 코드 목록 | `["110000"]` |
+| `region` | string, 지역 제어 문서 | 해당 기준이 적용되는 HIRA 지역 코드 | `110000` |
+| `regionScopes` | object, 실행 요약 | 대상 지역별 기본·진료과 건수와 조회 시각 | `{ "110000": {scopeCounts: {…}, scopeTimes: {…}} }` |
 | `status` | string | 실행 진행 상태 | `IMPORTING`, `COMPLETE`, `FAILED` |
 | `startedAt` | date | DB 반영 작업 시작 시각 | 작업 시작 시각 |
 | `completedAt` | date | 검증까지 성공한 작업 완료 시각 | 작업 완료 시각 |
 | `failedAt` | date, 실패 시 | 실패가 기록된 시각 | 실패 시각 |
 | `errorCode` | string, 실패 시 | 실패 이유를 나타내는 코드 | `database_operation_failed` |
-| `expectedRows` | number | 수집 자료에서 예상한 전체 병원 수 | `100` (설명용) |
-| `rows` | number | 이번에 확인한 전체 병원 수 | `100` (설명용) |
+| `expectedRows` | number | 해당 문서의 대상 지역에서 예상한 병원 수. 부분 수집에서는 전국 총건수가 아님 | `100` (설명용) |
+| `rows` | number | 이번 실행 범위에서 확인한 병원 수 | `100` (설명용) |
 | `inserted` | number | 새로 추가한 수 | `2` (설명용) |
 | `updated` | number | 기존 활성 병원 중 내용이 바뀐 수 | `3` (설명용) |
 | `reactivated` | number | 다시 목록에 나타나 활성화한 수 | `1` (설명용) |
 | `unchanged` | number | 내용이 같아 쓰기를 생략한 수 | `94` (설명용) |
-| `retired` | number | 정상 전체 목록에서 빠져 비활성화한 수 | `1` (설명용) |
+| `retired` | number | 검증한 대상 지역의 전체 목록에서 빠져 비활성화한 수 | `1` (설명용) |
 | `verified` | number, 성공 실행 | 저장 후 원본과 다시 대조한 수 | `100` (설명용) |
 | `sourceHash` | string | 수집 파일 전체의 SHA-256 체크섬. 파일 변경 여부 확인 | `64자리 해시값` |
-| `scopeCounts` | object | 전국 기본 목록·진료과별 수집 건수 | `{basic: 100, "01": 30, …}` |
+| `scopeCounts` | object | 이번 대상 지역의 기본 목록·진료과별 수집 건수 | `{basic: 100, "01": 30, …}` |
 | `scopeTimes` | object | 수집 범위별 최초·최종 조회 시각. 내부 시각은 ISO 문자열 | `{basic: {firstFetchedAt: "…", lastFetchedAt: "…"}, …}` |
 | `firstFetchedAt` | date, 제어 문서 | 전체 수집 자료 중 가장 이른 조회 시각 | 수집 시작 쪽 시각 |
 | `lastFetchedAt` | date, 제어 문서 | 전체 수집 자료 중 가장 늦은 조회 시각 | 수집 종료 쪽 시각 |
@@ -511,7 +517,9 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 **키와 만료:** `_id`가 유일하다. 잠금에 `expiresAt` 필드가 있어도 이 컬렉션에는 TTL 인덱스가 없다. 코드가 유효 시각과 소유자를 검사하고 정상 종료 시 잠금을 지운다. 30초 간격 갱신으로 잠금 만료 시각을 연장한다. `runId`는 같은 컬렉션의 실행 기록을 가리키는 논리 연결이지 MongoDB가 강제하는 FK는 아니다.
 
-**매일 갱신 흐름:** 한국 시간 00시 예약된 GitHub Actions가 기본 API를 전체 확인하고, 검증한 자료를 기존 DB와 비교한다. 신규는 추가, 바뀐 것은 수정, 누락은 비활성화하고 같은 자료는 쓰지 않는다. 기본 원본이 같고 진료과만 바뀌었다면 기본 필드와 기본 조회 시각은 다시 쓰지 않는다. 갱신은 Vercel 함수가 아니라 GitHub runner에서 MongoDB에 직접 적용한다. 예약 실행 시각은 runner 사정에 따라 늦어질 수 있다. 기본 API에 변경분 전용 조회가 있는 것은 아니므로 **전체 API 확인과 DB 변경분 저장은 별개**다.
+**요일별 갱신 흐름:** 월~토 한국 시간 00시 예약된 GitHub Actions가 당일 대상 지역의 기본 API를 전체 확인하고, 검증한 자료를 기존 DB와 비교한다. 월 서울, 화 경기, 수 부산·전남광주·경남, 목 대구·인천·경북, 금 전북·충남·대전, 토 충북·강원·울산·제주·세종·광주 별도 코드이며 일요일은 실행하지 않는다. 신규는 추가, 바뀐 것은 수정, 대상 지역에서 누락된 자료는 비활성화하고 같은 자료는 쓰지 않는다. 수집하지 않은 지역의 자료는 그대로 보존한다. 기본 원본이 같고 진료과만 바뀌었다면 기본 필드와 기본 조회 시각은 다시 쓰지 않는다.
+
+최신 수집 기준은 지역별로 비교하여 다른 지역의 독립적인 갱신을 막지 않는다. 기존 기관번호가 다른 지역에서 확인되면 현재 저장된 지역의 최신 기준도 확인하므로 오래된 수집으로 이전 지역에 되돌리지 않는다. 전국 수집은 모든 지역의 기준과 대조한다. 갱신은 Vercel 함수가 아니라 GitHub runner에서 MongoDB에 직접 적용하고, 예정 시각은 runner 사정에 따라 늦어질 수 있다. 기본 API에 변경분 전용 조회가 있는 것은 아니므로 **대상 지역의 전체 API 확인과 DB 변경분 저장은 별개**다. 상세 일정·파일 검증·재실행은 [병원 목록 운영 안내](hospital-catalog.md)를 따른다.
 
 전체 DB를 한 번에 교체하는 트랜잭션은 아니다. 적용 도중 실패하면 일부가 반영될 수 있으므로 같은 검증 자료로 재실행하고 `COMPLETE`·최종 검증 건수를 확인한다. 대량 누락·오래된 수집본·체크섬 불일치 등은 적용을 막는다. 상세 3종은 이 일일 수집에 포함되지 않는다. 상세 운영·복구 명령은 [병원 목록 운영 안내](hospital-catalog.md)를 따른다.
 
@@ -761,8 +769,8 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 
 ### 수집과 보관 원칙
 
-- 병원 기본 정보는 매일 한국 시간 00시 예정 작업에서 전체 API 목록을 확인하고, DB에는 신규·변경·비활성화가 필요한 자료만 기록한다. 일정 실행은 지연될 수 있다.
-- 상세 3종은 일일 기본 수집에 포함하지 않는다. 필요할 때 조회하고 완전한 결과를 1시간 재사용한다.
+- 병원 기본 정보는 월~토 한국 시간 00시 예정 작업에서 요일별 대상 지역의 전체 API 목록을 확인하고, 해당 지역의 신규·변경·비활성화가 필요한 자료만 기록한다. 다른 지역은 보존하며 일요일은 예약 실행하지 않는다. 일정 실행은 지연될 수 있다.
+- 상세 3종은 요일별 기본 수집에 포함하지 않는다. 필요할 때 조회하고 완전한 결과를 1시간 재사용한다.
 - 웹 추천 근거 캐시는 24시간이며 개인 상담 내용 저장소가 아니다.
 - 증상 원문과 상담 대화 이력은 기본 저장하지 않는다. 위치를 입력해 계산에 사용하더라도 정밀 위치를 DB에 보관하지 않는다.
 - 회원 비밀번호 원문과 구글·카카오의 액세스/리프레시 토큰을 회원 문서에 저장하지 않는다.
@@ -810,7 +818,7 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 | 병원 기본·상세 인덱스 | [HospitalCatalogIndexes.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalCatalogIndexes.java), [HospitalIndexes.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalIndexes.java) |
 | 웹 추천 근거와 상담 사용량 | [HospitalExpertiseSearchService.java](../backend/src/main/java/kr/dmu/hospital/integration/HospitalExpertiseSearchService.java), [ChatUsageLimiter.java](../backend/src/main/java/kr/dmu/hospital/integration/ChatUsageLimiter.java) |
 | 병원 의료진·일정 관리, 개인·병원 예약 권한·이력 | [BookingService.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingService.java), [HospitalManagementController.java](../backend/src/main/java/kr/dmu/hospital/booking/HospitalManagementController.java), [BookingIndexes.java](../backend/src/main/java/kr/dmu/hospital/booking/BookingIndexes.java) |
-| 기본 정보 일일 수집·변경 비교·잠금 | [sync-hospital-catalog.mjs](../scripts/sync-hospital-catalog.mjs) |
+| 기본 정보 지역별 수집·변경 비교·잠금 | [sync-hospital-catalog.mjs](../scripts/sync-hospital-catalog.mjs) |
 | 진료과 코드표 | [Departments.java](../backend/src/main/java/kr/dmu/hospital/integration/Departments.java) |
 
 확인 기준: 기존 2026-11-22 구조에 2026-11-25 병원 가입·관리 코드를 반영했다. 필드와 처리 방식을 바꿀 때 이 문서와 [API 계약](api-contract.md), [아키텍처](architecture.md)도 함께 갱신한다.
