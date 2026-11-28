@@ -35,7 +35,8 @@
 .button.outline { border-color: #c5cdd8; color: var(--accent-strong); }
 .button.outline:hover, .icon-button:hover { background: #f1f3f5; }
 :is(a, button, input, textarea, select):focus-visible { outline-color: #365f96; }
-input:focus, select:focus, textarea:focus { border-color: #607fa6; }
+:where(html:not([data-pointer-focus])) :is(input, select, textarea):focus { border-color: #607fa6; }
+html[data-pointer-focus] :is(input:where(:not([type=button], [type=submit], [type=reset], [type=image])), select, textarea):focus { outline: none; }
 .page-wrap, .featured-hospitals { width: min(1180px,calc(100% - 64px)); margin-inline: auto; }
 .page-heading h1, .booking-heading h1 { font-size: clamp(1.85rem,3.3vw,3.25rem); line-height: 1.16; letter-spacing: -.06em; }
 .page-heading p { font-size: 1rem; color: var(--muted); }

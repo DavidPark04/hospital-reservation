@@ -113,7 +113,7 @@
 }
 
 .auth-dialog .field input::placeholder { color: #738195; }
-.auth-dialog .field input:focus-visible {
+:where(html:not([data-pointer-focus])) .auth-dialog .field input:focus-visible {
   border-color: var(--accent);
   outline: 2px solid #829dc2;
   outline-offset: 1px;
@@ -165,9 +165,11 @@
 .auth-dialog .auth-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .auth-dialog .auth-label-row button { margin: 0; padding: 0; font-size: .8rem; }
 
+:root:has(.profile-signup-page) { scrollbar-gutter: stable; }
+
 :is(.auth-dialog, .profile-signup-panel) .auth-contact-block {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 5rem;
   align-items: end;
   gap: 7px;
   min-width: 0;
@@ -187,14 +189,17 @@
 .auth-contact-block .contact-verification > .button {
   grid-column: 2;
   grid-row: 2;
-  align-self: stretch;
+  place-self: stretch;
   min-height: 0;
   margin: 0;
-  padding-inline: 12px;
+  padding: 4px;
   border: 1px solid #b9cbe1;
   color: var(--accent-strong);
   background: #eef4fb;
   font-size: .81rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .auth-contact-block .contact-verification > .button:hover { transform: none; }
 
@@ -278,8 +283,15 @@
 
 .auth-contact-block > .member-conflict-notice { grid-column: 1 / -1; }
 
+.dialog-overlay:has(.personal-signup-form) {
+  align-items: flex-start;
+  padding-block-start: clamp(12px, calc(50dvh - 22rem), 8dvh);
+}
+.dialog-overlay:has(.personal-signup-form) > .auth-dialog { max-height: 100%; }
+
 .dialog.auth-dialog--stepped-signup {
   width: 532px;
+  scrollbar-gutter: stable;
   --auth-pad: clamp(19px, 4vw, 30px);
 }
 
@@ -380,14 +392,4 @@
 
 @media (max-width: 359px) {
   .auth-dialog .social-login-buttons { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 420px) {
-  .auth-contact-block .contact-verification > .button {
-    max-width: 5rem;
-    padding: 4px 8px;
-    line-height: 1.35;
-    white-space: normal;
-    word-break: keep-all;
-  }
 }

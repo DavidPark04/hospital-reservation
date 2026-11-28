@@ -4,6 +4,7 @@ import {api,ApiError} from './api';
 import {canonicalEmail} from './contactVerification';
 import type {EmailPurpose,VerificationProof} from './contactVerification';
 import useVerificationCountdown from './useVerificationCountdown';
+import VerificationRequestButton from './VerificationRequestButton';
 import './contactVerification.css';
 
 type Props={purpose:EmailPurpose;email:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;compact?:boolean};
@@ -17,7 +18,8 @@ export default function EmailVerification({purpose,email,onVerified,disabled=fal
   const callbacks=useRef({onVerified,onBusy});callbacks.current={onVerified,onBusy};
   const active=useRef(false);
   const operation=useRef(0);
-  const [busy,setBusy]=useState(false);
+  const [pending,setPending]=useState<'send'|'confirm'|null>(null);
+  const busy=pending!==null;
   const [challenge,setChallenge]=useState<Challenge|null>(null);
   const [code,setCode]=useState('');
   const [error,setError]=useState('');
@@ -29,7 +31,7 @@ export default function EmailVerification({purpose,email,onVerified,disabled=fal
   const verifiedSeconds=useVerificationCountdown(verifiedUntil);
   const verified=verifiedUntil>Date.now();
   useEffect(()=>{
-    current.current=context;operation.current++;active.current=false;setBusy(false);setChallenge(null);setCode('');setError('');setRetryAt(0);setExpiresAt(0);setVerifiedUntil(0);
+    current.current=context;operation.current++;active.current=false;setPending(null);setChallenge(null);setCode('');setError('');setRetryAt(0);setExpiresAt(0);setVerifiedUntil(0);
     callbacks.current.onVerified('');
     return()=>{current.current='';operation.current++;};
   },[context]);
@@ -38,18 +40,18 @@ export default function EmailVerification({purpose,email,onVerified,disabled=fal
   async function send(){
     if(active.current||disabled||retrySeconds)return;
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)){setError('이메일 주소를 먼저 입력해 주세요.');return;}
-    const requested=context;const requestId=++operation.current;active.current=true;setBusy(true);setError('');callbacks.current.onVerified('');setVerifiedUntil(0);
+    const requested=context;const requestId=++operation.current;active.current=true;setPending('send');setError('');callbacks.current.onVerified('');setVerifiedUntil(0);
     try{
       const result=await api<Challenge>('/auth/verification/email/send',{method:'POST',body:JSON.stringify({purpose,email:contact})});
       if(current.current!==requested||operation.current!==requestId)return;
       setChallenge(result);setCode('');setRetryAt(Date.now()+result.retryAfter*1000);setExpiresAt(Date.now()+result.expiresIn*1000);
     }catch(reason){if(current.current===requested&&operation.current===requestId)setError(reason instanceof Error?reason.message:'이메일을 보내지 못했어요. 다시 시도해 주세요.');}
-    finally{if(operation.current===requestId){active.current=false;setBusy(false);}}
+    finally{if(operation.current===requestId){active.current=false;setPending(null);}}
   }
   async function confirm(){
     if(active.current||disabled||!challenge)return;
     if(!/^\d{6}$/.test(code)){setError('이메일로 받은 인증번호 6자리를 입력해 주세요.');return;}
-    const requested=context;const requestId=++operation.current;active.current=true;setBusy(true);setError('');
+    const requested=context;const requestId=++operation.current;active.current=true;setPending('confirm');setError('');
     try{
       const result=await api<VerificationProof>('/auth/verification/email/confirm',{method:'POST',body:JSON.stringify({challengeId:challenge.challengeId,code})});
       if(current.current!==requested||operation.current!==requestId)return;
@@ -59,17 +61,15 @@ export default function EmailVerification({purpose,email,onVerified,disabled=fal
       if(current.current!==requested||operation.current!==requestId)return;
       if(reason instanceof ApiError&&[404,410].includes(reason.status)){setChallenge(null);setRetryAt(0);}
       setError(reason instanceof Error?reason.message:'이메일 인증을 완료하지 못했어요. 다시 시도해 주세요.');
-    }finally{if(operation.current===requestId){active.current=false;setBusy(false);}}
+    }finally{if(operation.current===requestId){active.current=false;setPending(null);}}
   }
   return <div className="contact-verification" aria-label="이메일 인증">
     {verified?<p className="contact-verified" role="status"><CheckCircle2 size={16}/>이메일 인증 완료</p>:<>
-      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}
-        aria-label={compact ? (challenge?'이메일 인증번호 다시 받기':'이메일 인증 요청') : undefined}>
-        {busy&&!challenge?<LoaderCircle size={16} className="spin"/>:null}{compact ? (challenge?'다시 받기':'인증 요청') : (challenge?'인증번호 다시 보내기':'이메일 인증번호 받기')}{retrySeconds>0?` (${retrySeconds}초)`:''}
-      </button>
+      <VerificationRequestButton channel="이메일" compact={compact} sending={pending==='send'} resend={!!challenge}
+        retrySeconds={retrySeconds} disabled={disabled||busy||!contact} onClick={send}/>
       {challenge&&<><p className="verification-help" role="status">이메일로 인증번호를 보냈어요. {codeSeconds>0?`${Math.floor(codeSeconds/60)}분 ${codeSeconds%60}초 안에 입력해 주세요.`:'인증번호가 만료됐어요. 다시 받아 주세요.'}</p>
         <div className="verification-code-row"><label className="field" htmlFor={inputId}>이메일 인증번호<input id={inputId} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e=>{setCode(e.target.value.replace(/\D/g,'').slice(0,6));setError('');}} maxLength={6} disabled={disabled||busy} placeholder="6자리 인증번호"/></label>
-          <button className="button secondary" type="button" onClick={confirm} disabled={disabled||busy||code.length!==6||codeSeconds===0}>{busy?<LoaderCircle size={16} className="spin"/>:'인증 확인'}</button></div></>}
+          <button className="button secondary" type="button" onClick={confirm} disabled={disabled||busy||code.length!==6||codeSeconds===0}>{pending==='confirm'?<LoaderCircle size={16} className="spin"/>:'인증 확인'}</button></div></>}
     </>}
     {error&&<p className="verification-error" role="alert">{error}</p>}
   </div>;

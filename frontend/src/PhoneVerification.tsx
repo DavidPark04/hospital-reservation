@@ -7,6 +7,7 @@ import type {PhonePurpose,VerificationProof} from './contactVerification';
 import {createPhoneChallenge} from './firebasePhone';
 import type {PhoneChallenge} from './firebasePhone';
 import useVerificationCountdown from './useVerificationCountdown';
+import VerificationRequestButton from './VerificationRequestButton';
 import './contactVerification.css';
 
 type Props={purpose:PhonePurpose;phone:string;loginId?:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;onExistingAccount?:(provider:AuthProvider|undefined)=>void;compact?:boolean};
@@ -85,10 +86,8 @@ export default function PhoneVerification({purpose,phone,loginId='',onVerified,d
   }
   return <div className="contact-verification" aria-label="문자 인증">
     {verified?<p className="contact-verified" role="status"><CheckCircle2 size={16}/>휴대전화 인증 완료</p>:<>
-      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}
-        aria-label={compact ? (stage==='sent'?'문자 인증번호 다시 받기':'문자 인증 요청') : undefined}>
-        {stage==='sending'&&<LoaderCircle size={16} className="spin"/>}{compact ? (stage==='sent'?'다시 받기':'인증 요청') : (stage==='sent'?'인증번호 다시 받기':'문자 인증번호 받기')}{retrySeconds>0?` (${retrySeconds}초)`:''}
-      </button>
+      <VerificationRequestButton channel="문자" compact={compact} sending={stage==='sending'} resend={stage==='sent'||stage==='confirming'}
+        retrySeconds={retrySeconds} disabled={disabled||busy||!contact} onClick={send}/>
       <p className="verification-help">문자 인증을 요청하면 전화번호가 Google에 전달돼요.</p>
       {stage==='sending'&&<><p className="verification-help" role="status">자동입력 방지 확인을 완료해 주세요.</p><button className="text-button" type="button" onClick={cancel}>인증 요청 취소</button></>}
       {(stage==='sent'||stage==='confirming')&&<><p className="verification-help" role="status">문자로 받은 6자리 인증번호를 입력해 주세요.</p>
