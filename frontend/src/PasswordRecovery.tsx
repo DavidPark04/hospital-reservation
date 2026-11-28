@@ -36,7 +36,7 @@ export default function PasswordRecovery({onBack,onBusy}:{onBack:()=>void;onBusy
     <p className="dialog-copy">가입한 아이디와 휴대전화번호로 인증하면 비밀번호를 다시 설정할 수 있어요.</p>
     <form className="auth-form" onSubmit={submit}>
       <label className="field">아이디<input value={loginId} onChange={e=>{setLoginId(e.target.value);setPhoneToken('');setError('');}} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={30} required disabled={busy}/></label>
-      <label className="field">가입한 휴대전화번호<PhoneInput value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setError('');}} placeholder="010-1234-5678" required disabled={busy||!!phoneToken}/></label>
+      <label className="field">가입한 휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setError('');}} placeholder="010-1234-5678" required disabled={busy||!!phoneToken}/></label>
       <PhoneVerification purpose="PASSWORD_RESET" phone={phone} loginId={loginId} onVerified={setPhoneToken} onBusy={verificationBusy} disabled={saving}/>
       {phoneToken&&<><label className="field">새 비밀번호<input type="password" autoComplete="new-password" value={password} onChange={e=>{setPassword(e.target.value);setError('');}} minLength={8} maxLength={72} required disabled={saving}/></label>
         <label className="field">새 비밀번호 확인<input type="password" autoComplete="new-password" value={confirmation} onChange={e=>{setConfirmation(e.target.value);setError('');}} minLength={8} maxLength={72} required disabled={saving}/></label></>}

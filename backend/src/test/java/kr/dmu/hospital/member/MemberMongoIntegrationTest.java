@@ -7,6 +7,7 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
 import kr.dmu.hospital.auth.AuthService;
+import kr.dmu.hospital.auth.HospitalAccountService;
 import kr.dmu.hospital.auth.UserIndexes;
 import kr.dmu.hospital.auth.UserPrincipal;
 import kr.dmu.hospital.booking.BookingIndexes;
@@ -21,6 +22,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.SimpleMongoClientDatabaseFactory;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -337,6 +339,100 @@ class MemberMongoIntegrationTest {
         assertEquals(4, mongo.getCollection("users").countDocuments());
     }
 
+    @Test void hospitalAccountsExposeIdentifiersOnlyToTheAdminListAndCannotWithdrawThemselves() throws Exception {
+        String hospitalUser = hospitalAccount();
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(userA)),
+                new Update().set("hospitalId", "not-public").set("businessNumber", "not-public"), "users");
+        Document hospital = members.list(ADMIN).stream().filter(member -> hospitalUser.equals(member.getString("id"))).findFirst().orElseThrow();
+        assertEquals("hospital", hospital.getString("hospitalId"));
+        assertEquals("6911702710", hospital.getString("businessNumber"));
+        assertFalse(hospital.containsKey("passwordHash"));
+        for (Document member : members.list(ADMIN)) if (!"HOSPITAL".equals(member.getString("role"))) {
+            assertFalse(member.containsKey("hospitalId")); assertFalse(member.containsKey("businessNumber"));
+        }
+        signIn(userA);
+        mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isForbidden());
+        signIn(hospitalUser);
+        mvc.perform(delete("/api/members/me").contentType(MediaType.APPLICATION_JSON)
+                .content(new Document("password", PASSWORD).toJson())).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isForbidden());
+        assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
+        assertNotNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
+    }
+
+    @Test void adminHospitalDeletionCancelsOnlyItsBookingsAndPreservesCatalogAndHistory() throws Exception {
+        String hospitalUser = hospitalAccount();
+        Document catalog = mongo.findById("hospital", Document.class, "hospitals");
+        String first = booking.create(userA, "hospital-first", "slot-1").getString("id");
+        String second = booking.create(userB, "hospital-second", "slot-2").getString("id");
+        String canceled = booking.create(userA, "hospital-canceled", "slot-3").getString("id");
+        booking.cancel(userA, canceled, "already-canceled");
+        Document canceledBefore = mongo.findById(canceled, Document.class, "reservations");
+        mongo.insert(new Document("_id", "other-hospital").append("name", "다른 병원").append("active", true).append("provider", "HIRA"), "hospitals");
+        mongo.insert(new Document("_id", "other-hospital").append("status", "ACTIVE").append("userId", "other-owner"), HospitalAccountService.REGISTRATIONS);
+        mongo.insert(new Document("_id", "other-doctor").append("hospitalId", "other-hospital").append("departmentCode", "01")
+                .append("departmentName", "내과").append("name", "다른 의료진").append("isVirtual", false).append("active", true), "doctors");
+        mongo.insert(new Document("_id", "other-slot").append("doctorId", "other-doctor")
+                .append("startAt", Date.from(Instant.now().plusSeconds(172800))).append("capacity", 2)
+                .append("reservedCount", 0).append("closed", false).append("isVirtual", false), "timeSlots");
+        String other = booking.create(userB, "other-hospital", "other-slot").getString("id");
+        Document otherBefore = mongo.findById(other, Document.class, "reservations");
+        mongo.insert(new Document("_id", "old-business-proof").append("businessNumber", "6911702710"), HospitalAccountService.VERIFICATIONS);
+        signIn(ADMIN);
+        mvc.perform(delete("/api/admin/members/" + hospitalUser)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.deletedUserId").value(hospitalUser)).andExpect(jsonPath("$.canceledReservations").value(2));
+        assertNull(mongo.findById(hospitalUser, Document.class, "users"));
+        assertNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
+        assertEquals(catalog, mongo.findById("hospital", Document.class, "hospitals"));
+        assertFalse(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
+        for (int i = 1; i <= 3; i++) {
+            assertEquals(0, count("slot-" + i));
+            assertTrue(mongo.findById("slot-" + i, Document.class, "timeSlots").getBoolean("closed"));
+        }
+        for (String id : List.of(first, second)) {
+            Document reservation = mongo.findById(id, Document.class, "reservations");
+            assertEquals("CANCELED", reservation.getString("status"));
+            assertNotNull(reservation.get("snapshot"));
+        }
+        assertEquals(2, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", ADMIN).append("action", "CANCEL")));
+        assertEquals(canceledBefore, mongo.findById(canceled, Document.class, "reservations"));
+        assertEquals(otherBefore, mongo.findById(other, Document.class, "reservations"));
+        assertTrue(mongo.findById("other-doctor", Document.class, "doctors").getBoolean("active"));
+        assertFalse(mongo.findById("other-slot", Document.class, "timeSlots").getBoolean("closed"));
+        assertEquals(1, count("other-slot"));
+        assertNull(mongo.findById("old-business-proof", Document.class, HospitalAccountService.VERIFICATIONS));
+        assertEquals(userA, auth.authenticate(tokenA).getId());
+        assertEquals(userB, auth.authenticate(tokenB).getId());
+        assertEquals(409, assertThrows(ApiException.class, () -> booking.create(userA, "after-closure", "slot-1")).getStatus());
+        assertEquals(404, assertThrows(ApiException.class, () -> booking.editSlot("slot-1", 4, false)).getStatus());
+        assertThrows(IllegalStateException.class, () -> booking.closeHospitalBookings("hospital", ADMIN));
+    }
+
+    @Test void hospitalDeletionRollsBackEveryChangeWhenSlotAccountingIsInconsistent() {
+        String hospitalUser = hospitalAccount();
+        String first = booking.create(userA, "hospital-first", "slot-1").getString("id");
+        String second = booking.create(userB, "hospital-second", "slot-2").getString("id");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("slot-2")), new Update().set("reservedCount", 0), "timeSlots");
+        assertEquals(409, assertThrows(ApiException.class, () -> members.delete(ADMIN, hospitalUser)).getStatus());
+        assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
+        assertNotNull(mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS));
+        assertTrue(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
+        assertFalse(mongo.findById("slot-1", Document.class, "timeSlots").getBoolean("closed"));
+        assertEquals(1, count("slot-1"));
+        assertEquals("RESERVED", mongo.findById(first, Document.class, "reservations").getString("status"));
+        assertEquals("RESERVED", mongo.findById(second, Document.class, "reservations").getString("status"));
+        assertEquals(0, mongo.getCollection("reservationEvents").countDocuments(new Document("actorId", ADMIN)));
+    }
+
+    @Test void hospitalRegistrationOwnershipMismatchPreventsDeletingAnyAccountOrSchedule() {
+        String hospitalUser = hospitalAccount();
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("hospital")), new Update().set("userId", "other-owner"), HospitalAccountService.REGISTRATIONS);
+        assertEquals(409, assertThrows(ApiException.class, () -> members.delete(ADMIN, hospitalUser)).getStatus());
+        assertNotNull(mongo.findById(hospitalUser, Document.class, "users"));
+        assertEquals("other-owner", mongo.findById("hospital", Document.class, HospitalAccountService.REGISTRATIONS).getString("userId"));
+        assertTrue(mongo.findById("doctor", Document.class, "doctors").getBoolean("active"));
+    }
+
     @Test
     void deleteCancelsOnlyActiveMemberBookingsRestoresCapacityAndRevokesTokens() throws Exception {
         String first = booking.create(userA, "create-first", "slot-1").getString("id");
@@ -508,6 +604,104 @@ class MemberMongoIntegrationTest {
             executor.shutdownNow();
             assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
         }
+    }
+
+    @Test void hospitalDeletionCancelsBookingsThatWereAlreadyInFlight() throws Exception {
+        String hospitalUser = hospitalAccount();
+        CountDownLatch bookingOwnsDoctor = new CountDownLatch(1);
+        CountDownLatch releaseBooking = new CountDownLatch(1);
+        CountDownLatch deletionReachedDoctors = new CountDownLatch(1);
+        AtomicBoolean firstLock = new AtomicBoolean(true);
+        MongoTemplate bookingMongo = new MongoTemplate(factory) {
+            @Override public <T> T findAndModify(Query query, UpdateDefinition update, FindAndModifyOptions options, Class<T> type, String collection) {
+                T result = super.findAndModify(query, update, options, type, collection);
+                if ("doctors".equals(collection) && firstLock.getAndSet(false)) { bookingOwnsDoctor.countDown(); await(releaseBooking); }
+                return result;
+            }
+        };
+        MongoTemplate deletionMongo = new MongoTemplate(factory) {
+            @Override public UpdateResult updateMulti(Query query, UpdateDefinition update, String collection) {
+                if ("doctors".equals(collection)) deletionReachedDoctors.countDown();
+                return super.updateMulti(query, update, collection);
+            }
+        };
+        BookingService concurrentBooking = new BookingService(bookingMongo, transactionManager);
+        MemberService concurrentMembers = new MemberService(deletionMongo, new BookingService(deletionMongo, transactionManager), transactionManager, new BCryptPasswordEncoder());
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Document> created = executor.submit(() -> concurrentBooking.create(userA, "hospital-race", "slot-1"));
+            try {
+                assertTrue(bookingOwnsDoctor.await(10, TimeUnit.SECONDS));
+                Future<Document> deleted = executor.submit(() -> concurrentMembers.delete(ADMIN, hospitalUser));
+                assertTrue(deletionReachedDoctors.await(10, TimeUnit.SECONDS));
+                releaseBooking.countDown();
+                String reservationId = created.get(20, TimeUnit.SECONDS).getString("id");
+                assertEquals(1, deleted.get(20, TimeUnit.SECONDS).getInteger("canceledReservations"));
+                assertEquals("CANCELED", mongo.findById(reservationId, Document.class, "reservations").getString("status"));
+                assertEquals(0, count("slot-1"));
+            } finally { releaseBooking.countDown(); }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"BOOK", "CREATE_SLOTS", "EDIT_SLOT"})
+    void hospitalClosureAlreadyInFlightBlocksBookingsAndAdministratorScheduleWrites(String operation) throws Exception {
+        String hospitalUser = hospitalAccount();
+        CountDownLatch closureOwnsDoctors = new CountDownLatch(1);
+        CountDownLatch releaseClosure = new CountDownLatch(1);
+        CountDownLatch operationReachedLock = new CountDownLatch(1);
+        AtomicBoolean firstClosure = new AtomicBoolean(true);
+        MongoTemplate deletionMongo = new MongoTemplate(factory) {
+            @Override public UpdateResult updateMulti(Query query, UpdateDefinition update, String collection) {
+                UpdateResult result = super.updateMulti(query, update, collection);
+                if ("doctors".equals(collection) && firstClosure.getAndSet(false)) { closureOwnsDoctors.countDown(); await(releaseClosure); }
+                return result;
+            }
+        };
+        MongoTemplate operationMongo = new MongoTemplate(factory) {
+            @Override public UpdateResult updateFirst(Query query, UpdateDefinition update, String collection) {
+                if (HospitalAccountService.REGISTRATIONS.equals(collection)) operationReachedLock.countDown();
+                return super.updateFirst(query, update, collection);
+            }
+            @Override public <T> T findAndModify(Query query, UpdateDefinition update, FindAndModifyOptions options, Class<T> type, String collection) {
+                if ("doctors".equals(collection)) operationReachedLock.countDown();
+                return super.findAndModify(query, update, options, type, collection);
+            }
+        };
+        MemberService concurrentMembers = new MemberService(deletionMongo, new BookingService(deletionMongo, transactionManager), transactionManager, new BCryptPasswordEncoder());
+        BookingService concurrentBooking = new BookingService(operationMongo, transactionManager);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Document> deleted = executor.submit(() -> concurrentMembers.delete(ADMIN, hospitalUser));
+            try {
+                assertTrue(closureOwnsDoctors.await(10, TimeUnit.SECONDS));
+                Future<Integer> attempted = executor.submit(() -> {
+                    try {
+                        switch (operation) {
+                            case "BOOK" -> concurrentBooking.create(userA, "closure-race", "slot-1");
+                            case "CREATE_SLOTS" -> concurrentBooking.createSlots("doctor", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(3).toString(), "09:00", "10:00", 30, 4);
+                            case "EDIT_SLOT" -> concurrentBooking.editSlot("slot-1", 4, false);
+                            default -> throw new AssertionError("Unexpected operation");
+                        }
+                        return 200;
+                    } catch (ApiException error) { return error.getStatus(); }
+                });
+                assertTrue(operationReachedLock.await(10, TimeUnit.SECONDS));
+                releaseClosure.countDown();
+                assertEquals(0, deleted.get(20, TimeUnit.SECONDS).getInteger("canceledReservations"));
+                assertTrue(List.of(404, 409).contains(attempted.get(20, TimeUnit.SECONDS)));
+                assertEquals(3, mongo.getCollection("timeSlots").countDocuments());
+                assertEquals(0, mongo.getCollection("reservations").countDocuments());
+                assertEquals(0, count("slot-1"));
+                assertTrue(mongo.findById("slot-1", Document.class, "timeSlots").getBoolean("closed"));
+            } finally { releaseClosure.countDown(); }
+        }
+    }
+
+    private String hospitalAccount() {
+        mongo.insert(new Document("_id", "hospital-owner").append("loginId", "hospital:6911702710")
+                .append("name", "시험 병원").append("role", "HOSPITAL").append("authProvider", "LOCAL")
+                .append("hospitalId", "hospital").append("businessNumber", "6911702710").append("profileComplete", true)
+                .append("passwordHash", new BCryptPasswordEncoder().encode(PASSWORD)).append("createdAt", new Date()), "users");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("hospital")), new Update().set("businessNumber", "6911702710"), HospitalAccountService.REGISTRATIONS);
+        return "hospital-owner";
     }
 
     private Document deleteOrWithdraw(MemberService service, boolean withdrawal) {

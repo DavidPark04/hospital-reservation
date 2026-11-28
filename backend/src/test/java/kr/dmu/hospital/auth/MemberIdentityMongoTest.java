@@ -52,7 +52,7 @@ class MemberIdentityMongoTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
-    void matchingNormalizedNameAndPhoneRevealsProviderForEverySignupMethod(String existingProvider) {
+    void matchingNormalizedNameAndPhoneNeverRevealsProviderAtFinalSignup(String existingProvider) {
         complete(existingProvider, "original1", "Kim Do Hyeong", "01012345678", "original@example.com");
         for (String provider : List.of("LOCAL", "GOOGLE", "KAKAO")) {
             String subject = "matched-new-" + provider;
@@ -61,7 +61,7 @@ class MemberIdentityMongoTest {
             for (String email : List.of(provider.toLowerCase(java.util.Locale.ROOT) + "@different.example", " ORIGINAL@EXAMPLE.COM ")) {
                 MemberIdentityConflict conflict = assertThrows(MemberIdentityConflict.class,
                     () -> finish(provider, subject, "  KIM   DO  HYEONG  ", "010-1234-5678", email));
-                assertConflict(conflict, existingProvider);
+                assertGenericConflict(conflict);
             }
             if (pending != null) assertStillPending(pending);
         }
@@ -84,7 +84,7 @@ class MemberIdentityMongoTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
-    void emailAloneShowsProviderOnlyWhenNormalizedNameMatchesForEverySignupMethod(String existingProvider) {
+    void emailAloneNeverRevealsProviderEvenWhenNormalizedNameMatches(String existingProvider) {
         complete(existingProvider, "original1", "Kim Do Hyeong", "01012345678", "Shared@Example.com");
         for (String provider : List.of("LOCAL", "GOOGLE", "KAKAO")) {
             String subject = "email-new-" + provider;
@@ -92,7 +92,7 @@ class MemberIdentityMongoTest {
             if (pending != null) setCurrent(pending);
             MemberIdentityConflict matched = assertThrows(MemberIdentityConflict.class,
                 () -> finish(provider, subject, "  KIM   DO  HYEONG  ", "01087654321", " shared@EXAMPLE.COM "));
-            assertConflict(matched, existingProvider);
+            assertGenericConflict(matched);
             assertGenericConflict(assertThrows(ApiException.class,
                 () -> finish(provider, subject, "다른 이름", "01087654321", " shared@EXAMPLE.COM ")));
             if (pending != null) assertStillPending(pending);
@@ -111,26 +111,26 @@ class MemberIdentityMongoTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO"})
-    void contactsBelongingToDifferentMembersOnlyDiscloseTheMatchingName(String incomingProvider) {
+    void contactsBelongingToDifferentMembersNeverDiscloseEitherProvider(String incomingProvider) {
         complete("KAKAO", "phone-owner", "전화 회원", "01012345678", "phone@example.com");
         complete("GOOGLE", "email-owner", "메일 회원", "01087654321", "email@example.com");
         Document pending = incomingProvider.equals("LOCAL") ? null : pending(incomingProvider, "two-contact-conflicts");
         if (pending != null) setCurrent(pending);
-        assertConflict(assertThrows(MemberIdentityConflict.class,
-            () -> finish(incomingProvider, "newmember", "전화 회원", "010-1234-5678", "EMAIL@EXAMPLE.COM")), "KAKAO");
-        assertConflict(assertThrows(MemberIdentityConflict.class,
-            () -> finish(incomingProvider, "newmember", "메일 회원", "010-1234-5678", "EMAIL@EXAMPLE.COM")), "GOOGLE");
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class,
+            () -> finish(incomingProvider, "newmember", "전화 회원", "010-1234-5678", "EMAIL@EXAMPLE.COM")));
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class,
+            () -> finish(incomingProvider, "newmember", "메일 회원", "010-1234-5678", "EMAIL@EXAMPLE.COM")));
         assertGenericConflict(assertThrows(ApiException.class,
             () -> finish(incomingProvider, "newmember", "다른 새 이름", "010-1234-5678", "EMAIL@EXAMPLE.COM")));
         if (pending != null) assertStillPending(pending);
         assertEquals(2, count("users"));
     }
 
-    @Test void matchingNameAndPhoneHavePriorityWhenBothContactOwnersHaveTheSameName() {
+    @Test void bothContactOwnersHavingTheSameNameStillReturnsGenericConflict() {
         complete("KAKAO", "phone-owner", "같은 이름", "01012345678", "phone@example.com");
         complete("GOOGLE", "email-owner", "같은 이름", "01087654321", "email@example.com");
-        assertConflict(assertThrows(MemberIdentityConflict.class,
-            () -> auth.register(TestContactProofs.signup(mongo, registration("newmember", " 같은  이름 ", "01012345678", "email@example.com")))), "KAKAO");
+        assertGenericConflict(assertThrows(MemberIdentityConflict.class,
+            () -> auth.register(TestContactProofs.signup(mongo, registration("newmember", " 같은  이름 ", "01012345678", "email@example.com")))));
         assertEquals(2, count("users"));
     }
 
@@ -178,7 +178,7 @@ class MemberIdentityMongoTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"phone", "email"})
-    void concurrentSocialCompletionWithMatchingNameShowsTheWinnerProvider(String duplicateContact) throws Exception {
+    void concurrentSocialCompletionWithMatchingNameKeepsTheWinnerProviderPrivate(String duplicateContact) throws Exception {
         race("GOOGLE", "KAKAO", duplicateContact, true);
         assertEquals(1, count("social_signups"));
         assertStillPending(mongo.getCollection("social_signups").find().first());
@@ -311,9 +311,7 @@ class MemberIdentityMongoTest {
         catch (ApiException conflict) {
             Document winner = mongo.getCollection("users").find().first();
             assertNotNull(winner);
-            if (MemberIdentity.normalizedName(name).equals(MemberIdentity.normalizedName(winner.getString("name")))) {
-                assertConflict(assertInstanceOf(MemberIdentityConflict.class, conflict), winner.getString("authProvider"));
-            } else assertGenericConflict(conflict);
+            assertGenericConflict(conflict);
             return conflict.getStatus();
         }
         finally { SecurityContextHolder.clearContext(); }
@@ -326,19 +324,11 @@ class MemberIdentityMongoTest {
         if (provider.equals("LOCAL")) auth.register(TestContactProofs.signup(mongo, registration(subject, name, phone, email)));
         else auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile(name, phone, email)));
     }
-    private void assertConflict(MemberIdentityConflict conflict, String provider) {
-        assertEquals(409, conflict.getStatus()); assertEquals(provider, conflict.toPublic().get("existingAuthProvider"));
-        assertEquals("MEMBER_ALREADY_EXISTS", conflict.toPublic().get("code"));
-        String expected = provider.equals("KAKAO") ? "이미 카카오로 가입된 계정이 있어요. 카카오로 로그인해 주세요."
-            : provider.equals("GOOGLE") ? "이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요."
-            : "이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.";
-        assertEquals(expected, conflict.getMessage());
-        assertEquals(Map.of("message", expected, "code", "MEMBER_ALREADY_EXISTS", "existingAuthProvider", provider), conflict.toPublic());
-    }
     private void assertGenericConflict(ApiException conflict) {
-        assertEquals(ApiException.class, conflict.getClass());
+        MemberIdentityConflict duplicate = assertInstanceOf(MemberIdentityConflict.class, conflict);
         assertEquals(409, conflict.getStatus());
         assertEquals("이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요.", conflict.getMessage());
+        assertEquals(Map.of("message", conflict.getMessage(), "code", "MEMBER_ALREADY_EXISTS"), duplicate.toPublic());
     }
     private void assertStillPending(Document pending) {
         Document unchanged = mongo.findById(pending.getString("_id"), Document.class, "social_signups");

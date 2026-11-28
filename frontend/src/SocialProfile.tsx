@@ -8,6 +8,7 @@ import { loginMethod } from './SocialLogin';
 import PhoneInput from './PhoneInput';
 import EmailVerification from './EmailVerification';
 import PhoneVerification from './PhoneVerification';
+import MemberConflictNotice from './MemberConflictNotice';
 import {validMobilePhone} from './contactVerification';
 
 export function needsSocialProfile(user:User|null){
@@ -19,6 +20,7 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
   const [email,setEmail]=useState('');
   const [phone,setPhone]=useState('');
   const [emailToken,setEmailToken]=useState('');const [phoneToken,setPhoneToken]=useState('');
+  const [existingProvider,setExistingProvider]=useState<AuthProvider>();
   const [emailBusy,setEmailBusy]=useState(false);const [phoneBusy,setPhoneBusy]=useState(false);
   const [validationError,setValidationError]=useState('');
   const [canceling,setCanceling]=useState(false);
@@ -26,7 +28,6 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
   const mutation=useMutation({mutationFn:()=>api<AuthResult>('/auth/social/profile',{method:'POST',body:JSON.stringify({name:name.trim(),email:email.trim(),phone:normalizePhone(phone),emailVerificationToken:emailToken,phoneVerificationToken:phoneToken})}),onSuccess});
   const busy=mutation.isPending||canceling||switching||emailBusy||phoneBusy;
   const sessionExpired=mutation.error instanceof ApiError&&mutation.error.status===401;
-  const existingProvider=mutation.error instanceof ApiError&&mutation.error.code==='MEMBER_ALREADY_EXISTS'?mutation.error.existingAuthProvider:undefined;
   function submit(event:FormEvent){
     event.preventDefault();
     if(busy||sessionExpired)return;
@@ -35,6 +36,7 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
     if(!cleanEmail||cleanEmail.length>254){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}
     if(!validMobilePhone(phone)){setValidationError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
     if(!emailToken||!phoneToken){setValidationError('이메일 인증과 휴대전화 인증을 완료해 주세요.');return;}
+    if(existingProvider)return;
     setValidationError('');mutation.mutate();
   }
   async function cancel(){
@@ -58,14 +60,14 @@ export default function SocialProfile({user,onSuccess,onCancel,onExistingLogin}:
     <p className="profile-signup-copy">{loginMethod(user.authProvider)} 인증이 완료됐어요.<br/>이름을 입력하고 이메일과 휴대전화를 인증해 주세요.</p>
     <form className="auth-form" onSubmit={submit}>
       <label className="field" htmlFor="social-profile-name">이름<input id="social-profile-name" name="name" autoComplete="name" value={name} onChange={event=>setName(event.target.value)} onBlur={()=>setName(name.trim())} required minLength={1} maxLength={40} placeholder="사용할 이름을 입력해 주세요" disabled={busy}/></label>
-      <label className="field" htmlFor="social-profile-email">이메일<input id="social-profile-email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={event=>{setEmail(event.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="social-email-help" disabled={busy||!!emailToken}/><small id="social-email-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
+      <label className="field" htmlFor="social-profile-email">이메일<input className={emailToken?'contact-locked':undefined} id="social-profile-email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={event=>{setEmail(event.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="social-email-help" disabled={busy||!!emailToken}/><small id="social-email-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
       <EmailVerification purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy} disabled={mutation.isPending||canceling||switching||phoneBusy||sessionExpired}/>
-      <label className="field" htmlFor="social-profile-phone">휴대전화번호<PhoneInput id="social-profile-phone" name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
-      <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} disabled={mutation.isPending||canceling||switching||emailBusy||sessionExpired}/>
+      <label className="field" htmlFor="social-profile-phone">휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} id="social-profile-phone" name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
+      <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} onExistingAccount={setExistingProvider} disabled={mutation.isPending||canceling||switching||emailBusy||sessionExpired}/>
+      {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy} loading={switching}/>}
       {(validationError||mutation.isError)&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{sessionExpired?'가입 인증 시간이 지났어요. 소셜 로그인을 다시 진행해 주세요.':validationError||mutation.error?.message}</div></div>}
-      {existingProvider&&<button type="button" className="button secondary full" onClick={existingLogin} disabled={busy}>{switching?<><LoaderCircle size={18} className="spin"/>로그인 화면으로 이동 중</>:`${loginMethod(existingProvider)}로 로그인하기`}</button>}
       {sessionExpired&&<button type="button" className="button secondary full" onClick={restartLogin} disabled={busy}>{switching?<><LoaderCircle size={18} className="spin"/>로그인 화면으로 이동 중</>:`${loginMethod(user.authProvider)}로 다시 인증하기`}</button>}
-      <button type="submit" className="button primary full" disabled={busy||sessionExpired||!emailToken||!phoneToken}>{mutation.isPending?<><LoaderCircle size={18} className="spin"/>가입 정보 저장 중</>:'가입 완료'}</button>
+      <button type="submit" className="button primary full" disabled={busy||sessionExpired||!emailToken||!phoneToken||!!existingProvider}>{mutation.isPending?<><LoaderCircle size={18} className="spin"/>가입 정보 저장 중</>:'가입 완료'}</button>
     </form>
     <button type="button" className="button quiet full profile-signup-cancel" onClick={cancel} disabled={busy}>{canceling?<LoaderCircle size={17} className="spin"/>:<LogOut size={17}/>}나중에 하기 · 인증 종료</button>
   </section></div>;

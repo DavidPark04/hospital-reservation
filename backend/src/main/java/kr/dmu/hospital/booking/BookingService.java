@@ -150,16 +150,35 @@ public class BookingService {
 
     /** Called by member deletion so account removal, cancellations and capacity commit together. */
     public int cancelMemberReservations(String userId, String adminId) {
+        return cancelReservations("userId", userId, adminId);
+    }
+
+    /** The registration is removed in the same transaction; booking writes conflict with closing these doctors and slots. */
+    public int closeHospitalBookings(String hospitalId, String adminId) {
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("Member reservation cancellation requires a transaction.");
+            throw new IllegalStateException("Hospital closure requires a transaction.");
         }
-        List<Document> reservations = mongo.find(Query.query(Criteria.where("userId").is(userId)
+        Query doctors = Query.query(Criteria.where("hospitalId").is(hospitalId));
+        List<String> doctorIds = mongo.findDistinct(doctors, "_id", "doctors", String.class);
+        mongo.updateMulti(doctors, new Update().set("active", false).set("updatedAt", new Date()), "doctors");
+        if (!doctorIds.isEmpty()) {
+            mongo.updateMulti(Query.query(Criteria.where("doctorId").in(doctorIds)),
+                    new Update().set("closed", true), "timeSlots");
+        }
+        return cancelReservations("hospitalId", hospitalId, adminId);
+    }
+
+    private int cancelReservations(String ownerField, String ownerId, String adminId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Reservation cancellation requires a transaction.");
+        }
+        List<Document> reservations = mongo.find(Query.query(Criteria.where(ownerField).is(ownerId)
                 .and("status").is("RESERVED")), Document.class, "reservations");
         int canceled = 0;
         for (Document reservation : reservations) {
             Document before = reservationView(reservation);
             Document changed = mongo.findAndModify(Query.query(Criteria.where("_id").is(reservation.getString("_id"))
-                            .and("userId").is(userId).and("status").is("RESERVED")),
+                            .and(ownerField).is(ownerId).and("status").is("RESERVED")),
                     new Update().set("status", "CANCELED").set("updatedAt", new Date()),
                     FindAndModifyOptions.options().returnNew(true), Document.class, "reservations");
             if (changed != null) {
@@ -173,9 +192,15 @@ public class BookingService {
 
     public List<Document> createSlots(String doctorId, String dateText, String startText, String endText,
                                        int intervalMinutes, int capacity) {
+        return runWithRetry(() -> createSlotsInTransaction(doctorId, dateText, startText, endText, intervalMinutes, capacity));
+    }
+
+    private List<Document> createSlotsInTransaction(String doctorId, String dateText, String startText, String endText,
+                                       int intervalMinutes, int capacity) {
         Document doctor = requireDocument("doctors", doctorId, "의료진을 찾을 수 없습니다.");
         requireActiveDoctor(doctor);
         requireRegisteredHospital(doctor.getString("hospitalId"));
+        lockRegisteredHospital(doctor.getString("hospitalId"));
         LocalDate date = parseDate(dateText);
         LocalTime start;
         LocalTime end;
@@ -212,10 +237,16 @@ public class BookingService {
     }
 
     public Document editSlot(String slotId, int capacity, boolean closed) {
+        return runWithRetry(() -> editSlotInTransaction(slotId, capacity, closed));
+    }
+
+    private Document editSlotInTransaction(String slotId, int capacity, boolean closed) {
         if (capacity < 0 || capacity > 100) {
             throw new ApiException(400, "정원은 0~100명 사이로 입력해 주세요.");
         }
         Document existing = requireDocument("timeSlots", slotId, "시간표를 찾을 수 없습니다.");
+        Document doctor = requireDocument("doctors", existing.getString("doctorId"), "의료진을 찾을 수 없습니다.");
+        lockRegisteredHospital(doctor.getString("hospitalId"));
         ensureFuture(existing.getDate("startAt"));
         Criteria criteria = Criteria.where("_id").is(slotId).and("startAt").gt(new Date()).and("reservedCount").lte(capacity);
         if (closed) {
@@ -412,6 +443,13 @@ public class BookingService {
         return hospital;
     }
 
+    private void lockRegisteredHospital(String id) {
+        if (mongo.updateFirst(Query.query(Criteria.where("_id").is(id).and("status").is("ACTIVE")),
+                new Update().inc("managementVersion", 1), HospitalAccountService.REGISTRATIONS).getMatchedCount() != 1) {
+            throw new ApiException(404, "메디픽에 등록된 병원을 찾을 수 없습니다.");
+        }
+    }
+
     private void requireActiveDoctor(Document doctor) {
         if (!Boolean.TRUE.equals(doctor.getBoolean("active")) || !Boolean.FALSE.equals(doctor.getBoolean("isVirtual"))) {
             throw new ApiException(409, "현재 예약을 받는 의료진이 아닙니다. 다른 의료진을 선택해 주세요.");
@@ -584,6 +622,7 @@ public class BookingService {
     }
 
     private <T> T runWithRetry(Supplier<T> operation) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) return operation.get();
         for (int attempt = 0; attempt < RETRIES; attempt++) {
             try {
                 return transaction.execute(status -> operation.get());

@@ -3,6 +3,7 @@ package kr.dmu.hospital.member;
 import com.mongodb.MongoException;
 import kr.dmu.hospital.booking.BookingService;
 import kr.dmu.hospital.auth.ContactVerificationService;
+import kr.dmu.hospital.auth.HospitalAccountService;
 import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.springframework.data.domain.Sort;
@@ -52,7 +53,8 @@ public class MemberService {
                 Criteria.where("authProvider").in("GOOGLE", "KAKAO").and("profileComplete").is(true));
         Query query = Query.query(completed).with(Sort.by(Sort.Direction.DESC, "createdAt", "_id"));
         query.fields().include("name").include("loginId").include("role").include("createdAt")
-                .include("authProvider").include("email").include("phone").include("profileComplete");
+                .include("authProvider").include("email").include("phone").include("profileComplete")
+                .include("hospitalId").include("businessNumber");
         List<Document> users = mongo.find(query, Document.class, "users");
         List<Document> result = new ArrayList<>();
         for (Document user : users) {
@@ -69,6 +71,9 @@ public class MemberService {
             if (complete && email != null && !email.isBlank()) member.append("email", email);
             String phone = user.getString("phone");
             if (complete && phone != null && !phone.isBlank()) member.append("phone", phone);
+            if ("HOSPITAL".equals(user.getString("role"))) {
+                member.append("hospitalId", user.getString("hospitalId")).append("businessNumber", user.getString("businessNumber"));
+            }
             result.add(member);
         }
         return result;
@@ -113,10 +118,11 @@ public class MemberService {
                         if (withdrawal) throw new ApiException(401, "로그인이 필요합니다.");
                         throw new ApiException(404, "회원을 찾을 수 없습니다.");
                     }
-                    if (!"USER".equals(user.getString("role"))) {
-                        if ("HOSPITAL".equals(user.getString("role"))) {
-                            throw new ApiException(403, "병원 계정은 예약과 의료진에 연결되어 있어 현재 회원 삭제 기능으로 삭제할 수 없습니다.");
-                        }
+                    boolean hospital = "HOSPITAL".equals(user.getString("role"));
+                    if (hospital && withdrawal) {
+                        throw new ApiException(403, "병원 계정은 관리자를 통해 탈퇴할 수 있습니다.");
+                    }
+                    if (!"USER".equals(user.getString("role")) && !hospital) {
                         throw new ApiException(403, withdrawal ? "관리자 계정은 탈퇴할 수 없습니다." : "관리자 계정은 삭제할 수 없습니다.");
                     }
                     if (withdrawal) {
@@ -131,16 +137,16 @@ public class MemberService {
                     // Booking mutations also write this user document, so an in-flight
                     // reservation must finish before deletion or retry after it and fail.
                     long deleted = mongo.remove(Query.query(Criteria.where("_id").is(userId)
-                            .and("role").is("USER")), "users").getDeletedCount();
+                            .and("role").is(user.getString("role"))), "users").getDeletedCount();
                     if (deleted != 1) {
                         throw new ApiException(409, "회원 정보가 변경되었습니다. 다시 확인해 주세요.");
                     }
-                    int canceled = booking.cancelMemberReservations(userId, actorId);
+                    int canceled = hospital ? deleteHospitalRegistration(user, actorId) : booking.cancelMemberReservations(userId, actorId);
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "requests");
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_login_tickets");
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_withdrawal_proofs");
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "contactVerificationProofs");
-                    return new Document("message", withdrawal ? "회원 탈퇴가 완료되었습니다." : "회원을 삭제했습니다.").append("deletedUserId", userId)
+                    return new Document("message", withdrawal ? "회원 탈퇴가 완료되었습니다." : hospital ? "병원 회원을 삭제했습니다." : "회원을 삭제했습니다.").append("deletedUserId", userId)
                             .append("canceledReservations", canceled);
                 });
             } catch (RuntimeException error) {
@@ -155,6 +161,20 @@ public class MemberService {
             }
         }
         throw new ApiException(409, "회원 정보를 확인한 뒤 다시 시도해 주세요.");
+    }
+
+    private int deleteHospitalRegistration(Document user, String adminId) {
+        String hospitalId = user.getString("hospitalId");
+        String businessNumber = user.getString("businessNumber");
+        if (hospitalId == null || businessNumber == null
+                || mongo.remove(Query.query(Criteria.where("_id").is(hospitalId).and("userId").is(user.getString("_id"))
+                        .and("businessNumber").is(businessNumber)), HospitalAccountService.REGISTRATIONS).getDeletedCount() != 1) {
+            throw new ApiException(409, "병원 가입 정보를 확인하지 못해 삭제를 취소했습니다. 다시 확인해 주세요.");
+        }
+        int canceled = booking.closeHospitalBookings(hospitalId, adminId);
+        mongo.remove(Query.query(new Criteria().orOperator(Criteria.where("businessNumber").is(businessNumber),
+                Criteria.where("hospitalId").is(hospitalId))), HospitalAccountService.VERIFICATIONS);
+        return canceled;
     }
 
     private void verifyPassword(Document user, String password) {

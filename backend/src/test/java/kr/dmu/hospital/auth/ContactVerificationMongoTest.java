@@ -17,6 +17,8 @@ import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -135,6 +137,96 @@ class ContactVerificationMongoTest {
         String proof = (String) result.get("verificationToken");
         verification.consume(proof, "SIGNUP", "PHONE", "01012345678", "", 0);
         assertThrows(ApiException.class, () -> verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token")));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"LOCAL", "GOOGLE", "KAKAO", "LEGACY"})
+    void signupSmsRevealsOnlyTheVerifiedPhoneOwnersProviderForAnonymousAndPendingSignups(String provider) {
+        Document existing = user("existing", "01012345678").append("name", "기존 이름")
+                .append("authProvider", provider.equals("LEGACY") ? null : provider).append("profileComplete", true);
+        mongo.save(existing, "users");
+        for (boolean socialSignup : List.of(false, true)) {
+            if (socialSignup) {
+                Document pending = SocialSignups.begin(mongo, "GOOGLE", "new-google-identity");
+                SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(UserPrincipal.forSignup(pending), null, List.of()));
+            }
+            var result = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token",
+                    "name", "전혀 다른 이름", "phone", "01098765432", "email", "different@example.com"));
+            assertEquals(provider.equals("LEGACY") ? "LOCAL" : provider, result.get("existingAuthProvider"));
+            assertEquals("01012345678", result.get("contact"));
+            assertEquals(4, result.size());
+            assertEquals(600, result.get("expiresIn"));
+            assertEquals(400, assertThrows(ApiException.class, () -> verification.confirmPhone(
+                    Map.of("purpose", "SIGNUP", "idToken", "refreshed-provider-token"))).getStatus());
+            UserPrincipal current = CurrentUser.optional();
+            verification.consume((String) result.get("verificationToken"), "SIGNUP", "PHONE", "01012345678",
+                    current == null ? "" : current.getId(), current == null ? 0 : current.getTokenVersion());
+            time.set(time.get().plusSeconds(1));
+        }
+    }
+
+    @Test void signupSmsIgnoresHospitalAdminPendingSocialAndUnverifiedRequestContacts() {
+        mongo.save(user("hospital", "01012345678").append("role", "HOSPITAL"), "users");
+        mongo.save(user("admin", "01012345678").append("role", "ADMIN"), "users");
+        mongo.save(user("google-pending", "01012345678").append("authProvider", "GOOGLE").append("profileComplete", false), "users");
+        mongo.save(user("kakao-pending", "01012345678").append("authProvider", "KAKAO"), "users");
+        mongo.save(user("other-member", "01098765432").append("authProvider", "KAKAO").append("profileComplete", true), "users");
+        var result = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token", "phone", "01098765432"));
+        assertEquals("01012345678", result.get("contact"));
+        assertFalse(result.containsKey("existingAuthProvider"));
+        assertEquals(3, result.size());
+    }
+
+    @Test void emailVerificationDoesNotDiscloseProviderEvenWhenTheExistingEmailMatches() {
+        mongo.save(user("person", "01012345678").append("authProvider", "KAKAO").append("profileComplete", true), "users");
+        var sent = verification.sendEmail(Map.of("purpose", "SIGNUP", "email", "person@example.com"), "127.0.0.1");
+        assertFalse(sent.containsKey("existingAuthProvider"));
+        var confirmed = verification.confirmEmail(Map.of("challengeId", sent.get("challengeId"), "code", emailCode.get()));
+        assertFalse(confirmed.containsKey("existingAuthProvider"));
+        assertEquals(3, confirmed.size());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"PASSWORD_CHANGE", "WITHDRAWAL", "PASSWORD_RESET"})
+    void nonSignupSmsDoesNotDiscloseProvider(String purpose) {
+        Document account = user("person", "01012345678");
+        if (!purpose.equals("PASSWORD_RESET")) login(account);
+        var confirmed = verification.confirmPhone(Map.of("purpose", purpose, "idToken", "provider-token", "loginId", "person"));
+        assertFalse(confirmed.containsKey("existingAuthProvider"));
+        assertEquals(3, confirmed.size());
+        verification.consume((String) confirmed.get("verificationToken"), purpose, "PHONE", "01012345678", "person", 0);
+    }
+
+    @Test void invalidFirebaseAuthenticationCannotDiscloseProviderOrConsumeTheValidAuthentication() {
+        user("existing", "01012345678");
+        when(phones.verify("invalid-provider-token")).thenThrow(new ApiException(400, "Invalid phone authentication"));
+        assertEquals(400, assertThrows(ApiException.class, () -> verification.confirmPhone(
+                Map.of("purpose", "SIGNUP", "idToken", "invalid-provider-token", "phone", "01012345678"))).getStatus());
+        assertEquals(0, mongo.getCollection(ContactVerificationService.PHONE_RECEIPTS).countDocuments());
+        assertEquals(0, mongo.getCollection(ContactVerificationService.PROOFS).countDocuments());
+        var confirmed = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
+        assertEquals("LOCAL", confirmed.get("existingAuthProvider"));
+        assertEquals(1, mongo.getCollection(ContactVerificationService.PHONE_RECEIPTS).countDocuments());
+        assertEquals(1, mongo.getCollection(ContactVerificationService.PROOFS).countDocuments());
+    }
+
+    @Test void simultaneousSignupSmsConfirmsCreateOnlyOneProviderResponseAndProof() throws Exception {
+        user("existing", "01012345678");
+        var ready = new CyclicBarrier(2);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var calls = List.of(pool.submit(() -> confirmPhoneAtOnce(ready)), pool.submit(() -> confirmPhoneAtOnce(ready)));
+            var results = List.of(calls.get(0).get(10, TimeUnit.SECONDS), calls.get(1).get(10, TimeUnit.SECONDS));
+            assertEquals(1, results.stream().filter(Boolean::booleanValue).count());
+        }
+        assertEquals(1, mongo.getCollection(ContactVerificationService.PHONE_RECEIPTS).countDocuments());
+        assertEquals(1, mongo.getCollection(ContactVerificationService.PROOFS).countDocuments());
+    }
+
+    private boolean confirmPhoneAtOnce(CyclicBarrier ready) throws Exception {
+        ready.await(5, TimeUnit.SECONDS);
+        try {
+            var result = verification.confirmPhone(Map.of("purpose", "SIGNUP", "idToken", "provider-token"));
+            assertEquals("LOCAL", result.get("existingAuthProvider"));
+            return true;
+        } catch (ApiException expected) { assertEquals(400, expected.getStatus()); return false; }
     }
 
     @Test void registeredPhoneAndResetLoginIdMustMatchTheVerifiedPhone() {

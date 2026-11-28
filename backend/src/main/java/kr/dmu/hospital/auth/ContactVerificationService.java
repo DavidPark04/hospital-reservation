@@ -6,6 +6,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -129,7 +130,21 @@ public class ContactVerificationService {
             return inTransaction(() -> {
                 String receipt = SocialLoginTickets.hash(identity.subject() + ":" + identity.authenticatedAt().getEpochSecond());
                 mongo.insert(new Document("_id", receipt).append("expiresAt", Date.from(clock.instant().plusSeconds(900))), PHONE_RECEIPTS);
-                return proof(purpose, "PHONE", identity.phone(), actor);
+                Map<String, Object> result = new LinkedHashMap<>(proof(purpose, "PHONE", identity.phone(), actor));
+                if ("SIGNUP".equals(purpose)) {
+                    Criteria completed = new Criteria().orOperator(Criteria.where("authProvider").is(null),
+                            Criteria.where("authProvider").is("LOCAL"),
+                            Criteria.where("authProvider").in("GOOGLE", "KAKAO").and("profileComplete").is(true));
+                    Query account = Query.query(new Criteria().andOperator(Criteria.where("role").is("USER"),
+                            Criteria.where("phone").is(identity.phone()), completed));
+                    account.fields().include("authProvider");
+                    Document existing = mongo.findOne(account, Document.class, "users");
+                    if (existing != null) {
+                        String provider = existing.getString("authProvider");
+                        result.put("existingAuthProvider", provider == null ? "LOCAL" : provider);
+                    }
+                }
+                return result;
             });
         } catch (DuplicateKeyException error) {
             throw new ApiException(400, "이미 사용한 문자 인증이에요. 인증번호를 다시 받아 인증해 주세요.");
