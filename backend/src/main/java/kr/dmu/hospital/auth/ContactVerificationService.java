@@ -135,7 +135,7 @@ public class ContactVerificationService {
                     Criteria completed = new Criteria().orOperator(Criteria.where("authProvider").is(null),
                             Criteria.where("authProvider").is("LOCAL"),
                             Criteria.where("authProvider").in("GOOGLE", "KAKAO").and("profileComplete").is(true));
-                    Query account = Query.query(new Criteria().andOperator(Criteria.where("role").is("USER"),
+                    Query account = Query.query(new Criteria().andOperator(Criteria.where("role").is("USER").and("testUser").ne(true),
                             Criteria.where("phone").is(identity.phone()), completed));
                     account.fields().include("authProvider");
                     Document existing = mongo.findOne(account, Document.class, "users");
@@ -153,6 +153,7 @@ public class ContactVerificationService {
 
     /** Call inside the transaction that changes the member so failed changes retain their proofs. */
     public void consume(String token, String purpose, String channel, String contact, String userId, int tokenVersion) {
+        if (userId != null && !userId.isBlank()) requireRealMember(mongo.findById(userId, Document.class, "users"));
         if (!validToken(token)) throw verificationRequired();
         Query query = Query.query(Criteria.where("_id").is(SocialLoginTickets.hash(token)).and("purpose").is(purpose)
                 .and("channel").is(channel).and("contact").is(contact).and("userId").is(userId)
@@ -173,6 +174,7 @@ public class ContactVerificationService {
             if (user == null || (user.getString("authProvider") != null && !"LOCAL".equals(user.getString("authProvider")))) {
                 throw new ApiException(400, "아이디와 인증한 휴대전화 정보를 확인해 주세요.");
             }
+            requireRealMember(user);
             return new Actor(user.getString("_id"), user.getInteger("tokenVersion", 0));
         }
         if (current == null) throw new ApiException(401, "로그인이 필요합니다.");
@@ -181,11 +183,18 @@ public class ContactVerificationService {
         if (user == null || user.getInteger("tokenVersion", 0) != current.getTokenVersion()) {
             throw new ApiException(401, "로그인 정보가 변경됐어요. 다시 로그인해 주세요.");
         }
+        requireRealMember(user);
         if ("PHONE".equals(channel) && !contact.equals(user.getString("phone"))) {
             throw new ApiException(400, "회원정보에 등록된 휴대전화로 인증해 주세요.");
         }
         if (purpose.equals("PASSWORD_CHANGE") && !"LOCAL".equals(current.getAuthProvider())) throw invalidPurpose();
         return new Actor(current.getId(), current.getTokenVersion());
+    }
+
+    private static void requireRealMember(Document user) {
+        if (user != null && Boolean.TRUE.equals(user.getBoolean("testUser"))) {
+            throw new ApiException(403, "임시 회원은 연락처 인증과 계정 정보 변경을 사용할 수 없어요. 계정 관리는 관리자에게 문의해 주세요.");
+        }
     }
 
     private Map<String, Object> proof(String purpose, String channel, String contact, Actor actor) {

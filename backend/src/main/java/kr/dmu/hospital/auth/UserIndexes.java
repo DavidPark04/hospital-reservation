@@ -145,6 +145,14 @@ public class UserIndexes implements ApplicationRunner {
             // Hospital phone numbers are official facility contact fields, not personal identity claims.
             if ("HOSPITAL".equals(user.getString("role"))) continue;
             Document contact = new Document("_id", user.getString("_id"));
+            // Only the trusted data seeder can set this flag; placeholder contacts claim no identity.
+            if (Boolean.TRUE.equals(user.getBoolean("testUser"))) {
+                if (!Boolean.FALSE.equals(user.getBoolean("memberIdentityClaimed"))
+                        || !Boolean.FALSE.equals(user.getBoolean("emailVerified")) || !Boolean.FALSE.equals(user.getBoolean("phoneVerified"))) {
+                    contacts.add(contact.append("testUser", true));
+                }
+                continue;
+            }
             if (MemberIdentity.complete(user)) {
                 Object rawPhone = user.get("phone");
                 if (rawPhone != null && !(rawPhone instanceof String)) throw invalidExistingContact();
@@ -178,6 +186,11 @@ public class UserIndexes implements ApplicationRunner {
         try {
             for (Document contact : contacts) {
                 Update update = new Update();
+                if (Boolean.TRUE.equals(contact.getBoolean("testUser"))) {
+                    mongo.updateFirst(Query.query(Criteria.where("_id").is(contact.getString("_id"))),
+                            update.set("memberIdentityClaimed", false).set("emailVerified", false).set("phoneVerified", false), "users");
+                    continue;
+                }
                 if (contact.containsKey("phone")) update.set("phone", contact.getString("phone"));
                 else if (Boolean.TRUE.equals(contact.getBoolean("clearBlankPhone"))) update.unset("phone");
                 if (contact.containsKey("emailNormalized")) update.set("emailNormalized", contact.getString("emailNormalized"));

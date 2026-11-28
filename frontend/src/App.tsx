@@ -23,7 +23,7 @@ import './chatRecommendations.css';
 import {formatPhone} from './phoneFormatting';
 import { loginMethod, SocialLoginButtons, SocialLoginCallback, socialErrorMessage } from './SocialLogin';
 import SocialProfile, { needsSocialProfile } from './SocialProfile';
-import type { AuthProvider, AuthResult, ChatLocation, ChatRequest, ChatResult, DeleteMemberResult, Doctor, Hospital, HospitalResult, Member, Message, Meta, Reservation, Slot, User } from './api';
+import type { AuthProvider, AuthResult, ChatLocation, ChatRequest, ChatResult, DeleteMemberResult, Doctor, Hospital, HospitalResult, Member, MemberPage, Message, Meta, Reservation, Slot, User } from './api';
 
 function currentRoute(){
   const hashRoute=window.location.hash.slice(1);
@@ -464,15 +464,37 @@ function MembershipWithdrawal({user,returnCode,onReturnHandled,onSuccess}:{user:
 function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolean;login:()=>void;notify:(message:string)=>void}){
   const queryClient=useQueryClient();
   const [memberType,setMemberType]=useState<'personal'|'hospital'>('personal');
+  const [searchInput,setSearchInput]=useState('');
+  const [search,setSearch]=useState('');
+  const [page,setPage]=useState(1);
   const [deleteTarget,setDeleteTarget]=useState<Member|null>(null);
-  const members=useQuery({queryKey:['admin-members',user?.id],queryFn:()=>api<{items:Member[]}>('/admin/members'),enabled:ready&&user?.role==='ADMIN'});
+  const members=useQuery({
+    queryKey:['admin-members',user?.id,memberType,search,page],
+    queryFn:({signal})=>api<MemberPage>(`/admin/members?${queryString({type:memberType,q:search,page:String(page),pageSize:'50'})}`,{signal}),
+    enabled:ready&&user?.role==='ADMIN'
+  });
+  useEffect(()=>{if(members.data&&members.data.page!==page)setPage(members.data.page);},[members.data,page]);
+  function selectType(type:'personal'|'hospital'){
+    if(type===memberType)return;
+    setMemberType(type);setSearchInput('');setSearch('');setPage(1);
+  }
+  function resetSearch(){setSearchInput('');setSearch('');setPage(1);}
+  function submitSearch(event:FormEvent){
+    event.preventDefault();
+    const next=searchInput.trim();
+    setSearchInput(next);setSearch(next);setPage(1);
+    if(next===search&&page===1)members.refetch();
+  }
   const remove=useMutation({
     mutationFn:(member:Member)=>{
       if(user?.role!=='ADMIN'||member.id===user.id||!['USER','HOSPITAL'].includes(member.role))throw new Error('본인과 관리자 계정은 삭제할 수 없어요.');
       return api<DeleteMemberResult>(`/admin/members/${encodeURIComponent(member.id)}`,{method:'DELETE'});
     },
     onSuccess:result=>{
-      queryClient.setQueryData<{items:Member[]}>(['admin-members',user?.id],current=>current?{items:current.items.filter(member=>member.id!==result.deletedUserId)}:current);
+      queryClient.setQueryData<MemberPage>(['admin-members',user?.id,memberType,search,page],current=>current?{
+        ...current,items:current.items.filter(member=>member.id!==result.deletedUserId),total:Math.max(0,current.total-1)
+      }:current);
+      if(page>1&&members.data?.items.length===1)setPage(page-1);
       queryClient.invalidateQueries({queryKey:['admin-members']});
       queryClient.invalidateQueries({queryKey:['reservations']});
       queryClient.invalidateQueries({queryKey:['slots']});
@@ -485,10 +507,12 @@ function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolea
       notify(result.canceledReservations>0?`회원을 삭제하고 진행 중인 예약 ${result.canceledReservations}건을 취소했어요.`:result.message);
     }
   });
-  const personalMembers=members.data?.items.filter(member=>member.role!=='HOSPITAL')||[];
-  const hospitalMembers=members.data?.items.filter(member=>member.role==='HOSPITAL')||[];
   const hospitalTab=memberType==='hospital';
-  const visibleMembers=hospitalTab?hospitalMembers:personalMembers;
+  const visibleMembers=members.data?.items||[];
+  const resultPage=members.data?.page||page;
+  const pageSize=members.data?.pageSize||50;
+  const total=members.data?.total||0;
+  const totalPages=Math.max(1,Math.ceil(total/pageSize));
   if(!ready)return <div className="page-wrap"><Loading text="관리자 권한을 확인하고 있어요"/></div>;
   if(!user)return <EmptyPage icon={<ShieldCheck/>} title="관리자 로그인이 필요해요" body="관리자 계정으로 개인 회원과 병원 회원을 관리할 수 있어요." action="로그인하기" onAction={login}/>;
   if(user.role!=='ADMIN')return <EmptyPage icon={<ShieldCheck/>} title="관리자 전용 메뉴예요" body="내 회원 정보는 마이페이지에서 확인해 주세요." action="마이페이지로" onAction={()=>go('/mypage')}/>;
@@ -498,17 +522,28 @@ function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolea
       if(remove.isPending||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
       event.preventDefault();
       const next=event.key==='Home'?'personal':event.key==='End'?'hospital':hospitalTab?'personal':'hospital';
-      setMemberType(next);document.getElementById('member-tab-'+next)?.focus();
+      selectType(next);document.getElementById('member-tab-'+next)?.focus();
     }}>
       {(['personal','hospital'] as const).map(type=><button id={'member-tab-'+type} key={type} role="tab" type="button" className={memberType===type?'selected':''}
-        aria-selected={memberType===type} aria-controls="member-list-panel" tabIndex={memberType===type?0:-1} disabled={remove.isPending} onClick={()=>setMemberType(type)}>
-        {type==='personal'?'개인 회원':'병원 회원'}{members.data&&<span>{type==='personal'?personalMembers.length:hospitalMembers.length}</span>}
+        aria-selected={memberType===type} aria-controls="member-list-panel" tabIndex={memberType===type?0:-1} disabled={remove.isPending} onClick={()=>selectType(type)}>
+        {type==='personal'?'개인 회원':'병원 회원'}{members.data&&<span>{(type==='personal'?members.data.personalCount:members.data.hospitalCount).toLocaleString()}</span>}
       </button>)}
     </div>
     <section id="member-list-panel" className="panel members-panel" role="tabpanel" aria-labelledby={'member-tab-'+memberType} tabIndex={0}>
-      <div className="section-heading"><div><h2 id="member-list-title">{hospitalTab?'병원 회원':'개인 회원'} {members.data&&<span className="member-count">{visibleMembers.length}{hospitalTab?'곳':'명'}</span>}</h2><p>{hospitalTab?'사업자등록번호로 가입한 병원 계정을 관리해요.':'본인과 관리자 계정은 삭제할 수 없어요.'}</p></div><button className="button secondary small" onClick={()=>members.refetch()} disabled={members.isFetching}><RefreshCw size={16} className={members.isFetching?'spin':''}/>새로고침</button></div>
+      <div className="section-heading"><div><h2 id="member-list-title">{hospitalTab?'병원 회원':'개인 회원'} {members.data&&<span className="member-count">{search?'검색 결과 ':''}{total.toLocaleString()}{hospitalTab?'곳':'명'}</span>}</h2><p>{hospitalTab?'사업자등록번호로 가입한 병원 계정을 관리해요.':'본인과 관리자 계정은 삭제할 수 없어요.'}</p></div><button className="button secondary small" onClick={()=>members.refetch()} disabled={members.isFetching||remove.isPending}><RefreshCw size={16} className={members.isFetching?'spin':''}/>새로고침</button></div>
+      <form className="member-search" role="search" aria-label={hospitalTab?'병원 회원 검색':'개인 회원 검색'} onSubmit={submitSearch}>
+        <label className="field" htmlFor="member-search-input">{hospitalTab?'사업자등록번호':'이름 또는 연락처'}
+          <input id="member-search-input" type="search" value={searchInput} maxLength={100} autoComplete="off" inputMode={hospitalTab?'tel':'text'}
+            placeholder={hospitalTab?'예: 110-82-00472':'이름 또는 연락처를 입력해 주세요'} aria-describedby="member-search-help"
+            disabled={remove.isPending} onChange={event=>setSearchInput(event.target.value)}/>
+        </label>
+        <div className="member-search-actions"><button className="button primary" type="submit" disabled={remove.isPending}><Search size={17}/>검색</button>
+          <button className="button secondary" type="button" onClick={resetSearch} disabled={remove.isPending||(!searchInput&&!search)}>초기화</button></div>
+        <p id="member-search-help">{hospitalTab?'사업자등록번호의 일부로도 검색할 수 있어요.':'이름이나 연락처의 일부로도 검색할 수 있어요.'} 번호는 하이픈 없이 입력해도 돼요.</p>
+      </form>
+      <p className="member-result-status" role="status">{members.isFetching?'회원목록을 조회하고 있어요.':members.data?`${search?'검색 결과':'전체'} ${total.toLocaleString()}${hospitalTab?'곳':'명'}${total?` · ${(resultPage-1)*pageSize+1}–${Math.min(resultPage*pageSize,total)}${hospitalTab?'번째 병원':'번째 회원'} 표시`:''}`:''}</p>
       {members.isLoading?<Loading text="회원목록을 불러오고 있어요"/>:members.isError?<ErrorState error={members.error} retry={()=>members.refetch()}/>:visibleMembers.length?<div className="member-table-wrap"><table className="member-table"><thead><tr><th scope="col">{hospitalTab?'병원명':'이름'}</th><th scope="col">{hospitalTab?'사업자등록번호':'아이디'}</th>{!hospitalTab&&<><th scope="col">로그인 방식</th><th scope="col">이메일</th></>}<th scope="col">전화번호</th>{!hospitalTab&&<th scope="col">회원 구분</th>}<th scope="col">가입일</th><th scope="col">관리</th></tr></thead><tbody>{visibleMembers.map(member=><tr key={member.id}>
-        <td data-label={hospitalTab?'병원명':'이름'}><strong>{member.name}</strong>{member.id===user.id&&<span className="self-badge">본인</span>}</td>
+        <td data-label={hospitalTab?'병원명':'이름'}><strong>{member.name}</strong>{member.id===user.id&&<span className="self-badge">본인</span>}{member.testUser&&<span className="test-member-badge">임시 회원</span>}</td>
         <td data-label={hospitalTab?'사업자등록번호':'아이디'}>{hospitalTab?formatBusinessNumber(member.businessNumber||''):member.loginId}</td>
         {!hospitalTab&&<><td data-label="로그인 방식"><span className={`login-method ${(member.authProvider||'LOCAL').toLowerCase()}`}>{loginMethod(member.authProvider)}</span></td>
         <td data-label="이메일">{member.email||<span className="muted">등록하지 않음</span>}</td></>}
@@ -516,7 +551,12 @@ function AdminMembersPage({user,ready,login,notify}:{user:User|null;ready:boolea
         {!hospitalTab&&<td data-label="회원 구분">{member.role==='ADMIN'?'관리자':'일반 회원'}</td>}
         <td data-label="가입일">{member.createdAt?<time dateTime={member.createdAt}>{fetchedLabel(member.createdAt)}</time>:'확인 불가'}</td>
         <td data-label="관리">{['USER','HOSPITAL'].includes(member.role)&&member.id!==user.id?<button className="button quiet small" aria-label={`${member.name} (${hospitalTab?formatBusinessNumber(member.businessNumber||''):member.loginId}) 회원 삭제`} onClick={()=>{remove.reset();setDeleteTarget(member);}} disabled={remove.isPending}>회원 삭제</button>:<span className="protected-member"><ShieldCheck size={14}/>삭제 불가</span>}</td>
-      </tr>)}</tbody></table></div>:<div className="empty-inline">{hospitalTab?<Building2 size={35}/>:<UserRound size={35}/>}<h3>{hospitalTab?'등록된 병원 회원이 없어요':'등록된 개인 회원이 없어요'}</h3><p>{hospitalTab?'병원이 가입하면 이곳에 표시돼요.':'새 회원이 가입하면 이곳에 표시돼요.'}</p></div>}
+      </tr>)}</tbody></table></div>:<div className="empty-inline">{search?<Search size={35}/>:hospitalTab?<Building2 size={35}/>:<UserRound size={35}/>}<h3>{search?'검색된 회원이 없어요':hospitalTab?'등록된 병원 회원이 없어요':'등록된 개인 회원이 없어요'}</h3><p>{search?'검색어를 확인하거나 초기화해 전체 회원을 확인해 주세요.':hospitalTab?'병원이 가입하면 이곳에 표시돼요.':'새 회원이 가입하면 이곳에 표시돼요.'}</p></div>}
+      {members.data&&!members.isError&&total>0&&<nav className="member-pagination" aria-label="회원 목록 페이지">
+        <button className="button secondary small" type="button" disabled={resultPage<=1||members.isFetching||remove.isPending} onClick={()=>setPage(resultPage-1)}><ChevronLeft size={17}/>이전</button>
+        <span aria-current="page">{resultPage.toLocaleString()} / {totalPages.toLocaleString()} 페이지</span>
+        <button className="button secondary small" type="button" disabled={resultPage>=totalPages||members.isFetching||remove.isPending} onClick={()=>setPage(resultPage+1)}>다음<ChevronRight size={17}/></button>
+      </nav>}
     </section>
     {deleteTarget&&<Dialog title={deleteTarget.role==='HOSPITAL'?'병원 회원을 탈퇴 처리할까요?':'회원 계정을 삭제할까요?'} close={()=>{if(!remove.isPending)setDeleteTarget(null);}}>
       <p className="dialog-copy"><strong>{deleteTarget.name}</strong> · {deleteTarget.role==='HOSPITAL'?`사업자등록번호 ${formatBusinessNumber(deleteTarget.businessNumber||'')}`:`아이디 ${deleteTarget.loginId}`}</p>
