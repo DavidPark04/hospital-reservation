@@ -9,9 +9,9 @@ import type {PhoneChallenge} from './firebasePhone';
 import useVerificationCountdown from './useVerificationCountdown';
 import './contactVerification.css';
 
-type Props={purpose:PhonePurpose;phone:string;loginId?:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;onExistingAccount?:(provider:AuthProvider|undefined)=>void};
+type Props={purpose:PhonePurpose;phone:string;loginId?:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;onExistingAccount?:(provider:AuthProvider|undefined)=>void;compact?:boolean};
 
-export default function PhoneVerification({purpose,phone,loginId='',onVerified,disabled=false,onBusy,onExistingAccount}:Props){
+export default function PhoneVerification({purpose,phone,loginId='',onVerified,disabled=false,onBusy,onExistingAccount,compact=false}:Props){
   const inputId=useId();
   const contact=canonicalPhone(phone);
   const account=loginId.trim().toLowerCase();
@@ -85,8 +85,9 @@ export default function PhoneVerification({purpose,phone,loginId='',onVerified,d
   }
   return <div className="contact-verification" aria-label="문자 인증">
     {verified?<p className="contact-verified" role="status"><CheckCircle2 size={16}/>휴대전화 인증 완료</p>:<>
-      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}>
-        {stage==='sending'&&<LoaderCircle size={16} className="spin"/>}{stage==='sent'?'인증번호 다시 받기':'문자 인증번호 받기'}{retrySeconds>0?` (${retrySeconds}초)`:''}
+      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}
+        aria-label={compact ? (stage==='sent'?'문자 인증번호 다시 받기':'문자 인증 요청') : undefined}>
+        {stage==='sending'&&<LoaderCircle size={16} className="spin"/>}{compact ? (stage==='sent'?'다시 받기':'인증 요청') : (stage==='sent'?'인증번호 다시 받기':'문자 인증번호 받기')}{retrySeconds>0?` (${retrySeconds}초)`:''}
       </button>
       <p className="verification-help">문자 인증을 요청하면 전화번호가 Google에 전달돼요.</p>
       {stage==='sending'&&<><p className="verification-help" role="status">자동입력 방지 확인을 완료해 주세요.</p><button className="text-button" type="button" onClick={cancel}>인증 요청 취소</button></>}

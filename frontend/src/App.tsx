@@ -10,6 +10,8 @@ import {HOME_HOSPITAL_FILTERS} from './medipick/flow';
 import HospitalLocation from './HospitalLocation';
 import PhoneInput from './PhoneInput';
 import PasswordChange from './PasswordChange';
+import SignupPasswordFields from './SignupPasswordFields';
+import SignupSteps from './SignupSteps';
 import EmailChange from './EmailChange';
 import PhoneVerification from './PhoneVerification';
 import HospitalAuthForm, {formatBusinessNumber} from './HospitalAuthForm';
@@ -62,7 +64,10 @@ export default function App(){
   const queryClient = useQueryClient();
   const [user,setUser]=useState<User|null>(null);
   const [authReady,setAuthReady]=useState(!getToken()||currentRoute()==='/auth/social/callback');
-  const [authMode,setAuthMode]=useState<'login'|'register'|null>(()=>window.location.pathname==='/login'?'login':null);
+  const [authMode,setAuthMode]=useState<'login'|'register'|null>(()=>{
+    if(window.location.pathname!=='/login')return null;
+    return new URLSearchParams(window.location.search).get('mode')==='register'?'register':'login';
+  });
   const [preferredLogin,setPreferredLogin]=useState<AuthProvider|undefined>();
   const [socialError,setSocialError]=useState(()=>{const code=new URLSearchParams(window.location.search).get('socialError');return code?socialErrorMessage(code):'';});
   const [mobileMenu,setMobileMenu]=useState(false);
@@ -582,57 +587,174 @@ function AdminPage({user,login,notify}:{user:User|null;login:()=>void;notify:(me
   return <div className="page-wrap admin-page"><div className="page-heading compact-heading"><div><span className="eyebrow">SCHEDULE MANAGEMENT</span><h1>진료 일정 관리</h1><p>등록된 의료진의 시간표, 예약 정원, 휴진 여부를 관리해요.</p></div><span className="admin-badge"><ShieldCheck size={17}/>관리자</span></div><div className="admin-filters panel"><label className="field">병원<select value={hospitalId} onChange={e=>{setHospitalId(e.target.value);setDoctorId('');}}><option value="">병원 선택</option>{hospitals.data?.items.map(h=><option value={h.id} key={h.id}>{h.name}</option>)}</select></label><label className="field">진료과<select value={department} onChange={e=>{setDepartment(e.target.value);setDoctorId('');}}>{DEPARTMENTS.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</select></label><label className="field">의료진<select value={doctorId} disabled={!hospitalId} onChange={e=>setDoctorId(e.target.value)}><option value="">의료진 선택</option>{doctors.data?.items.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label className="field">날짜<input type="date" value={date} min={today()} max={today(90)} onChange={e=>setDate(e.target.value)}/></label></div>{(hospitals.isError||doctors.isError)&&<ErrorState error={hospitals.error||doctors.error}/>}<section className="panel admin-schedule"><div className="section-heading"><div><h2>{dateLabel(`${date}T12:00:00+09:00`)} 진료 일정</h2><p>시간대를 선택하면 정원과 휴진 여부를 수정할 수 있어요.</p></div><button className="button primary small" disabled={!doctorId} onClick={()=>{create.reset();setGenerate(true);}}><Plus size={17}/>시간표 생성</button></div>{!doctorId?<div className="empty-inline"><CalendarDays size={35}/><h3>병원과 의료진을 선택해 주세요</h3><p>선택한 의료진의 진료 시간표가 표시됩니다.</p></div>:slots.isLoading?<Loading/>:slots.isError?<ErrorState error={slots.error} retry={()=>slots.refetch()}/>:<><div className="schedule-legend"><span><i className="legend-open"/>예약 가능</span><span><i className="legend-full"/>정원 마감</span><span><i className="legend-closed"/>휴진</span></div><div className="admin-slots">{slots.data?.items.map(s=><button key={s.id} className={`admin-slot ${s.closed?'closed':s.remaining<=0?'full':''}`} onClick={()=>{update.reset();setEditing(s);setCapacity(s.capacity);setClosed(s.closed);}}><span>{timeLabel(s.startAt)}</span><strong>{s.closed?'휴진':`${s.reservedCount} / ${s.capacity}`}</strong><small>{s.closed?'예약 불가':`잔여 ${s.remaining}명`}</small><Settings2 size={15}/></button>)}</div>{slots.data?.items.length===0&&<div className="empty-inline">등록된 시간이 없어요. 시간표를 생성해 주세요.</div>}</>}</section><Notice>기존 예약 수보다 정원을 줄일 수 없으며, 예약이 있는 시간은 휴진으로 변경할 수 없어요.</Notice>{editing&&<Dialog title={`${timeLabel(editing.startAt)} 일정 수정`} close={()=>{if(!update.isPending)setEditing(null);}}><p className="dialog-copy">현재 예약 {editing.reservedCount}명 / 정원 {editing.capacity}명</p><label className="field">총 정원<input type="number" min={Math.max(1,editing.reservedCount)} max={100} value={capacity} onChange={e=>setCapacity(Number(e.target.value))}/></label><label className="check-label"><input type="checkbox" checked={closed} onChange={e=>setClosed(e.target.checked)}/><span>이 시간대를 휴진으로 설정</span></label>{update.isError&&<Notice tone="error">{update.error.message}</Notice>}<div className="dialog-actions"><button className="button secondary" onClick={()=>setEditing(null)} disabled={update.isPending}>닫기</button><button className="button primary" onClick={()=>update.mutate()} disabled={update.isPending||!Number.isFinite(capacity)||capacity<1||capacity>100}>{update.isPending?'저장 중':'변경 저장'}</button></div></Dialog>}{generate&&<Dialog title="진료 시간표 생성" close={()=>{if(!create.isPending)setGenerate(false);}}><p className="dialog-copy">{doctors.data?.items.find(d=>d.id===doctorId)?.name} · {dateLabel(`${date}T12:00:00+09:00`)}</p><div className="form-grid"><label className="field">시작 시간<input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)}/></label><label className="field">종료 시간<input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)}/></label><label className="field">시간 간격<select value={interval} onChange={e=>setInterval(Number(e.target.value))}><option value={15}>15분</option><option value={30}>30분</option><option value={60}>60분</option></select></label><label className="field">시간당 정원<input type="number" min={1} max={100} value={newCapacity} onChange={e=>setNewCapacity(Number(e.target.value))}/></label></div><p className="muted">이미 등록된 시간과 중복되는 경우 서버의 처리 결과를 안내해요.</p>{create.isError&&<Notice tone="error">{create.error.message}</Notice>}<div className="dialog-actions"><button className="button secondary" onClick={()=>setGenerate(false)} disabled={create.isPending}>닫기</button><button className="button primary" onClick={()=>create.mutate()} disabled={create.isPending||startTime>=endTime||newCapacity<1||newCapacity>100}>{create.isPending?'생성 중':'시간표 생성'}</button></div></Dialog>}</div>;
 }
 
-function Dialog({title,children,close}:{title:string;children:ReactNode;close:()=>void}){
+function Dialog({title,children,close,className='',headingBrand}:{title:string;children:ReactNode;close:()=>void;className?:string;headingBrand?:ReactNode}){
   const panel=useRef<HTMLDivElement>(null);
+  const previousView=useRef(className);
+  useLayoutEffect(()=>{
+    if(previousView.current!==className&&panel.current){
+      panel.current.scrollTop=0;
+      panel.current.focus({preventScroll:true});
+    }
+    previousView.current=className;
+  },[className]);
   const closeRef=useRef(close);closeRef.current=close;
   useEffect(()=>{const previous=document.activeElement as HTMLElement|null;const old=document.body.style.overflow;document.body.style.overflow='hidden';panel.current?.focus();function key(e:KeyboardEvent){if(e.key==='Escape')closeRef.current();if(e.key==='Tab'){const nodes=panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]');if(!nodes?.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===panel.current)){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}}document.addEventListener('keydown',key);return()=>{document.body.style.overflow=old;document.removeEventListener('keydown',key);previous?.focus();};},[]);
-  return <div className="dialog-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><div className="dialog" ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="dialog-heading"><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="창 닫기" onClick={close}><X size={22}/></button></div>{children}</div></div>;
+  return <div className="dialog-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><div className={'dialog '+className} ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="dialog-heading">{headingBrand?<div>{headingBrand}<h2 id="dialog-title">{title}</h2></div>:<h2 id="dialog-title">{title}</h2>}<button className="icon-button" aria-label="창 닫기" onClick={close}><X size={22}/></button></div>{children}</div></div>;
 }
 function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,initialPreferredProvider}:{mode:'login'|'register';setMode:(mode:'login'|'register')=>void;close:()=>void;onSuccess:(result:AuthResult)=>void;beforeSocialLogin:()=>void;socialError:string;initialPreferredProvider?:AuthProvider}){
   const [accountType,setAccountType]=useState<'personal'|'hospital'>('personal');
   const [hospitalBusy,setHospitalBusy]=useState(false);
-  const [emailToken,setEmailToken]=useState('');const [phoneToken,setPhoneToken]=useState('');
+  const [emailToken,setEmailToken]=useState('');
+  const [phoneToken,setPhoneToken]=useState('');
   const [existingProvider,setExistingProvider]=useState<AuthProvider>();
-  const [emailBusy,setEmailBusy]=useState(false);const [phoneBusy,setPhoneBusy]=useState(false);
-  const [recovery,setRecovery]=useState(false);const [recoveryBusy,setRecoveryBusy]=useState(false);
-  const [name,setName]=useState('');const [loginId,setLoginId]=useState('');const [password,setPassword]=useState('');const [email,setEmail]=useState('');const [phone,setPhone]=useState('');const [validationError,setValidationError]=useState('');
-  const mutation=useMutation({mutationFn:()=>api<AuthResult>(`/auth/${mode}`,{method:'POST',body:JSON.stringify(mode==='login'?{loginId:loginId.trim(),password}:{name,loginId:loginId.trim(),password,email:email.trim(),phone:normalizePhone(phone),emailVerificationToken:emailToken,phoneVerificationToken:phoneToken})}),onSuccess});
-  const busy=mutation.isPending||hospitalBusy||emailBusy||phoneBusy||recoveryBusy;
   const [preferredProvider,setPreferredProvider]=useState(initialPreferredProvider);
-  function existingLogin(){if(!existingProvider||busy)return;setPreferredProvider(existingProvider);setMode('login');mutation.reset();setPassword('');setValidationError('');setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}
-  function submit(e:FormEvent){
-    e.preventDefault();if(busy)return;
-    if(mode==='register'&&(!email.trim()||email.trim().length>254)){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}
-    if(mode==='register'&&!validMobilePhone(phone)){setValidationError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
-    if(mode==='register'&&(!emailToken||!phoneToken)){setValidationError('이메일 인증과 휴대전화 인증을 완료해 주세요.');return;}
-    if(mode==='register'&&existingProvider)return;
+  const [emailBusy,setEmailBusy]=useState(false);
+  const [phoneBusy,setPhoneBusy]=useState(false);
+  const [recovery,setRecovery]=useState(false);
+  const [recoveryBusy,setRecoveryBusy]=useState(false);
+  const [name,setName]=useState('');
+  const [loginId,setLoginId]=useState('');
+  const [password,setPassword]=useState('');
+  const [passwordConfirmation,setPasswordConfirmation]=useState('');
+  const [signupStep,setSignupStep]=useState<1|2>(1);
+  const [email,setEmail]=useState('');
+  const [phone,setPhone]=useState('');
+  const [validationError,setValidationError]=useState('');
+  const registering=mode==='register';
+  const passwordsMatch=passwordConfirmation.length>0 && password===passwordConfirmation;
+  const contactsReady=Boolean(name.trim() && phoneToken && emailToken && !existingProvider);
+  const mutation=useMutation({
+    mutationFn:()=>api<AuthResult>('/auth/'+mode,{method:'POST',body:JSON.stringify(registering
+      ? {name,loginId:loginId.trim(),password,email:email.trim(),phone:normalizePhone(phone),emailVerificationToken:emailToken,phoneVerificationToken:phoneToken}
+      : {loginId:loginId.trim(),password})}),
+    onSuccess
+  });
+  const busy=mutation.isPending||hospitalBusy||emailBusy||phoneBusy||recoveryBusy;
+
+  function resetCredentials(){
+    setSignupStep(1);
+    mutation.reset();setValidationError('');setPassword('');setPasswordConfirmation('');
+    setEmailToken('');setPhoneToken('');setExistingProvider(undefined);
+  }
+  function selectAccount(type:'personal'|'hospital'){
+    if(busy||type===accountType)return;
+    setAccountType(type);setRecovery(false);setPreferredProvider(undefined);resetCredentials();
+  }
+  function switchMode(){
+    setMode(registering?'login':'register');setPreferredProvider(undefined);resetCredentials();
+  }
+  function existingLogin(){
+    if(!existingProvider||busy)return;
+    setPreferredProvider(existingProvider);setMode('login');resetCredentials();
+  }
+  function submit(event:FormEvent){
+    event.preventDefault();
+    if(busy)return;
+    if(registering){
+      if(!name.trim()){setValidationError('이름을 입력해 주세요.');return;}
+      if(!email.trim()||email.trim().length>254){setValidationError('이메일 주소를 254자 이내로 입력해 주세요.');return;}
+      if(!validMobilePhone(phone)){setValidationError('문자를 받을 수 있는 휴대전화번호를 입력해 주세요.');return;}
+      if(!emailToken||!phoneToken){setValidationError('이메일 인증과 휴대전화 인증을 완료해 주세요.');return;}
+      if(existingProvider)return;
+      if(signupStep===1){setName(name.trim());setValidationError('');setSignupStep(2);return;}
+      if(!passwordsMatch){setValidationError('비밀번호 확인란에 같은 비밀번호를 입력해 주세요.');return;}
+    }
     setValidationError('');mutation.mutate();
   }
-  return <Dialog title={recovery?'비밀번호 찾기':mode==='login'?'반가워요. 로그인해 주세요':'함께 시작해 볼까요?'} close={()=>{if(!busy)close();}}>
-    <div className="auth-account-tabs" role="tablist" aria-label="회원 유형"><button type="button" role="tab" aria-selected={accountType==='personal'} disabled={busy} onClick={()=>{if(accountType==='personal'&&!recovery)return;setAccountType('personal');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>개인</button><button type="button" role="tab" aria-selected={accountType==='hospital'} disabled={busy} onClick={()=>{setAccountType('hospital');setRecovery(false);mutation.reset();setValidationError('');setPassword('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>병원</button></div>
-    {accountType==='hospital'?<><p className="dialog-copy">{mode==='login'?'사업자등록번호로 로그인하고 우리 병원을 관리하세요.':'사업자등록번호로 병원을 조회한 뒤 비밀번호를 설정해 주세요.'}</p><HospitalAuthForm key={mode} mode={mode} onSuccess={onSuccess} onBusy={setHospitalBusy}/></>:<>
-    {recovery?<PasswordRecovery onBack={()=>setRecovery(false)} onBusy={setRecoveryBusy}/>:<>
-    <p className="dialog-copy">{mode==='login'?'로그인하고 예약 일정을 편하게 관리하세요.':'이메일과 휴대전화를 인증한 뒤 가입해 주세요.'}</p>
-    {socialError&&<Notice tone="error">{socialError}</Notice>}
-    {preferredProvider&&<Notice>{`${loginMethod(preferredProvider)}로 로그인해 주세요.`}</Notice>}
-    {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
-    <form onSubmit={submit} className="auth-form">
-      {mode==='register'&&<label className="field">이름<input autoComplete="name" value={name} onChange={e=>setName(e.target.value)} required minLength={1} maxLength={40} placeholder="이름"/></label>}
-      {mode==='register'&&<><label className="field">이메일<input className={emailToken?'contact-locked':undefined} name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>{setEmail(e.target.value);setEmailToken('');}} onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="example@email.com" aria-describedby="signup-contact-help" disabled={busy||!!emailToken}/><small id="signup-contact-help" className="muted">이미 가입한 이메일이나 전화번호는 다시 사용할 수 없어요.</small></label>
-        <EmailVerification purpose="SIGNUP" email={email} onVerified={setEmailToken} onBusy={setEmailBusy} disabled={mutation.isPending||phoneBusy}/></>}
-      {mode==='register'&&<><label className="field">휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} name="phone" value={phone} onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}} required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
-        <PhoneVerification purpose="SIGNUP" phone={phone} onVerified={setPhoneToken} onBusy={setPhoneBusy} onExistingAccount={setExistingProvider} disabled={mutation.isPending||emailBusy}/>
-        {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy}/>}</>}
-      <label className="field">아이디<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId} onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30} pattern={'[A-Za-z0-9_\\-]{4,30}'} title="영문, 숫자, 밑줄(_) 또는 하이픈(-)을 사용한 4~30자 아이디" aria-describedby="login-id-help" placeholder="아이디"/><small id="login-id-help" className="muted">영문, 숫자, _ 또는 -를 사용해 4~30자로 입력해 주세요. 영문 대소문자는 구분하지 않아요.</small></label>
-      <label className="field">비밀번호<input type="password" autoComplete={mode==='login'?'current-password':'new-password'} value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} maxLength={100} placeholder={mode==='register'?'8자 이상 입력해 주세요':'비밀번호'}/></label>
-      {(validationError||mutation.isError)&&<Notice tone="error">{validationError||mutation.error?.message}</Notice>}
-      <button className="button primary full" type="submit" disabled={busy||(mode==='register'&&(!emailToken||!phoneToken||!!existingProvider))}>{mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:mode==='login'?'로그인':'회원가입'}</button>
-    </form>
-    {mode==='login'&&<button className="text-button password-recovery-link" type="button" disabled={busy} onClick={()=>{setRecovery(true);mutation.reset();setValidationError('');setPassword('');}}>비밀번호 찾기</button>}
-    {(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy}/>}
-    </>}
-    </>}
-    {!recovery&&<div className="auth-switch">{mode==='login'?'처음 방문하셨나요?':'이미 계정이 있으신가요?'}<button className="text-button" disabled={busy} onClick={()=>{setMode(mode==='login'?'register':'login');mutation.reset();setPassword('');setValidationError('');setPreferredProvider(undefined);setEmailToken('');setPhoneToken('');setExistingProvider(undefined);}}>{mode==='login'?'회원가입':'로그인'}</button></div>}
-    <div className="auth-note"><ShieldCheck size={16}/><span>{accountType==='hospital'?'병원 계정에는 이메일과 소셜 로그인을 사용하지 않아요.':'회원가입 후에는 본인의 예약만 조회할 수 있어요.'}</span></div>
+  const idField=<label className="field">아이디
+    <input name="loginId" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={loginId}
+      onChange={e=>setLoginId(e.target.value)} onBlur={()=>setLoginId(loginId.trim())} required minLength={4} maxLength={30}
+      pattern={'[A-Za-z0-9_\\-]{4,30}'} title={registering?'영문·숫자·_·- 사용 가능, 4~30자':undefined}
+      disabled={busy} placeholder="아이디 입력" aria-describedby={registering?'login-id-help':undefined}/>
+    {registering&&<small id="login-id-help" className="muted">영문·숫자·_·- 사용 가능, 4~30자</small>}
+  </label>;
+  const formTitle=recovery?'비밀번호 찾기':registering?'회원가입':'로그인';
+  const formClass=recovery?'recovery':registering?'register':'login';
+
+  return <Dialog title={formTitle} className={'auth-dialog auth-dialog--'+formClass+(registering&&!recovery?' auth-dialog--stepped-signup':'')}
+    headingBrand={<span className="auth-brand"><span className="brand-mark" aria-hidden="true"><Plus size={17} strokeWidth={4}/></span>메디픽</span>}
+    close={()=>{if(!busy)close();}}>
+    {!recovery&&<div className="auth-account-tabs" role="tablist" aria-label="회원 유형"
+      onKeyDown={event=>{
+        if(busy||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+        event.preventDefault();
+        const next=event.key==='Home'?'personal':event.key==='End'?'hospital':accountType==='personal'?'hospital':'personal';
+        selectAccount(next);document.getElementById('auth-tab-'+next)?.focus();
+      }}>
+      {(['personal','hospital'] as const).map(type=><button key={type} id={'auth-tab-'+type} type="button" role="tab"
+        aria-selected={type===accountType} aria-controls="auth-panel" tabIndex={type===accountType?0:-1}
+        disabled={busy} onClick={()=>selectAccount(type)}>
+        {type==='personal'?<UserRound size={17} aria-hidden="true"/>:<Building2 size={17} aria-hidden="true"/>}
+        {type==='personal'?'개인':'병원'}
+      </button>)}
+    </div>}
+    {recovery ? <PasswordRecovery onBack={()=>setRecovery(false)} onBusy={setRecoveryBusy}/> :
+      <div id="auth-panel" role="tabpanel" aria-labelledby={'auth-tab-'+accountType}>
+      {accountType==='hospital' ? <HospitalAuthForm key={mode} mode={mode} onSuccess={onSuccess} onBusy={setHospitalBusy}/> : <>
+        {socialError&&<Notice tone="error">{socialError}</Notice>}
+        {preferredProvider&&<Notice>{loginMethod(preferredProvider)}로 로그인해 주세요.</Notice>}
+        {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
+        <form onSubmit={submit} className={'auth-form '+(registering?'auth-signup-form personal-signup-form':'auth-login-form')}>
+          {registering ? <>
+            <SignupSteps step={signupStep} first="본인 정보" second="계정 설정"/>
+            {/* Keep the verification timers alive while the user fills out step two. */}
+            <fieldset className="signup-step-fields" aria-label="본인 정보" hidden={signupStep!==1} disabled={signupStep!==1}>
+              <label className="field">이름<input name="name" autoComplete="name" value={name} onChange={e=>setName(e.target.value)}
+                required maxLength={40} disabled={busy} placeholder="이름 입력"/></label>
+              <div className="auth-contact-block">
+                <label className="field">휴대전화번호<PhoneInput className={phoneToken?'contact-locked':undefined} name="phone" value={phone}
+                  onValueChange={value=>{setPhone(value);setPhoneToken('');setExistingProvider(undefined);}}
+                  required placeholder="010-1234-5678" disabled={busy||!!phoneToken}/></label>
+                <PhoneVerification compact purpose="SIGNUP" phone={phone} onVerified={token=>{setPhoneToken(token);if(!token)setSignupStep(1);}} onBusy={setPhoneBusy}
+                  onExistingAccount={setExistingProvider} disabled={mutation.isPending||emailBusy}/>
+                {existingProvider&&<MemberConflictNotice provider={existingProvider} onLogin={existingLogin} disabled={busy}/>}
+              </div>
+              <div className="auth-contact-block">
+                <label className="field">이메일<input className={emailToken?'contact-locked':undefined} name="email" type="email"
+                  autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={e=>{setEmail(e.target.value);setEmailToken('');}}
+                  onBlur={()=>setEmail(email.trim())} required maxLength={254} placeholder="name@example.com" disabled={busy||!!emailToken}/></label>
+                <EmailVerification compact purpose="SIGNUP" email={email} onVerified={token=>{setEmailToken(token);if(!token)setSignupStep(1);}} onBusy={setEmailBusy} disabled={mutation.isPending||phoneBusy}/>
+              </div>
+            </fieldset>
+            {signupStep===2&&<div className="signup-step-fields">
+              <section className="signup-identity-summary" aria-labelledby="signup-summary-title">
+                <h3 id="signup-summary-title">확인한 가입 정보</h3>
+                <dl>
+                  <div><dt>이름</dt><dd>{name}</dd></div>
+                  <div><dt>휴대전화번호</dt><dd>{formatPhone(phone)}</dd></div>
+                  <div><dt>이메일</dt><dd>{email.trim()}</dd></div>
+                </dl>
+              </section>
+              {idField}
+              <SignupPasswordFields password={password} confirmation={passwordConfirmation} maxLength={100} disabled={busy}
+                onPasswordChange={value=>{setPassword(value);setValidationError('');}}
+                onConfirmationChange={value=>{setPasswordConfirmation(value);setValidationError('');}}/>
+            </div>}
+          </> : <>
+            {idField}
+            <div className="field">
+              <div className="auth-label-row"><label htmlFor="personal-login-password">비밀번호</label>
+                <button className="text-button" type="button" disabled={busy} onClick={()=>{setRecovery(true);resetCredentials();}}>비밀번호 찾기</button>
+              </div>
+              <input id="personal-login-password" type="password" name="password" autoComplete="current-password" value={password}
+                onChange={e=>setPassword(e.target.value)} minLength={8} maxLength={100} required disabled={busy} placeholder="비밀번호 입력"/>
+            </div>
+          </>}
+          {(validationError||mutation.isError)&&<Notice tone="error">{validationError||mutation.error?.message}</Notice>}
+          {registering ? <div className="signup-step-actions">
+            {signupStep===2&&<button type="button" className="button secondary" disabled={busy} onClick={()=>{setSignupStep(1);setValidationError('');mutation.reset();}}>이전</button>}
+            <button className="button primary auth-submit" type="submit" disabled={busy||!contactsReady||(signupStep===2&&!passwordsMatch)}>
+              {mutation.isPending?<><LoaderCircle className="spin" size={18}/>가입 중</>:signupStep===1?'다음':'회원가입'}
+            </button>
+          </div> : <button className="button primary full auth-submit" type="submit" disabled={busy}>
+            {mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:'로그인'}
+          </button>}
+        </form>
+        {(!registering||signupStep===1)&&(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy}/>}
+      </>}
+      <div className="auth-switch">{registering?'이미 계정이 있으신가요?':'처음 방문하셨나요?'}
+        <button type="button" className="text-button" disabled={busy} onClick={switchMode}>{registering?'로그인':'회원가입'}</button>
+      </div>
+    </div>}
   </Dialog>;
 }

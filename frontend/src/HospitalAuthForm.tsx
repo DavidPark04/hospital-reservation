@@ -1,10 +1,12 @@
 import {useEffect,useRef,useState} from 'react';
 import type {FormEvent} from 'react';
 import {useMutation} from '@tanstack/react-query';
-import {AlertCircle,CheckCircle2,ChevronRight,LoaderCircle,Search,ShieldCheck} from 'lucide-react';
+import {AlertCircle,CheckCircle2,ChevronRight,LoaderCircle,Search} from 'lucide-react';
 import {api,ApiError} from './api';
 import type {AuthResult,HospitalAccountInfo,HospitalLookup,VerifiedHospitalLookup} from './api';
 import {formatPhone} from './phoneFormatting';
+import SignupPasswordFields from './SignupPasswordFields';
+import SignupSteps from './SignupSteps';
 import './hospitalManagement.css';
 
 export function businessNumberDigits(value:string){return value.replace(/\D/g,'').slice(0,10);}
@@ -13,12 +15,16 @@ export function formatBusinessNumber(value:string){const digits=businessNumberDi
 type LookupRequest = {businessNumber:string} | {businessNumber:string;selectionToken:string;hospitalId:string};
 
 export default function HospitalAuthForm({mode,onSuccess,onBusy}:{mode:'login'|'register';onSuccess:(result:AuthResult)=>void;onBusy:(busy:boolean)=>void}){
+  const registering=mode==='register';
+  const [step,setStep]=useState<1|2>(1);
   const [businessNumber,setBusinessNumber]=useState('');
   const [password,setPassword]=useState('');
+  const [passwordConfirmation,setPasswordConfirmation]=useState('');
   const [result,setResult]=useState<HospitalLookup|null>(null);
   const [candidate,setCandidate]=useState<HospitalAccountInfo|null>(null);
   const [error,setError]=useState('');
   const activeRequest=useRef<LookupRequest|null>(null);
+  const submitting=useRef(false);
   const resultHeading=useRef<HTMLParagraphElement>(null);
   const confirmation=useRef<HTMLDialogElement>(null);
   const choiceButton=useRef<HTMLButtonElement|null>(null);
@@ -55,7 +61,13 @@ export default function HospitalAuthForm({mode,onSuccess,onBusy}:{mode:'login'|'
   });
   const auth=useMutation({
     mutationFn:()=>api<AuthResult>(`/auth/hospital/${mode}`,{method:'POST',body:JSON.stringify({businessNumber:number,password,...(mode==='register'?{verificationToken:verified?.verificationToken}:{})})}),
-    onSuccess
+    onSuccess,
+    onError:failure=>{
+      if(registering&&failure instanceof ApiError&&[400,409,410].includes(failure.status)){
+        setResult(null);setStep(1);
+      }
+    },
+    onSettled:()=>{submitting.current=false;}
   });
   const busy=lookup.isPending||auth.isPending;
   useEffect(()=>{onBusy(busy);return()=>onBusy(false);},[busy,onBusy]);
@@ -90,19 +102,35 @@ export default function HospitalAuthForm({mode,onSuccess,onBusy}:{mode:'login'|'
     startLookup({businessNumber:number});
   }
   function submit(event:FormEvent){
-    event.preventDefault();if(busy||activeRequest.current)return;
+    event.preventDefault();if(busy||activeRequest.current||submitting.current||candidate)return;
     if(number.length!==10){setError('사업자등록번호 10자리를 입력해 주세요.');return;}
-    if(mode==='register'&&!verified){setError(choices?'가입할 병원을 먼저 선택해 주세요.':'사업자등록번호로 병원을 먼저 조회해 주세요.');return;}
+    if(registering&&step===1){
+      if(verified){setError('');setStep(2);}
+      else if(choices){setError('가입할 병원을 먼저 선택해 주세요.');}
+      else findHospital();
+      return;
+    }
+    if(registering&&!verified){setStep(1);setError('사업자등록번호로 병원을 다시 조회해 주세요.');return;}
+    if(registering&&password.length<8){setError('비밀번호를 8자 이상 입력해 주세요.');return;}
+    if(registering&&(!passwordConfirmation||password!==passwordConfirmation)){setError('비밀번호 확인란에 같은 비밀번호를 입력해 주세요.');return;}
     if(new TextEncoder().encode(password).length>72){setError('비밀번호는 72바이트 이하로 입력해 주세요.');return;}
-    setError('');auth.mutate();
+    submitting.current=true;setError('');auth.mutate();
   }
-  return <form className="auth-form hospital-auth-form" onSubmit={submit}>
-    <label className="field" htmlFor="hospital-business-number">사업자등록번호
-      <div className="business-lookup-row"><input id="hospital-business-number" name="businessNumber" inputMode="numeric" autoComplete="username" value={businessNumber} onChange={e=>changeNumber(e.target.value)} placeholder="000-00-00000" maxLength={12} required pattern="[0-9]{3}-[0-9]{2}-[0-9]{5}" disabled={busy}/>
+  const businessField=<div className="field">
+      <label htmlFor="hospital-business-number">사업자등록번호</label>
+      <div className="business-lookup-row"><input id="hospital-business-number" name="businessNumber" inputMode="numeric" autoComplete="username" value={businessNumber} onChange={e=>changeNumber(e.target.value)} placeholder="000-00-00000" maxLength={12} required pattern="[0-9]{3}-[0-9]{2}-[0-9]{5}" disabled={busy}
+        onKeyDown={event=>{
+          if(registering&&event.key==='Enter'&&!verified){event.preventDefault();if(!choices)findHospital();}
+        }}/>
         {mode==='register'&&<button className="button secondary" type="button" disabled={busy||number.length!==10} onClick={findHospital}>{lookup.isPending&&!choices?<LoaderCircle size={17} className="spin"/>:<Search size={17}/>} {current?'다시 조회':'조회'}</button>}
-      </div><small className="muted">{mode==='register'?'번호를 조회해 가입할 병원을 확인해 주세요.':'가입할 때 사용한 병원 사업자등록번호를 입력해 주세요.'}</small>
-    </label>
-    {mode==='register'&&choices&&<section className="verified-hospital" aria-labelledby="hospital-choice-title">
+      </div>
+    </div>;
+  return <form className={`auth-form hospital-auth-form ${registering?'auth-signup-form hospital-signup-form':'auth-login-form'}`} onSubmit={submit}>
+    {registering&&<SignupSteps step={step} first="병원 확인" second="계정 설정"/>}
+    {registering ? (step===1 ?
+    <section className="signup-step-fields" aria-label="병원 확인">
+      {businessField}
+    {choices&&<section className="verified-hospital" aria-labelledby="hospital-choice-title">
       <p className="verified-title" id="hospital-choice-title" ref={resultHeading} tabIndex={-1}>
         {choices.candidates.length===1?'가입할 병원을 확인해 주세요':`조회된 ${choices.candidates.length}곳 중 가입할 병원을 선택해 주세요`}
       </p>
@@ -136,16 +164,45 @@ export default function HospitalAuthForm({mode,onSuccess,onBusy}:{mode:'login'|'
         </div>
       </dialog>}
     </section>}
-    {mode==='register'&&verified&&<div className="verified-hospital" aria-label="조회된 병원 기본정보">
+    {verified&&<div className="verified-hospital" aria-label="조회된 병원 기본정보">
       <p className="verified-title" role="status" ref={resultHeading} tabIndex={-1}><CheckCircle2 size={18}/>병원 정보를 확인했어요</p>
-      <label className="field">병원명<input value={verified.hospital.name} readOnly aria-readonly="true"/></label>
-      <label className="field">주소<textarea value={verified.hospital.address} readOnly aria-readonly="true" rows={2}/></label>
-      <div className="form-grid"><label className="field">우편번호<input value={verified.hospital.postalCode||''} readOnly aria-readonly="true"/></label><label className="field">전화번호<input value={verified.hospital.tel?formatPhone(verified.hospital.tel):''} readOnly aria-readonly="true"/></label></div>
-      <small className="muted">조회된 기본정보는 수정할 수 없어요. 전화번호가 제공되지 않으면 빈칸으로 등록돼요.</small>
+      <dl className="auth-hospital-facts" aria-label="조회된 병원 기본정보">
+        <dt>병원명</dt><dd>{verified.hospital.name}</dd>
+        <dt>주소</dt><dd>{verified.hospital.address}</dd>
+        <dt>우편번호</dt><dd>{verified.hospital.postalCode || '미제공'}</dd>
+        <dt>전화번호</dt><dd>{verified.hospital.tel ? formatPhone(verified.hospital.tel) : '미제공'}</dd>
+      </dl>
     </div>}
-    <label className="field" htmlFor="hospital-password">비밀번호<input id="hospital-password" name="password" type="password" autoComplete={mode==='login'?'current-password':'new-password'} value={password} onChange={e=>{setPassword(e.target.value);setError('');}} required minLength={8} maxLength={72} disabled={auth.isPending} placeholder={mode==='register'?'8자 이상 입력해 주세요':'비밀번호'}/></label>
+    </section>
+    : <section className="signup-step-fields" aria-label="병원 계정 설정">
+      {verified&&<section className="signup-identity-summary" aria-labelledby="hospital-summary-heading">
+        <h3 id="hospital-summary-heading">확인한 병원 정보</h3>
+        <dl>
+          <div><dt>병원명</dt><dd>{verified.hospital.name}</dd></div>
+          <div><dt>로그인 아이디</dt><dd>{formatBusinessNumber(number)} (사업자등록번호)</dd></div>
+          <div><dt>주소</dt><dd>{verified.hospital.postalCode&&`(${verified.hospital.postalCode}) `}{verified.hospital.address}</dd></div>
+          <div><dt>전화번호</dt><dd>{verified.hospital.tel?formatPhone(verified.hospital.tel):'미제공'}</dd></div>
+        </dl>
+      </section>}
+      <SignupPasswordFields password={password} confirmation={passwordConfirmation} maxLength={72} disabled={busy}
+        onPasswordChange={value=>{setPassword(value);setError('');}}
+        onConfirmationChange={value=>{setPasswordConfirmation(value);setError('');}}/>
+    </section>) : <>
+      {businessField}
+      <label className="field" htmlFor="hospital-password">비밀번호<input id="hospital-password" name="password" type="password"
+        autoComplete="current-password" value={password} onChange={e=>{setPassword(e.target.value);setError('');}}
+        required minLength={8} maxLength={72} disabled={auth.isPending} placeholder="비밀번호 입력"/></label>
+    </>}
     {!candidate&&(error||auth.isError)&&<div className="notice error" role="alert"><AlertCircle size={19}/><div>{error||auth.error?.message}</div></div>}
-    <button className="button primary full" type="submit" disabled={busy||(mode==='register'&&!verified)}>{auth.isPending?<><LoaderCircle size={18} className="spin"/>처리 중</>:mode==='login'?'병원 로그인':'병원 회원가입'}</button>
-    <div className="auth-note"><ShieldCheck size={16}/><span>병원 계정은 사업자등록번호로 로그인하고 소속 병원의 의료진·일정·예약을 관리해요.</span></div>
+    {registering ? <div className="signup-step-actions">
+      {step===2&&<button type="button" className="button secondary" disabled={busy} onClick={()=>{setError('');auth.reset();setStep(1);}}>이전</button>}
+      {step===1
+        ? <button key="next" type="submit" className="button primary" disabled={busy||!verified}>다음<ChevronRight size={17} aria-hidden="true"/></button>
+        : <button key="register" type="submit" className="button primary" disabled={busy||!verified||password.length<8||password!==passwordConfirmation}>
+            {auth.isPending?<><LoaderCircle size={18} className="spin"/>처리 중</>:'병원 회원가입'}
+          </button>}
+    </div> : <button className="button primary full auth-submit" type="submit" disabled={busy}>
+      {auth.isPending?<><LoaderCircle size={18} className="spin"/>처리 중</>:'병원 로그인'}
+    </button>}
   </form>;
 }

@@ -6,10 +6,10 @@ import type {EmailPurpose,VerificationProof} from './contactVerification';
 import useVerificationCountdown from './useVerificationCountdown';
 import './contactVerification.css';
 
-type Props={purpose:EmailPurpose;email:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void};
+type Props={purpose:EmailPurpose;email:string;onVerified:(token:string)=>void;disabled?:boolean;onBusy?:(busy:boolean)=>void;compact?:boolean};
 type Challenge={challengeId:string;expiresIn:number;retryAfter:number};
 
-export default function EmailVerification({purpose,email,onVerified,disabled=false,onBusy}:Props){
+export default function EmailVerification({purpose,email,onVerified,disabled=false,onBusy,compact=false}:Props){
   const inputId=useId();
   const contact=canonicalEmail(email);
   const context=purpose+'|'+email;
@@ -63,8 +63,9 @@ export default function EmailVerification({purpose,email,onVerified,disabled=fal
   }
   return <div className="contact-verification" aria-label="이메일 인증">
     {verified?<p className="contact-verified" role="status"><CheckCircle2 size={16}/>이메일 인증 완료</p>:<>
-      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}>
-        {busy&&!challenge?<LoaderCircle size={16} className="spin"/>:null}{challenge?'인증번호 다시 보내기':'이메일 인증번호 받기'}{retrySeconds>0?` (${retrySeconds}초)`:''}
+      <button className="button secondary small" type="button" onClick={send} disabled={disabled||busy||!contact||retrySeconds>0}
+        aria-label={compact ? (challenge?'이메일 인증번호 다시 받기':'이메일 인증 요청') : undefined}>
+        {busy&&!challenge?<LoaderCircle size={16} className="spin"/>:null}{compact ? (challenge?'다시 받기':'인증 요청') : (challenge?'인증번호 다시 보내기':'이메일 인증번호 받기')}{retrySeconds>0?` (${retrySeconds}초)`:''}
       </button>
       {challenge&&<><p className="verification-help" role="status">이메일로 인증번호를 보냈어요. {codeSeconds>0?`${Math.floor(codeSeconds/60)}분 ${codeSeconds%60}초 안에 입력해 주세요.`:'인증번호가 만료됐어요. 다시 받아 주세요.'}</p>
         <div className="verification-code-row"><label className="field" htmlFor={inputId}>이메일 인증번호<input id={inputId} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e=>{setCode(e.target.value.replace(/\D/g,'').slice(0,6));setError('');}} maxLength={6} disabled={disabled||busy} placeholder="6자리 인증번호"/></label>
