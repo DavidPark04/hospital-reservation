@@ -59,6 +59,8 @@ class SocialLoginSecurityTest {
         @Bean AuthController authController(AuthService auth) { return new AuthController(auth); }
         @Bean HospitalAccountService hospitalAccounts() { return mock(HospitalAccountService.class); }
         @Bean HospitalAccountController hospitalController(HospitalAccountService accounts) { return new HospitalAccountController(accounts); }
+        @Bean ContactVerificationService contactVerification() { return mock(ContactVerificationService.class); }
+        @Bean ContactVerificationController contactController(ContactVerificationService verification) { return new ContactVerificationController(verification); }
         @Bean ApiErrorHandler errors() { return new ApiErrorHandler(); }
         @Bean ProtectedTestController protectedApis() { return new ProtectedTestController(); }
     }
@@ -68,16 +70,52 @@ class SocialLoginSecurityTest {
     @Autowired WebApplicationContext context;
     @Autowired AuthService auth;
     @Autowired HospitalAccountService hospitalAccounts;
+    @Autowired ContactVerificationService contactVerification;
     @Autowired SocialMemberService members;
     @Autowired SocialLoginTickets tickets;
     @Autowired SocialLoginFlow flow;
     private MockMvc mvc;
     @BeforeEach void setUp() {
-        reset(auth, members, tickets, hospitalAccounts);
+        reset(auth, members, tickets, hospitalAccounts, contactVerification);
         when(tickets.create(any())).thenReturn(SocialLoginTickets.randomValue());
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
     @AfterEach void tearDown() { SecurityContextHolder.clearContext(); }
+
+    @Test void pendingSocialSignupCanVerifyContactsWithItsOwnPrincipal() throws Exception {
+        UserPrincipal pending = UserPrincipal.forSignup(new Document("_id", "pending-person").append("role", "USER")
+                .append("authProvider", "GOOGLE").append("tokenVersion", 3));
+        when(auth.authenticate("pending-token")).thenReturn(pending);
+        when(contactVerification.configuration()).thenReturn(Map.of("emailEnabled", true, "phoneEnabled", true));
+        when(contactVerification.sendEmail(anyMap(), anyString())).thenAnswer(call -> {
+            assertSame(pending, CurrentUser.require());
+            assertTrue(CurrentUser.require().isSignupPending());
+            return Map.of("challengeId", "challenge", "expiresIn", 300, "retryAfter", 60);
+        });
+        when(contactVerification.confirmEmail(anyMap())).thenAnswer(call -> {
+            assertSame(pending, CurrentUser.require());
+            return Map.of("verificationToken", "email-proof", "contact", "person@example.com", "expiresIn", 600);
+        });
+        when(contactVerification.confirmPhone(anyMap())).thenAnswer(call -> {
+            assertSame(pending, CurrentUser.require());
+            assertEquals(3, CurrentUser.require().getTokenVersion());
+            return Map.of("verificationToken", "phone-proof", "contact", "01012345678", "expiresIn", 600);
+        });
+        mvc.perform(get("/api/auth/verification/config").header("Authorization", "Bearer pending-token"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.phoneEnabled").value(true));
+        mvc.perform(post("/api/auth/verification/email/send").header("Authorization", "Bearer pending-token")
+                        .contentType("application/json").content("{\"purpose\":\"SIGNUP\",\"email\":\"person@example.com\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.challengeId").value("challenge"));
+        mvc.perform(post("/api/auth/verification/email/confirm").header("Authorization", "Bearer pending-token")
+                        .contentType("application/json").content("{\"challengeId\":\"challenge\",\"code\":\"123456\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.verificationToken").value("email-proof"));
+        mvc.perform(post("/api/auth/verification/phone/confirm").header("Authorization", "Bearer pending-token")
+                        .contentType("application/json").content("{\"purpose\":\"SIGNUP\",\"idToken\":\"firebase-proof\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.verificationToken").value("phone-proof"));
+        mvc.perform(get("/api/reservations").header("Authorization", "Bearer pending-token")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/auth/verification/unlisted").header("Authorization", "Bearer pending-token")
+                .contentType("application/json").content("{}")).andExpect(status().isForbidden());
+    }
 
     @Test void hospitalApplicantCanPostACandidateSelectionBeforeLogin() throws Exception {
         Map<String, Object> selection = Map.of("businessNumber", "1108200472", "selectionToken", "choice", "hospitalId", "dental");

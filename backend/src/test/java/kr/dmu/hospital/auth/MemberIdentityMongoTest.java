@@ -101,10 +101,10 @@ class MemberIdentityMongoTest {
     }
 
     @Test void sameNameWithDifferentContactsIsAllowedAndLoginIdConflictRemainsDistinct() {
-        auth.register(registration("original1", "같은 이름", "01012345678", "first@example.com"));
-        auth.register(registration("otheruser", "같은 이름", "01087654321", "second@example.com"));
+        auth.register(TestContactProofs.signup(mongo, registration("original1", "같은 이름", "01012345678", "first@example.com")));
+        auth.register(TestContactProofs.signup(mongo, registration("otheruser", "같은 이름", "01087654321", "second@example.com")));
         ApiException id = assertThrows(ApiException.class,
-            () -> auth.register(registration("original1", "다른 이름", "021234567", "third@example.com")));
+            () -> auth.register(TestContactProofs.signup(mongo, registration("original1", "다른 이름", "021234567", "third@example.com"))));
         assertFalse(id instanceof MemberIdentityConflict);
         assertEquals("이미 사용 중인 아이디입니다.", id.getMessage());
         assertEquals(2, count("users"));
@@ -130,13 +130,13 @@ class MemberIdentityMongoTest {
         complete("KAKAO", "phone-owner", "같은 이름", "01012345678", "phone@example.com");
         complete("GOOGLE", "email-owner", "같은 이름", "01087654321", "email@example.com");
         assertConflict(assertThrows(MemberIdentityConflict.class,
-            () -> auth.register(registration("newmember", " 같은  이름 ", "01012345678", "email@example.com"))), "KAKAO");
+            () -> auth.register(TestContactProofs.signup(mongo, registration("newmember", " 같은  이름 ", "01012345678", "email@example.com")))), "KAKAO");
         assertEquals(2, count("users"));
     }
 
     @Test void completedSocialReloginKeepsItsOwnIdentityWithoutConflict() {
         Document first = pending("KAKAO", "same-account"); setCurrent(first);
-        Map<String, Object> session = auth.completeSocialProfile(profile("직접 이름", "01012345678", "manual@example.com"));
+        Map<String, Object> session = auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile("직접 이름", "01012345678", "manual@example.com")));
         String memberId = auth.authenticate((String) session.get("token")).getId();
         Document again = pending("KAKAO", "same-account");
         assertNotEquals(first.getString("_id"), memberId);
@@ -147,7 +147,7 @@ class MemberIdentityMongoTest {
         assertEquals(1, count("users")); assertEquals(0, count("social_signups"));
         setCurrent(again);
         ApiException completed = assertThrows(ApiException.class,
-            () -> auth.completeSocialProfile(profile("직접 이름", "01012345678", "manual@example.com")));
+            () -> auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile("직접 이름", "01012345678", "manual@example.com"))));
         assertFalse(completed instanceof MemberIdentityConflict); assertEquals(409, completed.getStatus());
     }
 
@@ -204,9 +204,9 @@ class MemberIdentityMongoTest {
         assertEquals(emailAdmin, mongo.findById("email-admin", Document.class, "users"));
         assertStillPending(unfinished);
         assertGenericConflict(assertThrows(ApiException.class,
-            () -> auth.register(registration("newlocal", "다른 이름", "01012345678", "new@example.com"))));
+            () -> auth.register(TestContactProofs.signup(mongo, registration("newlocal", "다른 이름", "01012345678", "new@example.com")))));
         assertGenericConflict(assertThrows(ApiException.class,
-            () -> auth.register(registration("newadmin", "다른 이름", "01087654321", "ADMIN@example.com"))));
+            () -> auth.register(TestContactProofs.signup(mongo, registration("newadmin", "다른 이름", "01087654321", "ADMIN@example.com")))));
     }
 
     @ParameterizedTest @ValueSource(strings = {"phone", "email"})
@@ -241,17 +241,17 @@ class MemberIdentityMongoTest {
             assertEquals(suffix + "@example.com", member.getString("emailNormalized"));
             assertEquals(true, member.getBoolean("memberIdentityClaimed"));
             assertGenericConflict(assertThrows(ApiException.class,
-                () -> auth.register(registration("new" + suffix, "다른 이름", "01012345678", suffix + "@example.com"))));
+                () -> auth.register(TestContactProofs.signup(mongo, registration("new" + suffix, "다른 이름", "01012345678", suffix + "@example.com")))));
         }
         assertEquals(2, count("users"));
-        auth.register(registration("withphone", "전화 회원", "01012345678", "new@example.com"));
+        auth.register(TestContactProofs.signup(mongo, registration("withphone", "전화 회원", "01012345678", "new@example.com")));
         assertEquals(3, count("users"));
     }
 
     @Test void oldCombinedIndexIsReplacedByIndependentUniqueIndexesIdempotently() {
         mongo.getCollection("users").createIndex(new Document("nameNormalized", 1).append("phone", 1),
             new IndexOptions().unique(true).name("user_name_phone_v1").partialFilterExpression(new Document("memberIdentityClaimed", true)));
-        auth.register(registration("memberone", "같은 이름", "01012345678", "one@example.com"));
+        auth.register(TestContactProofs.signup(mongo, registration("memberone", "같은 이름", "01012345678", "one@example.com")));
         indexes(); indexes();
         List<Document> all = mongo.getCollection("users").listIndexes().into(new ArrayList<>());
         assertFalse(all.stream().anyMatch(index -> "user_name_phone_v1".equals(index.getString("name"))));
@@ -323,8 +323,8 @@ class MemberIdentityMongoTest {
         finish(provider, subject, name, phone, email);
     }
     private void finish(String provider, String subject, String name, String phone, String email) {
-        if (provider.equals("LOCAL")) auth.register(registration(subject, name, phone, email));
-        else auth.completeSocialProfile(profile(name, phone, email));
+        if (provider.equals("LOCAL")) auth.register(TestContactProofs.signup(mongo, registration(subject, name, phone, email)));
+        else auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile(name, phone, email)));
     }
     private void assertConflict(MemberIdentityConflict conflict, String provider) {
         assertEquals(409, conflict.getStatus()); assertEquals(provider, conflict.toPublic().get("existingAuthProvider"));

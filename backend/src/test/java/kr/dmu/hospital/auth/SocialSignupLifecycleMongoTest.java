@@ -118,7 +118,7 @@ class SocialSignupLifecycleMongoTest {
         Document pending = signup();
         String pendingToken = token(pending);
         signIn(pendingToken);
-        Map<String, Object> completed = auth.completeSocialProfile(profile());
+        Map<String, Object> completed = auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile()));
         UserPrincipal member = auth.authenticate((String) completed.get("token"));
         assertFalse(member.isSignupPending());
         assertTrue(member.isProfileComplete());
@@ -134,7 +134,7 @@ class SocialSignupLifecycleMongoTest {
         assertThrows(JwtException.class, () -> auth.authenticate(pendingToken));
         assertEquals(401, assertThrows(ApiException.class,
                 () -> auth.issueSocialSession(pending.getString("_id"), pending.getInteger("tokenVersion"), true)).getStatus());
-        assertThrows(ApiException.class, () -> auth.completeSocialProfile(profile()));
+        assertThrows(ApiException.class, () -> auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile())));
         assertEquals(1, count("users"));
         Document relogin = signup();
         assertEquals(member.getId(), relogin.getString("_id"));
@@ -154,11 +154,11 @@ class SocialSignupLifecycleMongoTest {
             }
         };
         AuthService failingAuth = new AuthService(failingMongo, new BCryptPasswordEncoder(), SECRET);
-        assertThrows(IllegalStateException.class, () -> failingAuth.completeSocialProfile(profile()));
+        assertThrows(IllegalStateException.class, () -> failingAuth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile())));
         assertEquals(0, count("users"));
         assertEquals(1, count("social_signups"));
         assertTrue(auth.authenticate(pendingToken).isSignupPending());
-        auth.completeSocialProfile(profile());
+        auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile()));
         assertEquals(1, count("users"));
         assertEquals(0, count("social_signups"));
     }
@@ -171,7 +171,7 @@ class SocialSignupLifecycleMongoTest {
             @Override public <T> T findOne(Query query, Class<T> entityClass, String collectionName) {
                 T result = super.findOne(query, entityClass, collectionName);
                 if ("users".equals(collectionName) && result == null && completeAfterFirstLookup.getAndSet(false)) {
-                    auth.completeSocialProfile(profile());
+                    auth.completeSocialProfile(TestContactProofs.socialSignup(mongo, profile()));
                 }
                 return result;
             }

@@ -2,7 +2,7 @@
 
 메디픽의 DB 이름은 **`MediPick`**이다. 이 문서는 현재 MongoDB에 어떤 정보가 들어가고, 각 필드가 무슨 뜻이며, 서로 어떻게 연결되는지를 처음 읽는 사람도 따라갈 수 있게 설명한다.
 
-현재 구현은 **18개 컬렉션**으로 나뉜다. 먼저 회원·병원·의료진·시간표·예약 **핵심 5개**를 이해하면 된다. 병원 회원 추가로 `hospitalRegistrations`(등록 병원)와 `hospitalSignupVerifications`(가입 전 조회 확인)가 생겼다. 나머지는 인증, 중복 요청 방지, API 결과 재사용, 수집 작업 기록을 위한 보조 저장소다. 컬렉션 구조는 코드 기준이며 실제 배포 상태는 해당 PR·Actions 결과로 확인한다.
+현재 구현은 **22개 컬렉션**으로 나뉜다. 먼저 회원·병원·의료진·시간표·예약 **핵심 5개**를 이해하면 된다. 병원 회원 추가로 `hospitalRegistrations`(등록 병원)와 `hospitalSignupVerifications`(가입 전 조회 확인)가 생겼다. 나머지는 인증, 중복 요청 방지, API 결과 재사용, 수집 작업 기록을 위한 보조 저장소다. 컬렉션 구조는 코드 기준이며 실제 배포 상태는 해당 PR·Actions 결과로 확인한다.
 
 > 표의 이름·연락처·ID·건수는 설명용 가상 예시다. 실제 회원 정보, 비밀번호, API 키, DB 접속 정보는 포함하지 않는다. 필드는 현재 코드와 DB 메타데이터를 기준으로 설명하며, 같은 컬렉션 안에서도 가입 방식·문서 종류에 따라 선택 필드가 없을 수 있다.
 
@@ -10,11 +10,11 @@
 
 1. [사용자 동작으로 이해하기](#overview)
 2. [타입·PK·UK·REF 등 용어](#terms)
-3. [전체 18개 컬렉션 목록](#collections)
+3. [전체 22개 컬렉션 목록](#collections)
 4. [핵심 5개 데이터](#core)
 5. [병원 상세·추천·수집 보조 데이터](#hospital-support)
 6. [예약 요청과 변경 이력](#booking-support)
-7. [소셜 로그인·가입·탈퇴 임시 데이터](#social-support)
+7. [소셜·연락처 인증 임시 데이터](#social-support)
 8. [데이터가 생기고 사라지는 흐름](#lifecycle)
 9. [운영 규칙과 코드 위치](#operations)
 
@@ -24,7 +24,7 @@
 
 | 사용자가 하는 일 | DB에서 하는 일 |
 | --- | --- |
-| 회원가입을 완료한다 | `users`에 회원 한 명을 저장한다. |
+| 개인 회원가입을 완료한다 | 이메일·문자 인증 증명을 소모하면서 `users`에 회원 한 명을 저장한다. |
 | 병원 회원가입을 한다 | 사업자번호로 공공 API를 조회하고 DB 병원과 대조한 뒤 `users`와 `hospitalRegistrations`를 함께 저장한다. |
 | 병원을 검색한다 | `hospitals`의 전체 기본 자료 중 `hospitalRegistrations`에 등록된 병원만 읽는다. |
 | 병원을 선택한다 | 필요한 상세 정보를 `hospitalDetails`에서 읽고, 재사용할 수 없으면 API로 확인한다. 근거는 `hospitalEvidence`에도 저장한다. |
@@ -109,7 +109,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 <a id="collections"></a>
 
-## 3. 전체 18개 컬렉션 목록
+## 3. 전체 22개 컬렉션 목록
 
 | 구분 | 컬렉션 | 한 문장 설명 |
 | --- | --- | --- |
@@ -131,6 +131,10 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | 소셜 인증 보조 | [`oauth_authorization_requests`](#oauth_authorization_requests) | 외부 인증 페이지로 갔다 돌아오는 요청 검증 |
 | 소셜 인증 보조 | [`social_login_tickets`](#social_login_tickets) | 인증 결과를 앱 로그인으로 넘기는 일회용 티켓 |
 | 소셜 인증 보조 | [`social_withdrawal_proofs`](#social_withdrawal_proofs) | 같은 소셜 계정으로 재인증한 탈퇴 확인서 |
+| 연락처 인증 보조 | [`contactVerificationChallenges`](#contactVerificationChallenges) | 5분짜리 이메일 코드 확인 요청 |
+| 연락처 인증 보조 | [`contactVerificationProofs`](#contactVerificationProofs) | 최종 작업에 한 번 쓰는 10분짜리 인증 증명 |
+| 연락처 인증 보조 | [`contactVerificationLimits`](#contactVerificationLimits) | 이메일 재발송 간격과 횟수 제한 |
+| 연락처 인증 보조 | [`phoneVerificationReceipts`](#phoneVerificationReceipts) | 같은 Firebase 문자 인증의 재교환 방지 |
 
 진료과는 별도 `departments` 컬렉션이 아니다. 공공 자료는 `hospitals.departments`, 병원이 실제 운영하도록 설정한 진료과는 `hospitalRegistrations.departments`에 둔다. 후자는 활성 의료진의 진료과를 모아 만들며 앱의 `Departments` 코드표를 사용한다.
 
@@ -164,13 +168,14 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `profileComplete` | bool | 소셜 로그인 후 추가 정보 입력을 마쳤는지. | 소셜 가입 완료 시 `true`. 일반 회원은 이 필드가 없어도 가입 완료로 판단한다. |
 | `profileCompletedAt` | date | 소셜 회원이 이름·이메일·전화번호 입력을 마친 시각. | 소셜 가입 완료 시 저장 |
 | `emailSource` | string | 이메일을 어디서 가져왔는지. | 현재 가입 흐름은 직접 입력이므로 `USER` |
-| `emailVerified` | bool | 이메일 인증을 완료했는지 표시하는 값. | 현재 이메일 인증 기능을 사용하지 않아 `false` |
-| `tokenVersion` | int | 현재 유효한 로그인 토큰의 버전. 숫자가 달라지면 이전 토큰을 사용할 수 없다. | 가입 시 `0`; 로그아웃·비밀번호 변경 때 증가 |
+| `emailVerified` | bool | 이메일 인증을 완료했는지 표시하는 값. | 신규 개인 가입·이메일 변경 성공 시 `true`. 기존 누락/`false`는 자동 승격하지 않음 |
+| `phoneVerified` | bool | 저장된 휴대전화의 문자 인증 여부. | 신규 개인 가입·개인 비밀번호 변경/재설정 성공 시 `true` |
+| `tokenVersion` | int | 현재 유효한 로그인 토큰의 버전. 숫자가 달라지면 이전 토큰을 사용할 수 없다. | 가입 시 `0`; 로그아웃·비밀번호 변경/재설정·이메일 변경 때 증가 |
 | `bookingVersion` | int | 예약 처리와 회원 삭제가 동시에 일어날 때 충돌을 감지하기 위한 내부 번호. 사용자에게 보여 주는 값은 아니다. | 예약 생성·변경·취소 처리 중 증가. 예약 작업 전에는 없을 수 있다. |
 | `createdAt` | date | 회원가입을 완료한 시각. | `2026-11-22T06:30:00Z` |
 | `lastLoginAt` | date | 일반 아이디·비밀번호 로그인에 성공한 최근 시각. | 일반 로그인 성공 시 갱신. 현재 소셜 로그인 흐름에서는 갱신하지 않는다. |
 
-`memberIdentityClaimed=true`는 **본인 인증·이메일 인증·전화번호 인증을 완료했다는 뜻이 아니다.** 연락처 중복 제한을 적용하기 위한 내부 값이다. `emailVerified=false`도 현재 동작에 맞는 값이다.
+`memberIdentityClaimed=true`는 **본인 인증·이메일 인증·전화번호 인증을 완료했다는 뜻이 아니다.** 연락처 중복 제한을 적용하기 위한 내부 값이다. 연락처 인증 여부는 `emailVerified`, `phoneVerified`로 별도 기록한다. 기존 회원의 미인증 상태도 유지할 수 있지만 새 개인 가입에는 두 인증이 필요하다.
 
 병원 계정에는 개인용 연락처 중복 제한을 적용하지 않는다. 병원 가입은 `hospitalRegistrations`의 사업자번호·병원번호·계정번호 중복 제한으로 관리한다. 병원의 소속 정보는 로그인 토큰의 표시만 믿지 않고 DB의 활성 등록과도 대조한다. 현재 일반 회원 탈퇴·관리자 회원 삭제 기능은 `USER` 대상이며 병원 계정을 삭제하는 흐름은 제공하지 않는다.
 
@@ -197,7 +202,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | 위 조건이 일치, 기존 계정이 일반 가입 | 이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요. |
 | 전화번호 또는 이메일은 중복이지만 이름이 다름 | 이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요. |
 
-이메일·전화번호 인증을 하지 않으므로 이 규칙은 **입력한 연락처의 중복 방지**이며 실제로 같은 사람인지 증명하는 본인 인증은 아니다.
+이 규칙은 **입력한 연락처의 중복 방지**다. 새 개인 가입에는 별도의 이메일·문자 인증도 요구하지만, 입력한 이름의 실명 여부를 확인하거나 기존 계정을 자동 통합하지는 않는다.
 
 <a id="hospitals"></a>
 
@@ -565,9 +570,9 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 <a id="social-support"></a>
 
-## 7. 소셜 로그인·가입·탈퇴 임시 데이터
+## 7. 소셜·연락처 인증 임시 데이터
 
-이 네 컬렉션은 회원 목록이 아니라 인증을 진행하는 동안 필요한 임시 정보다. 이름·이메일·전화번호는 가입 완료 후 `users`에 저장한다.
+소셜 인증 4개와 연락처 인증 4개 컬렉션은 회원 목록이 아니라 인증 중 필요한 임시 정보다. 소셜 가입 대기에는 이름·이메일·전화번호를 저장하지 않는다. 연락처 인증 요청·증명에는 검증 대상 연락처를 만료 시각까지 보관하고, 가입 완료 후 회원 연락처는 `users`에 저장한다.
 
 <a id="social_signups"></a>
 
@@ -645,7 +650,7 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### `social_withdrawal_proofs` — 소셜 회원의 탈퇴 재인증 확인서
 
-카카오·구글 회원에게는 메디픽 비밀번호가 없으므로, 같은 소셜 계정으로 다시 인증한 사실을 짧게 보관한다. 재인증에 성공했다고 바로 탈퇴하는 것이 아니라, 유효한 확인서로 탈퇴 확정을 요청할 때 처리한다.
+기존 소셜 OAuth 탈퇴 경로에서 같은 소셜 계정으로 다시 인증한 사실을 짧게 보관한다. 재인증만으로 탈퇴하지 않으며 최종 확정에는 이 확인서와 별도의 `WITHDRAWAL` 문자 인증 증명을 함께 요구한다. 현재 개인 탈퇴 화면은 등록 휴대전화 문자 인증을 사용하는 공통 `/api/members/me` 경로로 처리할 수 있다.
 
 | 필드 | 타입 | 쉬운 설명 | 예시·저장 조건 |
 |---|---|---|---|
@@ -656,6 +661,53 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 | `expiresAt` | date | 확인서 사용 가능 시간이 끝나는 시각. | 생성 후 5분 |
 
 확정할 때 한 번 사용하고 삭제한다. 새 탈퇴 인증 시작·탈퇴 취소·회원 삭제 때도 정리한다. TTL 인덱스는 `social_withdrawal_proof_expiry_v1`이다. 관리자(`ADMIN`)는 이 회원 탈퇴 흐름을 사용할 수 없다.
+
+<a id="contactVerificationChallenges"></a>
+
+### `contactVerificationChallenges` — 이메일 인증번호 확인 요청
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `_id` | string / PK | 무작위 `challengeId`의 SHA-256 해시 |
+| `purpose`, `channel` | string | `SIGNUP` 또는 `EMAIL_CHANGE`, 채널은 `EMAIL` |
+| `contact` | string | 소문자로 정규화한 검증 대상 이메일 |
+| `userId`, `tokenVersion` | string, int | 익명 가입은 빈 ID·0, 소셜 가입은 임시 가입 ID·버전, 이메일 변경은 회원 ID·버전 |
+| `codeHash` | string | `challengeId + ":" + 6자리 코드`의 SHA-256 해시. 코드 원문은 저장하지 않음 |
+| `attempts` | int | 코드 확인 시도 횟수. 최대 5회 |
+| `createdAt`, `expiresAt` | date | 발급 시각과 5분 뒤 만료 시각 |
+
+같은 목적·연락처·회원의 코드를 다시 발급하면 이전 요청은 지운다. 코드 확인 성공 시 요청을 한 번 소모하고 다음 인증 증명을 발급한다. SMTP 전송에 실패하면 해당 요청을 제거한다.
+
+<a id="contactVerificationProofs"></a>
+
+### `contactVerificationProofs` — 최종 작업용 일회용 인증 증명
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `_id` | string / PK | 무작위 `verificationToken`의 SHA-256 해시 |
+| `purpose` | string | `SIGNUP`, `EMAIL_CHANGE`, `PASSWORD_CHANGE`, `WITHDRAWAL`, `PASSWORD_RESET` |
+| `channel` | string | `EMAIL` 또는 `PHONE` |
+| `contact` | string | 정규화 이메일 또는 국내 형식 휴대전화 |
+| `userId`, `tokenVersion` | string, int | 증명을 사용할 회원·임시 가입·익명 범위 및 버전 |
+| `createdAt`, `expiresAt` | date | 발급 시각과 10분 뒤 만료 시각 |
+
+모든 범위 필드와 만료를 일치 조건으로 조회하며 최종 가입·이메일 변경·비밀번호 변경/재설정·탈퇴 트랜잭션 안에서 삭제한다. 다른 목적, 연락처, 회원 또는 이전 버전의 증명은 사용할 수 없다. 작업이 실패하면 증명 삭제도 롤백되므로 유효 시간 안에 다시 시도할 수 있다. 회원 삭제 때 그 회원의 나머지 증명도 정리한다. 화면의 인증 완료 상태만으로는 서버 검증을 대신할 수 없다.
+
+<a id="contactVerificationLimits"></a>
+
+### `contactVerificationLimits` — 이메일 발송 제한
+
+15분 구간 문서는 `_id=window:` 뒤에 범위(이메일 또는 요청 IP)·구간 번호의 SHA-256 해시를 붙이고 `count`, 구간 끝의 `expiresAt`을 저장한다. 이메일별 5회, IP별 20회까지 조건부 원자 증가한다. 원본 IP를 저장하지 않는다.
+
+재발송 간격 문서는 `_id=cooldown:` 뒤에 이메일 해시를 붙이고 `availableAt`(60초 뒤), `expiresAt`(15분 뒤)을 저장한다. 이 컬렉션은 인증 완료 증명이 아니며 제한 초과 시 429를 반환한다.
+
+<a id="phoneVerificationReceipts"></a>
+
+### `phoneVerificationReceipts` — Firebase 인증 토큰 재교환 방지
+
+서버가 Firebase 문자 인증 토큰을 검증한 뒤 `_id=SHA-256(subject + ":" + auth_time)`와 15분 뒤 `expiresAt`만 저장한다. 동일 Firebase 사용자·인증 시각으로 여러 메디픽 인증 증명을 발급하지 못하도록 `_id` 중복을 차단한다. 이 기록 생성과 인증 증명 발급은 같은 트랜잭션이다. Firebase ID 토큰 원문, SMS 코드, 제공자 세션 토큰을 DB에 저장하지 않는다.
+
+위 연락처 인증 4개 컬렉션 모두 `expiresAt`에 `expireAfterSeconds:0`인 `contact_verification_expiry_v1` TTL 인덱스가 있다. 만료 시각은 서버도 직접 비교하며 TTL 정리가 끝날 때까지 기다리지 않는다. 이메일·SMS 환경 설정과 실제 발송 검증 범위는 [백엔드 안내](../backend/README.md#개인-이메일문자-인증-설정)를 참고한다.
 
 <a id="lifecycle"></a>
 
@@ -676,11 +728,11 @@ TTL 정리는 정확히 만료 시각에 즉시 끝난다고 가정하지 않는
 
 ### 회원·인증의 흐름
 
-1. **일반 가입:** 입력 검사 → 이름·연락처 중복 안내 확인 → `users` 생성 → 로그인 토큰 발급.
-2. **첫 소셜 가입:** OAuth 요청 저장 → 외부 계정 인증 → `social_signups` 생성 → 60초 티켓 교환 → 이름·이메일·전화번호 입력 → 중복 검사 → `users` 생성과 가입 대기 삭제를 하나의 트랜잭션으로 처리.
+1. **일반 가입:** 입력 검사 → 이름·연락처 중복 안내 확인 → 두 연락처의 `SIGNUP` 인증 증명 확인 → `users` 생성과 두 증명 소모를 같은 트랜잭션에서 처리 → 로그인 토큰 발급.
+2. **첫 소셜 가입:** OAuth 요청 저장 → 외부 계정 인증 → `social_signups` 생성 → 60초 티켓 교환 → 이름·이메일·전화번호 입력 → 이메일·문자 인증 및 중복 검사 → `users` 생성·두 인증 증명 소모·가입 대기 삭제를 하나의 트랜잭션으로 처리.
 3. **기존 소셜 로그인:** 같은 `socialIdentity`의 가입 완료 회원을 찾아 일회용 티켓을 통해 로그인. 소셜 계정의 이름·이메일을 새로 회원정보로 덮어쓰지 않는다.
-4. **로그아웃·비밀번호 변경:** 회원 `tokenVersion`을 올려 이전 버전 로그인 토큰을 무효화한다. 다른 브라우저에서 같은 회원으로 로그인한 토큰도 이전 버전이면 함께 무효화된다. 비밀번호 변경은 일반 가입 계정만 가능하다.
-5. **탈퇴·관리자 회원 삭제:** `users`를 삭제하고 활성 예약을 취소한다. 회원의 `requests`, `social_login_tickets`, `social_withdrawal_proofs`도 삭제한다. 예약 문서와 예약 변경 이력은 보관하므로 과거 예약의 `userId`·이벤트의 `actorId`에 대응하는 현재 회원이 없을 수 있다.
+4. **로그아웃·비밀번호 변경/재설정·이메일 변경:** 회원 `tokenVersion`을 올려 이전 로그인 토큰을 무효화한다. 개인 비밀번호 변경/재설정은 문자 인증, 이메일 변경은 새 주소의 이메일 인증 증명을 같은 트랜잭션에서 소모한다. 비밀번호 변경/재설정으로 소셜 계정에 로컬 비밀번호를 만들지 않는다. 관리자·병원 비밀번호 변경은 기존 비밀번호 확인 흐름을 유지한다.
+5. **탈퇴·관리자 회원 삭제:** 개인 탈퇴는 `WITHDRAWAL` 문자 인증을 요구하고 LOCAL은 현재 비밀번호도 확인한다. `users`를 삭제하고 활성 예약을 취소한다. 회원의 `requests`, `social_login_tickets`, `social_withdrawal_proofs`, `contactVerificationProofs`도 삭제한다. 증명 소모·삭제·예약 처리를 한 트랜잭션으로 묶는다. 관리자 회원 삭제는 기존 관리자 권한 검사를 유지한다. 예약 문서와 예약 변경 이력은 보관하므로 과거 예약의 `userId`·이벤트의 `actorId`에 대응하는 현재 회원이 없을 수 있다.
 6. **병원 가입:** 사업자번호 조회 → 사업장명·주소와 DB 병원 대조 → 15분 확인값 발급 → 사업자번호·비밀번호로 가입. 병원명·주소·우편번호·전화번호는 서버에서 확정하고 이메일·소셜 가입은 사용하지 않는다.
 7. **병원 로그인·관리:** 사업자번호·비밀번호와 활성 등록을 확인한다. 모든 관리 요청에서 로그인 계정과 등록 병원의 연결을 다시 확인한다. 개인정보용 가입·탈퇴 기능은 기존 `USER` 기준으로 유지한다.
 
@@ -702,7 +754,7 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 | 병원 자료와 수집 기록 | 병원 내용이 그대로면 문서를 다시 쓰지 않고도 오늘 전체 작업의 성공 여부를 확인한다. |
 | 전체 병원 기본 자료와 등록 명단 | 전국 자료를 보존한 채 실제로 서비스에 가입한 병원만 공개하고, 병원 소속·운영 진료과를 공공 원본과 구분한다. |
 
-따라서 18개 모두가 사용자가 입력하는 화면 하나씩을 뜻하지 않는다. 핵심 5개와 병원 등록 명단을 중심으로 동작하고 보조 컬렉션이 인증·재시도·API 재사용을 지원한다.
+따라서 22개 모두가 사용자가 입력하는 화면 하나씩을 뜻하지 않는다. 핵심 5개와 병원 등록 명단을 중심으로 동작하고 보조 컬렉션이 인증·재시도·API 재사용을 지원한다.
 
 ### 수집과 보관 원칙
 
@@ -723,13 +775,13 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 
 전화번호·이메일의 두 유일 인덱스를 준비한 후 구형 이름+전화번호 조합 인덱스 `user_name_phone_v1`을 제거한다. 이름은 가입 차단 여부가 아니라 가입 방식 안내 조건에 사용한다. 이름+전화번호 일치를 먼저 확인하고, 없으면 이름+이메일 일치를 확인한다.
 
-일반 회원 비밀번호 변경은 기존 `passwordHash`와 `tokenVersion`을 함께 조건으로 검사하고, 새 BCrypt 해시 저장과 버전 증가를 한 번에 처리한다. 새 JWT를 반환하고 이전 버전 토큰을 거절한다.
+개인 일반 회원 비밀번호 변경은 기존 `passwordHash`와 `tokenVersion`을 함께 조건으로 검사하고, 문자 인증 증명 소모·새 BCrypt 해시 저장·버전 증가를 같은 트랜잭션으로 처리한다. 새 JWT를 반환하고 이전 버전 토큰을 거절한다.
 
 구형 `users`에 남아 있는 미완료 소셜 USER 자료는 시작 시 가입 대기 저장소로 옮긴다. 예약·요청·이벤트 참조가 있거나 완료 회원의 연락처가 중복되면 자동 삭제·병합하지 않고 시작을 중단해 데이터를 보존한다. 데이터 이전 전에는 백업과 기존 상태 확인이 필요하다.
 
 소셜 가입 완료는 정식 회원 생성과 가입 대기 삭제를 하나의 트랜잭션으로 처리한다. 관리자 회원 목록에는 가입 완료 회원만 표시한다.
 
-소셜 탈퇴 재인증의 회원·제공자 식별자·버전은 OAuth 요청의 서버 속성에 묶는다. 확인서 원문은 HttpOnly 쿠키로 전달하며 URL에 넣지 않는다. 탈퇴 확정 때 확인서 소모와 회원 삭제를 같은 트랜잭션으로 처리한다. ADMIN은 일반 회원 탈퇴·삭제 대상이 아니다.
+소셜 탈퇴 재인증의 회원·제공자 식별자·버전은 OAuth 요청의 서버 속성에 묶는다. 확인서 원문은 HttpOnly 쿠키로 전달하며 URL에 넣지 않는다. 탈퇴 확정 때 OAuth 확인서와 별도 문자 인증 증명 소모, 회원 삭제를 같은 트랜잭션으로 처리한다. ADMIN은 일반 회원 탈퇴·삭제 대상이 아니다.
 
 예약 변경과 회원 삭제가 겹치면 `users.bookingVersion`을 사용하는 공통 문서 갱신에서 충돌을 감지한다. 트랜잭션에 실패하면 회원·예약·자리 수를 함께 되돌린다. 삭제된 회원의 토큰은 현재 회원 조회에서 거절한다.
 
@@ -741,8 +793,9 @@ TTL은 만료 문서를 MongoDB가 백그라운드에서 정리하는 기능이�
 
 | 확인할 내용 | 코드 |
 | --- | --- |
-| 회원가입·로그인·프로필 완료·비밀번호 변경 | [AuthService.java](../backend/src/main/java/kr/dmu/hospital/auth/AuthService.java) |
+| 회원가입·로그인·프로필 완료·이메일/비밀번호 변경·재설정 | [AuthService.java](../backend/src/main/java/kr/dmu/hospital/auth/AuthService.java) |
 | 병원 가입·로그인·사업자번호 대조 | [HospitalAccountService.java](../backend/src/main/java/kr/dmu/hospital/auth/HospitalAccountService.java), [ComwelClient.java](../backend/src/main/java/kr/dmu/hospital/auth/ComwelClient.java), [HospitalBusinessMatch.java](../backend/src/main/java/kr/dmu/hospital/auth/HospitalBusinessMatch.java) |
+| 이메일·문자 인증 요청과 일회용 증명 | [ContactVerificationService.java](../backend/src/main/java/kr/dmu/hospital/auth/ContactVerificationService.java), [FirebasePhoneVerifier.java](../backend/src/main/java/kr/dmu/hospital/auth/FirebasePhoneVerifier.java), [VerificationMailSender.java](../backend/src/main/java/kr/dmu/hospital/auth/VerificationMailSender.java) |
 | 회원 중복 방지 인덱스와 인증 TTL | [UserIndexes.java](../backend/src/main/java/kr/dmu/hospital/auth/UserIndexes.java) |
 | 입력 정보 정규화와 중복 안내 | [MemberIdentity.java](../backend/src/main/java/kr/dmu/hospital/auth/MemberIdentity.java), [MemberIdentityConflict.java](../backend/src/main/java/kr/dmu/hospital/auth/MemberIdentityConflict.java) |
 | 소셜 가입 대기와 로그인 티켓 | [SocialSignups.java](../backend/src/main/java/kr/dmu/hospital/auth/SocialSignups.java), [SocialLoginTickets.java](../backend/src/main/java/kr/dmu/hospital/auth/SocialLoginTickets.java) |

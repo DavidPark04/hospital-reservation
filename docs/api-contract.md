@@ -11,15 +11,18 @@
 | 가입할 병원 선택 | POST `/api/auth/hospital/lookup/select` | 후보를 조회한 비회원 |
 | 병원 가입·로그인 | POST `/api/auth/hospital/register`, `/api/auth/hospital/login` | 비회원 |
 | 내 정보·로그아웃 | GET `/api/auth/me`, POST `/api/auth/logout` | 회원 또는 유효한 가입 임시 토큰 |
-| 비밀번호 변경 | PATCH `/api/auth/password` | 가입 완료 LOCAL 회원·관리자, 현재 비밀번호 확인 |
+| 개인 인증 설정·코드 확인 | GET `/api/auth/verification/config`, POST `/api/auth/verification/email/send`, `/email/confirm`, `/phone/confirm` | 목적별 비회원·가입 임시 권한·USER |
+| 비밀번호 변경 | PATCH `/api/auth/password` | 가입 완료 LOCAL 계정. USER는 현재 비밀번호와 문자 인증, ADMIN·HOSPITAL은 기존 비밀번호 확인 |
+| 이메일 변경 | PATCH `/api/auth/email` | 가입 완료 USER, 새 이메일 인증 |
+| 비밀번호 찾기·재설정 | POST `/api/auth/password/reset` | LOCAL USER의 아이디와 등록 휴대전화 문자 인증 |
 | 소셜 제공자 | GET `/api/auth/social/providers` | 전체 |
 | 소셜 로그인 시작 | GET `/oauth2/authorization/{google\|kakao}` | 전체 |
 | 제공자 콜백 | GET `/login/oauth2/code/{google\|kakao}` | OAuth state 검증 |
 | 소셜 결과 교환 | POST `/api/auth/social/exchange` | 같은 origin·일회용 HttpOnly 교환 쿠키 |
 | 소셜 가입 완료 | POST `/api/auth/social/profile` | 유효한 가입 임시 토큰 |
-| 일반 회원 탈퇴 | DELETE `/api/members/me` | LOCAL USER, 현재 비밀번호 확인 |
+| 개인 회원 탈퇴 | DELETE `/api/members/me` | 가입 완료 USER의 문자 인증. LOCAL은 현재 비밀번호도 확인 |
 | 소셜 탈퇴 인증 시작 | POST `/api/auth/social/withdrawal/start` | 가입 완료 GOOGLE/KAKAO USER |
-| 소셜 탈퇴 확정 | POST `/api/auth/social/withdrawal/confirm` | 시작한 회원의 JWT·재확인 증명 쿠키 |
+| 소셜 탈퇴 확정 | POST `/api/auth/social/withdrawal/confirm` | 시작한 회원의 JWT·OAuth 재확인 쿠키·문자 인증 |
 | 소셜 탈퇴 취소 | POST `/api/auth/social/withdrawal/cancel` | 현재 회원의 JWT |
 | 병원 검색·상세 | GET `/api/hospitals`, `/api/hospitals/{id}` | 전체 |
 | AI 상담 | POST `/api/chat` | 전체, 서버 사용량 제한 적용 |
@@ -64,13 +67,13 @@
 
 ## 가입과 로그인
 
-일반 가입 요청은 `{name,loginId,password,email,phone}`, 로그인은 `{loginId,password}`입니다. 신규 가입의 이메일과 전화번호는 모두 필수입니다. 아이디는 소문자로 정규화합니다. 신규 연락처는 공백·하이픈을 제거하고 0으로 시작하는 국내 9~11자리 숫자로 저장합니다. 이메일은 앞뒤 공백을 제거해 저장하며 중복 검사에는 소문자로 정규화한 `emailNormalized`를 사용합니다. 기존 이메일·전화번호가 없는 LOCAL 회원의 로그인은 유지하고 누락된 값을 임의로 채우지 않습니다.
+일반 가입 요청은 `{name,loginId,password,email,phone,emailVerificationToken,phoneVerificationToken}`, 로그인은 `{loginId,password}`입니다. 신규 가입의 이메일과 휴대전화, 두 연락처에 대한 `SIGNUP` 인증 증명이 모두 필수입니다. 기존 전화번호 입력 정규화와 별도로 실제 문자 인증은 한국 휴대전화만 지원합니다. 아이디는 소문자로 정규화합니다. 신규 연락처는 공백·하이픈을 제거하고 0으로 시작하는 국내 9~11자리 숫자로 저장합니다. 이메일은 앞뒤 공백을 제거해 저장하며 중복 검사에는 소문자로 정규화한 `emailNormalized`를 사용합니다. 기존 이메일·전화번호가 없는 LOCAL 회원의 로그인은 유지하고 누락된 값을 임의로 채우지 않습니다.
 
-로그인 응답은 `{token,user}`입니다. 공개 User 필드는 `id,name,loginId,role,authProvider,profileComplete,emailVerified`와 선택 `email,phone`입니다. 비밀번호 해시, 제공자 식별번호, 제공자 토큰, 프로필 이미지는 공개하지 않습니다.
+로그인 응답은 `{token,user}`입니다. 공개 User 필드는 `id,name,loginId,role,authProvider,profileComplete,emailVerified,phoneVerified`와 선택 `email,phone`입니다. 비밀번호 해시, 제공자 식별번호, 제공자 토큰, 프로필 이미지는 공개하지 않습니다.
 
-Google은 `openid`만 요청하고 Kakao는 별도 개인정보 scope를 요청하지 않습니다. 최초 소셜 인증은 임시 가입 상태만 만들며 `users`에는 등록하지 않습니다. 임시 응답은 빈 이름·아이디, `profileComplete:false`이고 이메일·전화번호가 없습니다. 임시 JWT는 상태 조회·가입 완료·로그아웃에만 사용할 수 있습니다.
+Google은 `openid`만 요청하고 Kakao는 별도 개인정보 scope를 요청하지 않습니다. 최초 소셜 인증은 임시 가입 상태만 만들며 `users`에는 등록하지 않습니다. 임시 응답은 빈 이름·아이디, `profileComplete:false`이고 이메일·전화번호가 없습니다. 임시 JWT는 상태 조회·가입 목적 이메일/문자 인증·가입 완료·로그아웃에만 사용할 수 있습니다.
 
-가입 완료 요청은 `{name,email,phone}`입니다. 입력 검증과 중복 검사를 통과하면 정식 회원 생성과 임시 자료 소모를 하나의 트랜잭션으로 처리하고 새 회원 JWT를 반환합니다. 기존 임시 JWT는 회원 JWT로 바뀌지 않으며 재사용할 수 없습니다. 이미 가입된 같은 제공자 계정으로 로그인하면 직접 입력한 회원 정보를 유지합니다.
+가입 완료 요청은 `{name,email,phone,emailVerificationToken,phoneVerificationToken}`입니다. 입력 검증과 중복 검사, 두 연락처의 `SIGNUP` 증명 검증을 통과하면 정식 회원 생성·인증 증명 소모·임시 가입 자료 소모를 하나의 트랜잭션으로 처리하고 새 회원 JWT를 반환합니다. 신규 일반·소셜 개인 회원의 `emailVerified`, `phoneVerified`는 모두 `true`입니다. 기존 미인증 회원의 상태를 임의로 인증 완료로 바꾸지는 않습니다. 기존 임시 JWT는 회원 JWT로 바뀌지 않으며 재사용할 수 없습니다. 이미 가입된 같은 제공자 계정으로 로그인하면 직접 입력한 회원 정보를 유지합니다.
 
 일반·구글·카카오 가입을 통틀어 정규화한 전화번호 또는 이메일 중 하나라도 기존 회원과 일치하면 이름과 무관하게 HTTP 409로 가입을 차단합니다. 기존 가입 방식은 이름·전화번호가 함께 일치하는 회원이 있으면 아래 형식으로 안내하고, 없으면 이름·이메일이 함께 일치하는 회원을 확인해 안내합니다. 전화번호와 이메일이 서로 다른 회원과 일치할 때도 이 순서를 적용합니다. 전화번호 일치 회원과 이름이 다르더라도 이메일 일치 회원과 이름이 같으면 이메일 일치 회원의 가입 방식을 안내합니다.
 
@@ -82,25 +85,50 @@ Google은 `openid`만 요청하고 Kakao는 별도 개인정보 scope를 요청�
 }
 ```
 
-구글은 “이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요.”, 일반 회원은 “이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.”를 표시합니다. `existingAuthProvider`는 `LOCAL`, `GOOGLE`, `KAKAO` 중 하나이며 프론트는 해당 방식의 로그인 버튼을 제공합니다. 이름·전화번호와 이름·이메일 중 어느 조합도 일치하지 않는 중복에는 `{message:"이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요."}`만 반환하며 `code`와 `existingAuthProvider`를 포함하지 않습니다. 소셜 추가 정보 화면에서는 ‘가입 완료’를 눌러 중복 응답을 받았을 때 안내하고, 특정 방식의 로그인 버튼을 누르면 임시 가입 인증을 종료한 뒤 로그인 화면으로 이동합니다. 별도 아이디 중복은 기존 메시지 형태의 409입니다. 전화번호·이메일 입력값의 일치 검사이며 이메일·전화번호 본인 인증 또는 자동 계정 통합이 아닙니다. 별도 가입정보 조회 API나 화면은 제공하지 않습니다.
+구글은 “이미 구글로 가입된 계정이 있어요. 구글로 로그인해 주세요.”, 일반 회원은 “이미 일반 가입으로 등록된 계정이 있어요. 아이디로 로그인해 주세요.”를 표시합니다. `existingAuthProvider`는 `LOCAL`, `GOOGLE`, `KAKAO` 중 하나이며 프론트는 해당 방식의 로그인 버튼을 제공합니다. 이름·전화번호와 이름·이메일 중 어느 조합도 일치하지 않는 중복에는 `{message:"이미 가입된 정보가 있어요. 기존에 가입한 방법으로 로그인해 주세요."}`만 반환하며 `code`와 `existingAuthProvider`를 포함하지 않습니다. 소셜 추가 정보 화면에서는 ‘가입 완료’를 눌러 중복 응답을 받았을 때 안내하고, 특정 방식의 로그인 버튼을 누르면 임시 가입 인증을 종료한 뒤 로그인 화면으로 이동합니다. 별도 아이디 중복은 기존 메시지 형태의 409입니다. 이 중복 안내는 입력값의 일치 검사입니다. 연락처 인증 절차는 별도로 요구하며, 이름의 실명 확인이나 자동 계정 통합은 수행하지 않습니다. 별도 가입정보 조회 API나 화면은 제공하지 않습니다.
 
 회원 로그아웃은 토큰 버전을 폐기하고, 가입 진행 중 로그아웃은 임시 가입 자료를 제거합니다. 프론트는 저장한 JWT를 지웁니다.
 
+## 개인 연락처 인증
+
+병원 회원가입에는 이 절차를 적용하지 않습니다. 개인 일반 가입과 소셜 가입 완료에는 이메일·휴대전화 인증이 모두 필요합니다. 인증 완료된 이메일·휴대전화 입력은 화면에서 읽기 전용으로 표시합니다. 이메일 변경은 새 이메일을, 비밀번호 변경·탈퇴는 회원정보에 등록된 휴대전화를 인증합니다. 비밀번호 찾기는 아이디와 등록 휴대전화가 일치하는 LOCAL 개인 회원만 사용할 수 있습니다.
+
+| 메서드·경로 | 요청 | 응답·규칙 |
+| --- | --- | --- |
+| GET `/api/auth/verification/config` | 없음 | `{emailEnabled,phoneEnabled,firebase:{apiKey,authDomain,projectId}}`. 브라우저용 공개 설정만 반환하며 SMTP 비밀값은 반환하지 않음 |
+| POST `/api/auth/verification/email/send` | `{purpose,email}` | `purpose`는 `SIGNUP` 또는 `EMAIL_CHANGE`. Gmail SMTP로 6자리 코드 전송. `{challengeId,expiresIn:300,retryAfter:60}` |
+| POST `/api/auth/verification/email/confirm` | `{challengeId,code}` | 성공 시 `{verificationToken,expiresIn:600,contact}`. 코드는 5분간 최대 5회 확인 가능 |
+| POST `/api/auth/verification/phone/confirm` | `{purpose,idToken,loginId?}` | `purpose`는 `SIGNUP`, `PASSWORD_CHANGE`, `WITHDRAWAL`, `PASSWORD_RESET`. 마지막 목적에는 `loginId` 필수. 성공 시 `{verificationToken,expiresIn:600,contact}` |
+
+문자 발송·코드 입력은 브라우저의 Firebase Phone Auth와 reCAPTCHA로 진행합니다. 서버는 Firebase ID 토큰의 서명, 프로젝트·발급자·수신자, 만료, `phone` 로그인 방식과 최근 5분 안의 인증 시각을 검증하고 한국 휴대전화 번호를 국내 형식으로 정규화합니다. 다른 Firebase 프로젝트나 tenant 토큰은 허용하지 않습니다. Firebase 세션은 메디픽 로그인 세션을 대신하지 않습니다.
+
+`SIGNUP`은 비회원 또는 유효한 소셜 가입 임시 JWT에서 사용하고, `EMAIL_CHANGE`, `PASSWORD_CHANGE`, `WITHDRAWAL`은 가입 완료 USER의 현재 JWT가 필요합니다. `PASSWORD_RESET`은 로그인 없이 사용할 수 있지만 아이디·인증한 휴대전화와 저장된 계정이 일치해야 합니다. 소셜 가입 임시 JWT는 회원 기능 대신 가입 목적 인증만 수행할 수 있습니다.
+
+인증 결과는 용도·채널·정규화 연락처·회원/임시 가입 ID·토큰 버전에 묶인 10분짜리 일회용 증명입니다. 일반 가입은 익명 범위(`userId:""`, 버전 0)이며 소셜 가입은 임시 가입 범위입니다. 최종 작업에 `emailVerificationToken` 또는 `phoneVerificationToken`으로 전달하고 서버가 회원 변경과 같은 트랜잭션에서 소모합니다. 실패하면 증명 소모도 롤백됩니다. 화면의 인증 완료 표시나 클라이언트가 보낸 `emailVerified`·`phoneVerified` 값으로 통과할 수 없습니다. 입력한 연락처를 바꾸면 다시 인증해야 합니다.
+
+이메일 발송은 주소별 60초 재발송 간격, 15분 구간당 이메일별 5회·요청 IP별 20회 제한을 적용합니다. 제한 초과는 429, 인증 누락·불일치·만료·재사용은 400, 로그인 필요는 401, 해당 계정에서 허용하지 않는 요청은 400 또는 403, 발송 설정 누락·메일 전송 실패는 503입니다. 같은 Firebase 사용자와 인증 시각의 토큰은 서버 증명으로 한 번만 교환할 수 있습니다.
+
 ## 비밀번호 변경
 
-PATCH `/api/auth/password` 요청은 `{currentPassword,newPassword}`입니다. 대상 회원은 현재 JWT로 결정하며 요청에 다른 회원 ID를 넣어 변경할 수 없습니다. 가입 완료된 LOCAL 회원과 관리자만 사용할 수 있고 소셜 회원·가입 임시 권한은 사용할 수 없습니다. 비밀번호 앞뒤 공백을 제거하지 않으며 새 비밀번호는 8자 이상, UTF-8 72바이트 이하여야 합니다. 현재 비밀번호와 같은 값은 거절합니다. 화면의 새 비밀번호 확인값은 프런트에서 일치 여부를 확인합니다.
+PATCH `/api/auth/password`의 개인 USER 요청은 `{currentPassword,newPassword,phoneVerificationToken}`입니다. `PASSWORD_CHANGE` 문자 인증 증명이 필요합니다. ADMIN·HOSPITAL의 기존 요청은 `{currentPassword,newPassword}`를 유지합니다. 대상 회원은 현재 JWT로 결정하며 요청에 다른 회원 ID를 넣어 변경할 수 없습니다. 가입 완료된 LOCAL 개인·관리자·병원 계정만 사용할 수 있고 소셜 회원·가입 임시 권한은 사용할 수 없습니다. 비밀번호 앞뒤 공백을 제거하지 않으며 새 비밀번호는 8자 이상, UTF-8 72바이트 이하여야 합니다. 현재 비밀번호와 같은 값은 거절합니다. 화면의 새 비밀번호 확인값은 프런트에서 일치 여부를 확인합니다.
 
-현재 비밀번호 불일치·새 비밀번호 입력 오류는 400이며 기존 비밀번호와 세션을 유지합니다. 인증 없음·만료는 401, 소셜 회원 등 권한 부족은 403입니다. 서버는 인증된 토큰 버전과 기존 비밀번호 해시가 유지된 경우에만 새 BCrypt 해시 저장과 토큰 버전 증가를 함께 수행합니다.
+현재 비밀번호 불일치·새 비밀번호 입력 오류는 400이며 기존 비밀번호와 세션을 유지합니다. 인증 없음·만료는 401, 소셜 회원 등 권한 부족은 403입니다. 서버는 인증된 토큰 버전과 기존 비밀번호 해시가 유지된 경우에만 문자 인증 증명 소모(USER), 새 BCrypt 해시 저장, 토큰 버전 증가를 한 트랜잭션으로 수행합니다.
 
-성공 응답은 로그인과 같은 `{token,user}`입니다. 변경 전 JWT는 모두 무효화되고 프런트는 응답의 새 JWT로 현재 로그인을 이어 갑니다. 새 로그인에는 변경된 비밀번호를 사용합니다. 이 API는 로그아웃 상태에서의 비밀번호 재설정이나 소셜 제공자 계정의 비밀번호 변경 기능이 아닙니다.
+성공 응답은 로그인과 같은 `{token,user}`입니다. 변경 전 JWT는 모두 무효화되고 프런트는 응답의 새 JWT로 현재 로그인을 이어 갑니다. 새 로그인에는 변경된 비밀번호를 사용합니다. 로그아웃 상태의 비밀번호 찾기는 아래 재설정 API를 사용합니다. 소셜 제공자 계정의 비밀번호를 변경하지는 않습니다.
+
+## 이메일 변경·비밀번호 찾기
+
+PATCH `/api/auth/email`은 `{email,emailVerificationToken}`을 받고 새 주소의 `EMAIL_CHANGE` 증명을 요구합니다. 가입 완료 개인 USER는 LOCAL·GOOGLE·KAKAO 모두 사용할 수 있습니다. 현재 주소와 같으면 400, 이미 가입된 주소면 409입니다. 증명 소모, 이메일·정규화 값·인증 상태 갱신, `tokenVersion` 증가를 한 트랜잭션으로 처리하고 `{token,user}`를 반환합니다. 프런트는 새 세션으로 교체하며 이전 JWT는 무효화됩니다.
+
+로그인 화면의 비밀번호 찾기는 아이디 입력 → 등록 휴대전화 문자 인증 → 새 비밀번호 입력 순서입니다. POST `/api/auth/password/reset` 요청은 `{loginId,newPassword,phoneVerificationToken}`이며 `PASSWORD_RESET` 증명이 필요합니다. 일반 개인 계정만 허용하고 관리자·병원·소셜 계정은 대상이 아닙니다. 증명 소모·비밀번호 변경·토큰 버전 증가를 함께 처리하고 `{message}`를 반환합니다. 기존 세션은 모두 만료되며 자동 로그인하지 않고 새 비밀번호로 로그인합니다.
 
 ## 회원 탈퇴
 
-일반 회원은 DELETE `/api/members/me`에 `{password}`를 전달합니다. 삭제 대상은 요청의 ID가 아니라 현재 JWT 회원으로 정하며 저장된 BCrypt 해시와 현재 비밀번호를 비교합니다. 비밀번호 누락은 400, 불일치는 403이고 실패 시 계정·예약을 유지합니다. 관리자 및 소셜 회원은 이 비밀번호 경로로 탈퇴할 수 없습니다.
+일반 회원은 DELETE `/api/members/me`에 `{password,phoneVerificationToken}`을 전달합니다. `WITHDRAWAL` 문자 인증은 등록된 휴대전화와 일치해야 합니다. 소셜 개인 회원은 같은 경로에 `{phoneVerificationToken}`을 전달하며 메디픽 비밀번호는 요구하지 않습니다. 삭제 대상은 요청의 ID가 아니라 현재 JWT 회원으로 정하며 저장된 BCrypt 해시와 현재 비밀번호를 비교합니다. 비밀번호 누락은 400, 불일치는 403이고 실패 시 계정·예약을 유지합니다. 문자 인증이 누락되거나 맞지 않으면 400입니다. 관리자·병원·가입 대기 계정은 개인 회원 탈퇴 대상이 아닙니다.
 
-소셜 회원은 POST `/api/auth/social/withdrawal/start`로 `{authorizationUrl}`을 받아 기존 OAuth 경로에서 가입한 계정을 다시 확인합니다. 콜백의 제공자 고유번호가 시작한 회원과 일치해야 하며 일반 로그인·가입 처리로 전환하지 않습니다. 인증 결과는 `/mypage?withdrawal=verified`로 돌아오고, 프론트는 결과 쿼리를 지운 뒤 최종 확인 창을 표시합니다. 취소·실패·다른 계정 선택 시 탈퇴하지 않습니다. 최종 POST `/api/auth/social/withdrawal/confirm`은 현재 JWT와 유효한 일회용 HttpOnly 증명 쿠키를 함께 요구합니다. OAuth 콜백 방문만으로 회원을 삭제하지 않습니다.
+기존 소셜 OAuth 재확인 경로도 유지합니다. POST `/api/auth/social/withdrawal/start`로 `{authorizationUrl}`을 받아 기존 OAuth 경로에서 가입한 계정을 다시 확인합니다. 콜백의 제공자 고유번호가 시작한 회원과 일치해야 하며 일반 로그인·가입 처리로 전환하지 않습니다. 인증 결과는 `/mypage?withdrawal=verified`로 돌아오고, 프론트는 결과 쿼리를 지운 뒤 최종 확인 창을 표시합니다. 취소·실패·다른 계정 선택 시 탈퇴하지 않습니다. 최종 POST `/api/auth/social/withdrawal/confirm`은 본문 `{phoneVerificationToken}`, 현재 JWT, 유효한 일회용 HttpOnly OAuth 증명 쿠키를 함께 요구합니다. 이 경로도 `WITHDRAWAL` 문자 인증을 생략할 수 없습니다. OAuth 콜백 방문만으로 회원을 삭제하지 않습니다.
 
-성공 응답은 `{message,deletedUserId,canceledReservations}`입니다. 회원정보·요청 키·로그인 교환 티켓 삭제와 활성 예약 취소·정원 반환을 한 트랜잭션으로 처리합니다. 실패하면 전체를 되돌리고, 성공하면 기존 회원 JWT가 무효화됩니다. 프론트는 세션과 회원별 캐시를 비우고 홈으로 이동합니다. 예약·이벤트 이력은 UUID로 보존합니다. 탈퇴한 이메일·전화번호는 신규 가입에 다시 사용할 수 있으며, 재가입은 새 회원 ID를 발급합니다. 카카오·구글 자체 계정 삭제나 해당 서비스의 연결 해제를 수행하는 기능은 아닙니다.
+성공 응답은 `{message,deletedUserId,canceledReservations}`입니다. 문자 인증 증명 소모, 회원정보·요청 키·로그인 교환 티켓·회원별 연락처 인증 증명 삭제와 활성 예약 취소·정원 반환을 한 트랜잭션으로 처리합니다. 실패하면 전체를 되돌리고, 성공하면 기존 회원 JWT가 무효화됩니다. 프론트는 세션과 회원별 캐시를 비우고 홈으로 이동합니다. 예약·이벤트 이력은 UUID로 보존합니다. 탈퇴한 이메일·전화번호는 신규 가입에 다시 사용할 수 있으며, 재가입은 새 회원 ID를 발급합니다. 카카오·구글 자체 계정 삭제나 해당 서비스의 연결 해제를 수행하는 기능은 아닙니다.
 
 ## 병원·상담
 

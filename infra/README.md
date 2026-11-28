@@ -79,6 +79,8 @@ GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각
 | `HIRA_HOSPITAL_KEY` | 병원정보서비스 인증키. 기본 수집은 Actions에서 수행하며 웹 요청에는 사용하지 않음 |
 | `HIRA_DETAIL_KEY` | 선택한 병원의 상세 3종 조회용 인증키 |
 | `COMWEL_API_KEY` | 병원 가입에 필수인 근로복지공단 고용/산재보험 현황정보 인증키. 사업자등록번호로 사업장을 조회하고 DB 병원과 대조 |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | 개인 이메일 인증용 Gmail 발신 주소와 앱 비밀번호. 비밀번호는 서버에서만 사용 |
+| `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID` | 기존 Google Cloud Identity Platform 프로젝트의 공개 웹 설정과 서버 토큰 검증 대상 |
 | `PORT` | `8080` |
 | `SERVER_ADDRESS` | `0.0.0.0` (컨테이너 기본값) |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `framework` (배포 프록시용 컨테이너 기본값) |
@@ -87,6 +89,14 @@ GitHub 예약 실행은 지연되거나 누락될 수 있으므로 자정 정각
 `SERVER_PORT`를 따로 설정하면 `PORT`와 동일하게 맞춥니다. `HOSPITAL_API_FILE`은 로컬 보조 입력용이므로 운영에 설정하지 않습니다. DB URI에는 대상 DB명을 지정하고, Atlas 네트워크 허용 설정에서 Vercel 실행 환경이 접속할 수 있는지 확인합니다. 로컬 PC IP만 허용한 상태로는 클라우드 서버 접속이 보장되지 않습니다.
 
 Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에서 실계정 OAuth를 확인하려면 해당 origin·callback·DB를 별도로 맞춰야 하므로 이번 운영 검증은 확정된 production 주소를 기준으로 합니다.
+
+## 개인 연락처 인증 설정
+
+Gmail SMTP는 587 포트와 STARTTLS를 사용합니다. 위 다섯 환경변수를 Production에 저장하고 재배포합니다. `GET /api/auth/verification/config`에서 이메일·전화 인증 활성화 여부를 확인할 수 있으며 SMTP 비밀번호는 반환하지 않습니다.
+
+Identity Platform에서 Phone 공급업체를 활성화하고 승인 도메인에 `medi-pick.vercel.app`을 등록합니다. SMS 허용 지역은 Firebase 콘솔의 Authentication → Settings → SMS region policy에서 대한민국(`KR`)을 허용하거나 같은 프로젝트의 Identity Toolkit 관리 API로 설정합니다. 실제 문자 수신을 시험할 번호는 테스트 전화번호 목록에서 해제합니다. [Google SMS 지역 정책 안내](https://docs.cloud.google.com/identity-platform/docs/admin/sms-regions)
+
+배포 후 시험 계정으로 이메일·SMS 수신, 인증 완료 후 입력칸 잠금, 가입·비밀번호 찾기·비밀번호 변경·이메일 변경·탈퇴를 확인합니다. 자동 테스트의 모의 인증 결과와 실제 전달·수신 확인은 구분해 PR에 기록합니다. 상세 요청과 만료·재사용 규칙은 [API 계약](../docs/api-contract.md)을 따릅니다.
 
 ## 병원 계정 운영
 
@@ -117,7 +127,7 @@ Production 비밀값을 Preview에 자동 복제하지 않습니다. Preview에�
 - Kakao Redirect URI: `https://medi-pick.vercel.app/login/oauth2/code/kakao`
 - 각 콘솔의 웹 사이트 origin 설정이 필요하면 `https://medi-pick.vercel.app`을 사용합니다.
 
-기존 동의 범위는 유지합니다. Google은 `openid`, Kakao는 추가 개인정보 scope 없이 계정 식별번호만 사용하고 이름·이메일·전화번호는 앱의 추가 입력 화면에서 받습니다. 앱 비즈니스 전환이나 이메일·SMS 인증은 이번 구성에 포함되지 않습니다.
+기존 동의 범위는 유지합니다. Google은 `openid`, Kakao는 추가 개인정보 scope 없이 계정 식별번호만 사용하고 이름·이메일·전화번호는 앱의 추가 입력 화면에서 받습니다. 개인 가입의 이메일·SMS 인증은 위 연락처 인증 설정을 사용하며 소셜 로그인 동의 범위와 별도로 처리합니다.
 
 ## 배포 순서와 검증
 

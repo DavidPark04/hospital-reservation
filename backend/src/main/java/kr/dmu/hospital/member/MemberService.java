@@ -2,6 +2,7 @@ package kr.dmu.hospital.member;
 
 import com.mongodb.MongoException;
 import kr.dmu.hospital.booking.BookingService;
+import kr.dmu.hospital.auth.ContactVerificationService;
 import kr.dmu.hospital.common.ApiException;
 import org.bson.Document;
 import org.springframework.data.domain.Sort;
@@ -11,6 +12,7 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -26,13 +28,20 @@ public class MemberService {
     private final BookingService booking;
     private final TransactionTemplate transaction;
     private final PasswordEncoder passwords;
+    private final ContactVerificationService verification;
 
     public MemberService(MongoTemplate mongo, BookingService booking, MongoTransactionManager transactionManager, PasswordEncoder passwords) {
+        this(mongo, booking, transactionManager, passwords, new ContactVerificationService(mongo));
+    }
+    @Autowired
+    public MemberService(MongoTemplate mongo, BookingService booking, MongoTransactionManager transactionManager,
+            PasswordEncoder passwords, ContactVerificationService verification) {
         this.mongo = mongo;
         this.booking = booking;
         this.transaction = new TransactionTemplate(transactionManager);
         this.transaction.setTimeout(20);
         this.passwords = passwords;
+        this.verification = verification;
     }
 
     public List<Document> list(String adminId) {
@@ -66,22 +75,30 @@ public class MemberService {
     }
 
     public Document delete(String adminId, String userId) {
-        return deleteMember(adminId, userId, false, null, null, null);
+        return deleteMember(adminId, userId, false, null, null, null, null);
     }
 
     public Document withdraw(String userId, String password) {
-        return deleteMember(userId, userId, true, password, null, null);
+        return withdrawVerified(userId, password, null);
+    }
+
+    public Document withdrawVerified(String userId, String password, String phoneVerificationToken) {
+        return deleteMember(userId, userId, true, password, null, null, phoneVerificationToken);
     }
 
     /** Called only after a fresh OAuth callback has verified this exact provider identity. */
     public Document withdrawSocial(String userId, String expectedIdentity, int expectedTokenVersion) {
+        return withdrawSocial(userId, expectedIdentity, expectedTokenVersion, null);
+    }
+    public Document withdrawSocial(String userId, String expectedIdentity, int expectedTokenVersion, String phoneVerificationToken) {
         if (expectedIdentity == null || expectedIdentity.isBlank()) {
             throw new ApiException(403, "가입한 소셜 계정으로 다시 인증해 주세요.");
         }
-        return deleteMember(userId, userId, true, null, expectedIdentity, expectedTokenVersion);
+        return deleteMember(userId, userId, true, null, expectedIdentity, expectedTokenVersion, phoneVerificationToken);
     }
 
-    private Document deleteMember(String actorId, String userId, boolean withdrawal, String password, String socialIdentity, Integer expectedTokenVersion) {
+    private Document deleteMember(String actorId, String userId, boolean withdrawal, String password, String socialIdentity,
+            Integer expectedTokenVersion, String phoneVerificationToken) {
         for (int attempt = 0; attempt < RETRIES; attempt++) {
             try {
                 return transaction.execute(status -> {
@@ -103,8 +120,13 @@ public class MemberService {
                         throw new ApiException(403, withdrawal ? "관리자 계정은 탈퇴할 수 없습니다." : "관리자 계정은 삭제할 수 없습니다.");
                     }
                     if (withdrawal) {
-                        if (socialIdentity == null) verifyPassword(user, password);
-                        else verifySocialIdentity(user, socialIdentity, expectedTokenVersion);
+                        if (socialIdentity != null) verifySocialIdentity(user, socialIdentity, expectedTokenVersion);
+                        else if (user.getString("authProvider") == null || "LOCAL".equals(user.getString("authProvider"))) verifyPassword(user, password);
+                        else if (!Boolean.TRUE.equals(user.getBoolean("profileComplete"))) {
+                            throw new ApiException(403, "가입을 완료한 회원만 탈퇴할 수 있어요.");
+                        }
+                        verification.consume(phoneVerificationToken, "WITHDRAWAL", "PHONE",
+                                user.getString("phone"), userId, user.getInteger("tokenVersion", 0));
                     }
                     // Booking mutations also write this user document, so an in-flight
                     // reservation must finish before deletion or retry after it and fail.
@@ -117,6 +139,7 @@ public class MemberService {
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "requests");
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_login_tickets");
                     mongo.remove(Query.query(Criteria.where("userId").is(userId)), "social_withdrawal_proofs");
+                    mongo.remove(Query.query(Criteria.where("userId").is(userId)), "contactVerificationProofs");
                     return new Document("message", withdrawal ? "회원 탈퇴가 완료되었습니다." : "회원을 삭제했습니다.").append("deletedUserId", userId)
                             .append("canceledReservations", canceled);
                 });

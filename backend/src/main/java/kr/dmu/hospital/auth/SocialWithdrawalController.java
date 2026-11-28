@@ -24,10 +24,12 @@ public class SocialWithdrawalController {
     }
     @PostMapping(value = "/confirm", consumes = "application/json")
     public Document confirm(@CookieValue(name = SocialWithdrawalService.COOKIE_NAME, required = false) String value,
+            @RequestBody(required = false) Map<String, Object> body,
             HttpServletRequest request, HttpServletResponse response) {
         String userId = CurrentUser.require().getId();
         checkOrigin(request, response);
-        Document result = withdrawal.confirm(userId, value);
+        String proof = body != null && body.get("phoneVerificationToken") instanceof String token ? token : null;
+        Document result = withdrawal.confirm(userId, value, proof);
         response.addHeader(HttpHeaders.SET_COOKIE, withdrawal.cookie("", 0).toString());
         return result;
     }

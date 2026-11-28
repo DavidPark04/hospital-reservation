@@ -88,8 +88,11 @@ public class SocialWithdrawalService {
     }
 
     public Document confirm(String userId, String value) {
+        return confirm(userId, value, null);
+    }
+    public Document confirm(String userId, String value, String phoneVerificationToken) {
         for (int attempt = 0; attempt < 8; attempt++) {
-            try { return transaction.execute(status -> consumeAndWithdraw(userId, value)); }
+            try { return transaction.execute(status -> consumeAndWithdraw(userId, value, phoneVerificationToken)); }
             catch (RuntimeException error) {
                 if (error instanceof ApiException || !retryable(error)) throw error;
                 if (attempt == 7) throw new ApiException(409, "예약 요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
@@ -103,7 +106,7 @@ public class SocialWithdrawalService {
         throw new ApiException(409, "잠시 후 다시 시도해 주세요.");
     }
 
-    private Document consumeAndWithdraw(String userId, String value) {
+    private Document consumeAndWithdraw(String userId, String value, String phoneVerificationToken) {
         Document user = requireMember(userId);
         if (!valid(value)) throw expired();
         Document proof = mongo.findAndRemove(Query.query(Criteria.where("_id").is(SocialLoginTickets.hash(value))
@@ -111,7 +114,7 @@ public class SocialWithdrawalService {
             .and("tokenVersion").is(user.getInteger("tokenVersion", 0))
             .and("expiresAt").gt(Date.from(clock.instant()))), Document.class, COLLECTION);
         if (proof == null) throw expired();
-        return members.withdrawSocial(userId, proof.getString("socialIdentity"), proof.getInteger("tokenVersion"));
+        return members.withdrawSocial(userId, proof.getString("socialIdentity"), proof.getInteger("tokenVersion"), phoneVerificationToken);
     }
 
     public void cancel(String userId, String value) {
