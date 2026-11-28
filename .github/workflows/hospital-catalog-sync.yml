@@ -9,10 +9,11 @@ on:
     - cron: '0 15 * * 3' # Thursday 00:00 KST
     - cron: '0 15 * * 4' # Friday 00:00 KST
     - cron: '0 15 * * 5' # Saturday 00:00 KST
+    - cron: '0 15 * * 6' # Sunday 00:00 KST: retry recorded failures once
   workflow_dispatch:
     inputs:
       day:
-        description: 'Region group to refresh (KST weekday; see README)'
+        description: 'KST weekday group; sunday retries recorded failures only'
         type: choice
         required: true
         default: monday
@@ -23,9 +24,11 @@ on:
           - thursday
           - friday
           - saturday
+          - sunday
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: hospital-basic-catalog-sync
@@ -54,33 +57,44 @@ jobs:
         run: python scripts/hospital-catalog-schedule.py
       - name: Install MongoDB client
         run: npm ci --ignore-scripts
-      - name: Collect selected regions and validate complete scoped snapshot
+      - name: Collect weekday requests or retry Sunday failures once
         env:
           HIRA_HOSPITAL_KEY: ${{ secrets.HIRA_HOSPITAL_KEY }}
-          CATALOG_REGIONS: ${{ steps.plan.outputs.regions }}
-        # Larger 1000-row responses can return HIRA code 99 before the HTTP timeout.
-        # Start at 500; the collector falls back to 100 without changing offsets.
-        run: python scripts/collect-hospital-catalog.py --directory .runtime/hospital-catalog --regions "$CATALOG_REGIONS" --page-size 500 --timeout 120 --workers 2 --maximum-calls 10000
-      - name: Apply changes and retire missing records only in selected regions
-        env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-        run: node scripts/sync-hospital-catalog.mjs --directory .runtime/hospital-catalog --apply
-      - name: Publish counts
-        env:
-          CATALOG_PLAN_LABEL: ${{ steps.plan.outputs.label }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CATALOG_DAY: ${{ steps.plan.outputs.day }}
+          CATALOG_MODE: ${{ steps.plan.outputs.mode }}
+          CATALOG_REGIONS: ${{ steps.plan.outputs.regions }}
+        run: python scripts/run-hospital-catalog.py --directory .runtime/hospital-catalog --day "$CATALOG_DAY"
+      - name: Preserve request checkpoints for Sunday
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hospital-catalog-checkpoint-${{ github.run_id }}
+          path: .runtime/hospital-catalog/checkpoint/**
+          retention-days: 14
+          if-no-files-found: ignore
+          include-hidden-files: true
+      - name: Publish collection and retry summary
+        if: always()
         run: |
           python - <<'PY'
           import json, os
           from pathlib import Path
-          result = json.loads(Path('.runtime/hospital-catalog/sync-result.json').read_text())
-          manifest = json.loads(Path('.runtime/hospital-catalog/catalog-manifest.json').read_text())
+          result_path = Path('.runtime/hospital-catalog/result.json')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
-              regions = manifest['regionScopes']
-              output.write(f"Hospital basic catalog refreshed: {os.environ['CATALOG_PLAN_LABEL']}.\n\n")
-              output.write(f'{len(regions)} selected region codes verified. Missing-record retirement is limited to these regions; detailed API caching is unchanged.\n\n')
-              for field in ('rows', 'inserted', 'updated', 'reactivated', 'retired', 'unchanged', 'verified'):
-                  output.write(f'- {field}: {result[field]}\n')
-              output.write('\nRegional basic counts:\n\n')
-              for code, region in regions.items():
-                  output.write(f"- {code}: {region['scopeCounts']['basic']}\n")
+              output.write('Hospital basic catalog collection and Sunday retry\n\n')
+              if not result_path.is_file():
+                  output.write('No execution summary was produced. Check the failed or canceled step; completion is not confirmed.\n')
+              else:
+                  result = json.loads(result_path.read_text(encoding='utf-8'))
+                  for field in ('day', 'mode', 'weekStartKst', 'completeRegions', 'deferredRegions', 'requests', 'skipped'):
+                      output.write(f'- {field}: {json.dumps(result.get(field), ensure_ascii=False)}\n')
+                  batches = result.get('batches', [])
+                  output.write(f'- batches: {len(batches) if isinstance(batches, list) else json.dumps(batches, ensure_ascii=False)}\n')
+                  if isinstance(batches, list):
+                      for batch in batches:
+                          fields = ('day', 'claimed', 'completeRegions', 'deferredRegions', 'requests', 'failedRequests', 'skippedRequests', 'appliedRegions')
+                          output.write(f"\nBatch: {json.dumps({field: batch.get(field) for field in fields}, ensure_ascii=False)}\n")
+                  output.write('\nOnly complete validated regions are applied. Weekday requests have no immediate retries; Sunday failed requests are attempted once.\n')
           PY

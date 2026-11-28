@@ -32,7 +32,13 @@ REGIONS = {'110000': '서울', '210000': '부산', '220000': '인천', '230000':
            '410000': '세종'}
 KST = dt.timezone(dt.timedelta(hours=9))
 TRANSIENT_RESULT_CODES = frozenset(('01', '02', '04', '05', '99'))
-RETRYABLE_PAGE_FAILURES = frozenset(('upstream_transport_failed', 'upstream_service_unavailable'))
+DAY_REGIONS = {
+    'monday': ('110000',), 'tuesday': ('310000',),
+    'wednesday': ('210000', '360000', '380000'),
+    'thursday': ('220000', '230000', '370000'),
+    'friday': ('250000', '340000', '350000'),
+    'saturday': ('240000', '260000', '320000', '330000', '390000', '410000'),
+}
 
 
 class CollectionError(Exception):
@@ -58,11 +64,15 @@ def normalize_regions(regions=None):
     return tuple(region for region in REGIONS if region in regions)
 
 
+def utc_now():
+    return dt.datetime.now(dt.timezone.utc)
+
+
 def timestamp():
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return utc_now().isoformat()
 
 
-def scope_time_range(values):
+def scope_time_range(values, maximum_age_hours=48):
     try:
         dates = [dt.datetime.fromisoformat(value) for value in values]
         if not dates or any(value.tzinfo is None for value in dates):
@@ -70,8 +80,8 @@ def scope_time_range(values):
     except (ValueError, TypeError):
         raise CollectionError('invalid_scope_time') from None
     first, last = min(dates), max(dates)
-    now = dt.datetime.now(dt.timezone.utc)
-    if now - first > dt.timedelta(hours=48) or last - now > dt.timedelta(minutes=5):
+    now = utc_now()
+    if now - first > dt.timedelta(hours=maximum_age_hours) or last - now > dt.timedelta(minutes=5):
         raise CollectionError('stale_or_future_scope_checkpoint')
     return {'firstFetchedAt': first.isoformat(), 'lastFetchedAt': last.isoformat()}
 
@@ -137,8 +147,7 @@ def parse_page(payload, page, size):
     if code in ('22', '23'):
         raise CollectionError('upstream_call_limit', code)
     if code in TRANSIENT_RESULT_CODES:
-        # HIRA can return a service error (including 99) in an HTTP 200 body.
-        # Retry it within the same budget; it is never accepted as an empty page.
+        # An HTTP 200 service error is still a failed request, never an empty page.
         raise CollectionError('upstream_service_unavailable', code)
     if code != '00':
         raise CollectionError('upstream_result_not_success', code)
@@ -174,8 +183,6 @@ class Client:
         self.lock = threading.Lock()
         self.cancel = threading.Event()
         self.last_request = 0.0
-        self.transport_file = directory / 'transport-state.json'
-        self.small_pages = self.transport_file.exists() and json.loads(self.transport_file.read_text(encoding='utf-8')).get('smallPages') is True
         self.budget_file = directory / 'request-budget.json'
         self.budget_date = dt.datetime.now(KST).date().isoformat()
         self.calls = 0
@@ -187,36 +194,7 @@ class Client:
     def page(self, code, number, size, region):
         if region not in REGIONS:
             raise CollectionError('invalid_region_code')
-        can_split = size > 100 and size % 100 == 0
-        if not (can_split and self.small_pages):
-            try:
-                return self._request_page(code, number, size, region)
-            except CollectionError as error:
-                if str(error) not in RETRYABLE_PAGE_FAILURES or not can_split:
-                    raise
-                with self.lock:
-                    self.small_pages = True
-                    atomic_json(self.transport_file, {'smallPages': True})
-        # Some large upstream pages time out. Fetch the same logical window in
-        # smaller pages; changing page size without changing the offset skips rows.
-        part_size = 100
-        first_page = (number - 1) * size // part_size + 1
-        combined, total, fetched_at = [], None, None
-        emit('smaller_page_retry', region=region, scope=code or 'basic', page=number, requestedSize=size, transportSize=part_size)
-        for offset in range(size // part_size):
-            part = self._request_page(code, first_page + offset, part_size, region)
-            if total is None:
-                total = part['total']
-            validate_page(part, first_page + offset, part_size, total, region)
-            combined.extend(part['rows'])
-            fetched_at = part['fetchedAt']
-            if (first_page + offset) * part_size >= total:
-                break
-        result = {'page': number, 'requestedSize': size, 'reportedSize': size,
-                  'total': total, 'fetchedAt': fetched_at, 'rows': combined,
-                  'transportPageSize': part_size}
-        validate_page(result, number, size, total, region)
-        return result
+        return self._request_page(code, number, size, region)
 
     def _request_page(self, code, number, size, region):
         if region not in REGIONS:
@@ -225,37 +203,27 @@ class Client:
         if code:
             parameters['dgsbjtCd'] = code
         url = ENDPOINT + '?' + urllib.parse.urlencode(parameters)
-        for attempt in range(3):
-            failure = CollectionError('upstream_transport_failed')
-            with self.lock:
-                if self.cancel.is_set():
-                    raise CollectionError('collection_canceled')
-                if self.calls >= self.maximum_calls:
-                    raise CollectionError('local_daily_request_budget_reached')
-                time.sleep(max(0, .5 - (time.monotonic() - self.last_request)))
-                self.last_request = time.monotonic()
-                self.calls += 1
-                atomic_json(self.budget_file, {'dateKst': self.budget_date, 'calls': self.calls})
-            try:
-                with urllib.request.urlopen(url, timeout=self.timeout) as response:
-                    if response.status != 200:
-                        raise CollectionError('unexpected_http_status')
-                    payload = response.read(8 * 1024 * 1024 + 1)
-                return parse_page(payload, number, size)
-            except urllib.error.HTTPError as error:
-                if error.code < 500:
-                    raise CollectionError('upstream_http_rejected') from None
-            except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError):
-                pass
-            except CollectionError as error:
-                if str(error) != 'upstream_service_unavailable':
-                    raise
-                failure = error
-            if attempt < 2:
-                emit('request_retry', region=region, scope=code or 'basic', page=number, attempt=attempt + 1,
-                     **failure.diagnostic_fields())
-                time.sleep(attempt + 1)
-        raise failure
+        with self.lock:
+            if self.cancel.is_set():
+                raise CollectionError('collection_canceled')
+            if self.calls >= self.maximum_calls:
+                raise CollectionError('local_daily_request_budget_reached')
+            time.sleep(max(0, .5 - (time.monotonic() - self.last_request)))
+            self.last_request = time.monotonic()
+            self.calls += 1
+            atomic_json(self.budget_file, {'dateKst': self.budget_date, 'calls': self.calls})
+        try:
+            with urllib.request.urlopen(url, timeout=self.timeout) as response:
+                if response.status != 200:
+                    raise CollectionError('unexpected_http_status')
+                payload = response.read(8 * 1024 * 1024 + 1)
+            return parse_page(payload, number, size)
+        except urllib.error.HTTPError as error:
+            reason = 'upstream_http_rejected' if error.code < 500 else 'upstream_transport_failed'
+            error.close()
+            raise CollectionError(reason) from None
+        except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError):
+            raise CollectionError('upstream_transport_failed') from None
 
 
 def validate_page(document, page, size, total, region=None):
@@ -291,18 +259,8 @@ def collect_scope(client, directory, code, initial_size, workers, region):
         if manifest.get('scope') != scope or manifest.get('region') != region:
             raise CollectionError('scope_mismatch')
     else:
-        for attempt in range(3):
-            first = client.page(code, 1, initial_size, region)
-            if code or first['total'] > 0:
-                break
-            validate_page(first, 1, initial_size, 0, region)
-            if attempt < 2:
-                emit('empty_basic_retry', region=region, attempt=attempt + 1)
-                time.sleep(attempt + 1)
+        first = client.page(code, 1, initial_size, region)
         size = initial_size
-        if first['rows'] and len(first['rows']) < min(first['total'], size):
-            size = len(first['rows'])
-            first = client.page(code, 1, size, region)
         validate_page(first, 1, size, first['total'], region)
         manifest = {'region': region, 'scope': scope, 'size': size, 'total': first['total'], 'pages': {}, 'startedAt': timestamp()}
         atomic_json(manifest_path, manifest)
@@ -472,14 +430,25 @@ def collect_regional_catalog(client, directory, page_size, workers, basic_cache=
     return data, times, memberships, scope_counts, scope_times, region_scopes
 
 
-def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times, region_scopes, regions=None):
+def export_catalog(directory, data, times, memberships, scope_counts, calls, scope_times, region_scopes, regions=None, recovery=None):
     selected = normalize_regions(regions)
+    maximum_age_hours = 48
+    completed_at = timestamp()
+    if recovery is not None:
+        validate_recovery(recovery, selected)
+        maximum_age_hours = 8 * 24
+        completed_at = recovery['recoveredAt']
     if set(scope_times) != {'basic', *DEPARTMENTS}:
         raise CollectionError('incomplete_scope_times')
     checked_times = {}
     for code, values in scope_times.items():
-        checked_times[code] = scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']])
-    all_times = scope_time_range([value for timespan in checked_times.values() for value in timespan.values()])
+        checked_times[code] = scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']], maximum_age_hours)
+    all_times = scope_time_range([value for timespan in checked_times.values() for value in timespan.values()], maximum_age_hours)
+    if recovery is not None:
+        week_start = week_start_date(recovery['weekStartKst'])
+        start = dt.datetime.combine(week_start, dt.time(), KST)
+        if dt.datetime.fromisoformat(all_times['firstFetchedAt']) < start or dt.datetime.fromisoformat(all_times['lastFetchedAt']) >= start + dt.timedelta(days=7):
+            raise CollectionError('recovery_time_outside_week')
     if set(region_scopes) != set(selected) or (not data and len(selected) == len(REGIONS)):
         raise CollectionError('incomplete_region_scopes')
     if set(scope_counts) != set(checked_times):
@@ -498,11 +467,11 @@ def export_catalog(directory, data, times, memberships, scope_counts, calls, sco
         if set(summary.get('scopeTimes', {})) != set(checked_times) or summary.get('scopeCounts') != actual_counts[region]:
             raise CollectionError('incomplete_region_scopes')
         for values in summary['scopeTimes'].values():
-            scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']])
+            scope_time_range([values['firstFetchedAt'], values['lastFetchedAt']], maximum_age_hours)
     for code in checked_times:
         total = sum(summary['scopeCounts'][code] for summary in region_scopes.values())
         combined_times = scope_time_range([value for summary in region_scopes.values()
-                                          for value in summary['scopeTimes'][code].values()])
+                                          for value in summary['scopeTimes'][code].values()], maximum_age_hours)
         if total != scope_counts.get(code) or combined_times != checked_times[code]:
             raise CollectionError('regional_scope_summary_mismatch')
     destination = directory / 'catalog.jsonl'
@@ -517,23 +486,258 @@ def export_catalog(directory, data, times, memberships, scope_counts, calls, sco
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, destination)
-    manifest = {'schemaVersion': 2 if regions is None else 3, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
+    manifest = {'schemaVersion': 4 if recovery is not None else 2 if regions is None else 3, 'complete': True, 'source': 'hospInfoServicev2/getHospBasisList',
                 'scope': 'nationwide-with-department-memberships' if regions is None else 'regions-with-department-memberships',
                 **({'regions': list(selected)} if regions is not None else {}), 'rows': len(data),
                 'departments': DEPARTMENTS, 'scopeCounts': scope_counts, 'requestCount': calls,
                 **all_times, 'scopeTimes': checked_times, 'regionScopes': region_scopes,
-                'completedAt': timestamp(), 'sha256': digest.hexdigest()}
+                **({'recovery': recovery} if recovery is not None else {}),
+                'completedAt': completed_at, 'sha256': digest.hexdigest()}
     atomic_json(directory / 'catalog-manifest.json', manifest)
     emit('catalog_complete', rows=len(data), requests=calls, sha256=manifest['sha256'])
     return manifest
 
 
+def week_start_date(value):
+    try:
+        date = dt.date.fromisoformat(value)
+        if date.isoformat() != value or date.weekday() != 0:
+            raise ValueError()
+        return date
+    except (ValueError, TypeError):
+        raise CollectionError('invalid_collection_week') from None
+
+
+def validate_recovery(recovery, regions):
+    if not isinstance(recovery, dict) or set(recovery) != {'mode', 'weekStartKst', 'originalDay', 'attempt', 'recoveredAt'}:
+        raise CollectionError('invalid_recovery_metadata')
+    if recovery['mode'] != 'sunday-failed-requests' or type(recovery['attempt']) is not int or recovery['attempt'] != 1 or recovery['originalDay'] not in DAY_REGIONS:
+        raise CollectionError('invalid_recovery_metadata')
+    if any(region not in DAY_REGIONS[recovery['originalDay']] for region in regions):
+        raise CollectionError('invalid_recovery_regions')
+    start = week_start_date(recovery['weekStartKst'])
+    try:
+        recovered = dt.datetime.fromisoformat(recovery['recoveredAt'])
+        if recovered.tzinfo is None or recovered.astimezone(KST).date() != start + dt.timedelta(days=6):
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise CollectionError('invalid_recovery_date') from None
+
+
+def request_key(region, scope, page, size):
+    return {'region': region, 'scope': scope, 'page': page, 'size': size}
+
+
+def document_checksum(document):
+    return hashlib.sha256(json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+class WeeklyBatch:
+    """Persist each query once; Sunday recovery may consume failed queries once."""
+
+    def __init__(self, client, directory, regions, day, week_start, page_size=500, mode='collect'):
+        self.client, self.directory = client, directory
+        self.regions = normalize_regions(regions)
+        self.day, self.week_start, self.page_size, self.mode = day, week_start, page_size, mode
+        self.starting_calls = client.calls
+        self.missing_requests = {}
+        start = week_start_date(week_start)
+        if day not in DAY_REGIONS or any(region not in DAY_REGIONS[day] for region in self.regions):
+            raise CollectionError('invalid_batch_regions')
+        if mode not in ('collect', 'retry') or not 1 <= page_size <= 1000:
+            raise CollectionError('invalid_batch_configuration')
+        if not start <= utc_now().astimezone(KST).date() < start + dt.timedelta(days=7):
+            raise CollectionError('batch_outside_collection_week')
+        if mode == 'collect' and utc_now().astimezone(KST).weekday() == 6:
+            raise CollectionError('collect_not_allowed_on_sunday')
+        if mode == 'retry' and utc_now().astimezone(KST).date() != start + dt.timedelta(days=6):
+            raise CollectionError('recovery_requires_same_week_sunday')
+        metadata = {'schemaVersion': 1, 'sourceMode': 'collect', 'weekStartKst': week_start,
+                    'originalDay': day, 'regions': list(self.regions), 'pageSize': page_size}
+        path = directory / 'batch.json'
+        if path.exists():
+            existing = json.loads(path.read_text(encoding='utf-8'))
+            if any(existing.get(key) != value for key, value in metadata.items()):
+                raise CollectionError('batch_metadata_mismatch')
+        elif mode == 'retry':
+            raise CollectionError('missing_recovery_batch')
+        else:
+            atomic_json(path, {**metadata, 'createdAt': timestamp()})
+
+    def path(self, key):
+        if key.get('region') not in self.regions or key.get('scope') not in ('basic', *DEPARTMENTS):
+            raise CollectionError('invalid_request_checkpoint')
+        if type(key.get('page')) is not int or key['page'] < 1 or type(key.get('size')) is not int or key['size'] not in (1, self.page_size):
+            raise CollectionError('invalid_request_checkpoint')
+        return self.directory / 'requests' / key['region'] / key['scope'] / f"page-{key['page']}-size-{key['size']}.json"
+
+    def read(self, key):
+        path = self.path(key)
+        if not path.exists():
+            return None
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if any(value.get(field) != item for field, item in key.items()) or value.get('status') not in ('claimed', 'success', 'failed', 'skipped') or type(value.get('attempt')) is not int or value['attempt'] not in (0, 1):
+            raise CollectionError('invalid_request_checkpoint')
+        if value['status'] == 'success':
+            document = value.get('document')
+            if not isinstance(document, dict) or value.get('documentSha256') != document_checksum(document):
+                raise CollectionError('request_checkpoint_checksum_mismatch')
+            validate_page(document, key['page'], key['size'], document.get('total'), key['region'])
+        return value
+
+    def fetch(self, key, retry=False):
+        previous = self.read(key)
+        if retry:
+            if not previous or previous['status'] != 'failed' or previous['attempt'] != 0:
+                return previous
+        elif previous is not None:
+            return previous
+        attempt = 1 if retry else 0
+        # A crash after this write spends the attempt; a rerun must not send it again.
+        value = {**key, 'attempt': attempt, 'status': 'claimed'}
+        atomic_json(self.path(key), value)
+        today, week_start = utc_now().astimezone(KST).date(), week_start_date(self.week_start)
+        allowed = today == week_start + dt.timedelta(days=6) if retry else week_start <= today < week_start + dt.timedelta(days=6)
+        if not allowed:
+            value.update(status='skipped', reason='outside_request_window')
+            atomic_json(self.path(key), value)
+            emit('request_skipped', **key, reason='outside_request_window')
+            return value
+        before_calls = self.client.calls
+        try:
+            document = self.client.page('' if key['scope'] == 'basic' else key['scope'], key['page'], key['size'], key['region'])
+            validate_page(document, key['page'], key['size'], document['total'], key['region'])
+        except CollectionError as error:
+            value.update(status='skipped' if retry or self.client.calls == before_calls else 'failed', **error.diagnostic_fields())
+        except Exception:
+            value.update(status='skipped' if retry or self.client.calls == before_calls else 'failed', reason='collection_request_failed')
+        else:
+            value.update(status='success', document=document, documentSha256=document_checksum(document))
+        atomic_json(self.path(key), value)
+        if value['status'] != 'success':
+            emit('request_deferred' if value['status'] == 'failed' else 'request_skipped', **key, reason=value.get('reason', 'request_interrupted'),
+                 **({'resultCode': value['resultCode']} if 'resultCode' in value else {}))
+        return value
+
+    def checkpoints(self):
+        for path in sorted((self.directory / 'requests').glob('*/*/*.json')):
+            value = json.loads(path.read_text(encoding='utf-8'))
+            key = {field: value.get(field) for field in ('region', 'scope', 'page', 'size')}
+            if self.path(key) != path:
+                raise CollectionError('invalid_request_checkpoint')
+            yield self.read(key)
+
+    def collect(self, workers):
+        for region in self.regions:
+            emit('region_started', region=region, name=REGIONS[region])
+            for scope in ('basic', *DEPARTMENTS):
+                first = self.fetch(request_key(region, scope, 1, self.page_size))
+                if first['status'] != 'success':
+                    # The count query is independently planned for every scope,
+                    # not a retry or replacement for the failed first data page.
+                    confirmation = self.fetch(request_key(region, scope, 1, 1))
+                    if confirmation['status'] != 'success':
+                        continue
+                    total = confirmation['document']['total']
+                else:
+                    total = first['document']['total']
+                keys = [request_key(region, scope, page, self.page_size) for page in range(2, math.ceil(total / self.page_size) + 1)]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(self.fetch, keys))
+                self.fetch(request_key(region, scope, 1, 1))
+
+    def retry_failed(self):
+        # Freeze the original failure list. No new query can be discovered here.
+        failed = [value for value in self.checkpoints() if value['status'] == 'failed' and value['attempt'] == 0]
+        for value in failed:
+            self.fetch({field: value[field] for field in ('region', 'scope', 'page', 'size')}, retry=True)
+
+    def cached_document(self, key):
+        value = self.read(key)
+        if value is None:
+            self.missing_requests[tuple(key.values())] = {**key, 'reason': 'not_requested_during_week'}
+        if value is None or value['status'] != 'success':
+            raise CollectionError('incomplete_cached_scope')
+        return value['document']
+
+    def assemble_scope(self, region, scope):
+        first = self.cached_document(request_key(region, scope, 1, self.page_size))
+        total = first['total']
+        rows, times, observed = {}, {}, []
+        for page in range(1, max(1, math.ceil(total / self.page_size)) + 1):
+            document = self.cached_document(request_key(region, scope, page, self.page_size))
+            validate_page(document, page, self.page_size, total, region)
+            observed.append(document['fetchedAt'])
+            for row in document['rows']:
+                if row['ykiho'] in rows:
+                    raise CollectionError('duplicate_hospital_across_pages')
+                rows[row['ykiho']], times[row['ykiho']] = row, document['fetchedAt']
+        confirmation = self.cached_document(request_key(region, scope, 1, 1))
+        validate_page(confirmation, 1, 1, total, region)
+        if len(rows) != total:
+            raise CollectionError('scope_count_mismatch')
+        observed.append(confirmation['fetchedAt'])
+        return rows, times, scope_time_range(observed, 8 * 24 if self.mode == 'retry' else 48)
+
+    def assemble_region(self, region):
+        basic, times, basic_times = self.assemble_scope(region, 'basic')
+        memberships = {identity: set() for identity in basic}
+        counts, scope_times = {'basic': len(basic)}, {'basic': basic_times}
+        for scope in DEPARTMENTS:
+            rows, _, fetched_times = self.assemble_scope(region, scope)
+            if any(identity not in basic for identity in rows):
+                raise CollectionError('department_hospital_missing_from_regional_basic_snapshot')
+            for identity in rows:
+                memberships[identity].add(scope)
+            counts[scope], scope_times[scope] = len(rows), fetched_times
+        return basic, times, memberships, counts, scope_times, {region: {'scopeCounts': counts, 'scopeTimes': scope_times}}
+
+    def run(self, workers=2):
+        if self.mode == 'collect':
+            self.collect(workers)
+        else:
+            self.retry_failed()
+        complete, deferred = [], []
+        for region in self.regions:
+            try:
+                data, times, memberships, counts, scope_times, region_scopes = self.assemble_region(region)
+                recovery = {'mode': 'sunday-failed-requests', 'weekStartKst': self.week_start, 'originalDay': self.day,
+                            'attempt': 1, 'recoveredAt': timestamp()} if self.mode == 'retry' else None
+                target = self.directory / 'ready' / region
+                target.mkdir(parents=True, exist_ok=True)
+                export_catalog(target, data, times, memberships, counts, self.client.calls - self.starting_calls,
+                               scope_times, region_scopes, regions=[region], recovery=recovery)
+            except CollectionError as error:
+                deferred.append(region)
+                emit('region_deferred', region=region, **error.diagnostic_fields())
+            else:
+                complete.append(region)
+                emit('region_complete', region=region, rows=len(data))
+        failures, skipped = [], list(self.missing_requests.values())
+        for value in self.checkpoints():
+            if value['status'] in ('failed', 'skipped', 'claimed'):
+                item = {field: value[field] for field in ('region', 'scope', 'page', 'size')}
+                item['reason'] = value.get('reason', 'request_interrupted')
+                if 'resultCode' in value:
+                    item['resultCode'] = value['resultCode']
+                (failures if value['status'] == 'failed' else skipped).append(item)
+        result = {'mode': self.mode, 'weekStartKst': self.week_start, 'originalDay': self.day,
+                  'completeRegions': complete, 'deferredRegions': deferred, 'failedRequests': failures,
+                  'skippedRequests': skipped, 'requests': self.client.calls - self.starting_calls}
+        atomic_json(self.directory / 'result.json', result)
+        emit('batch_complete', mode=self.mode, completeRegions=complete, deferredRegions=deferred,
+             failedRequests=len(failures), skippedRequests=len(skipped), requests=result['requests'])
+        return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=Path('.runtime/hospital-catalog') / dt.datetime.now(KST).date().isoformat())
-    parser.add_argument('--basic-cache', type=Path)
-    parser.add_argument('--regions', help='Comma-separated HIRA region codes; omitted collects all regions')
-    parser.add_argument('--page-size', type=int, default=1000)
+    parser.add_argument('--regions', required=True, help='Comma-separated HIRA region codes from the original weekday group')
+    parser.add_argument('--day', required=True, choices=tuple(DAY_REGIONS))
+    parser.add_argument('--week-start', required=True)
+    parser.add_argument('--mode', choices=('collect', 'retry'), default='collect')
+    parser.add_argument('--page-size', type=int, default=500)
     parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--workers', type=int, choices=(1, 2), default=2)
     parser.add_argument('--maximum-calls', type=int, default=10000)
@@ -546,9 +750,7 @@ def main():
         raise CollectionError('missing_hospital_api_key')
     with directory_lock(args.directory):
         client = Client(key, args.directory, args.timeout, args.maximum_calls)
-        data, times, memberships, scope_counts, scope_times, region_scopes = collect_regional_catalog(
-            client, args.directory, args.page_size, args.workers, args.basic_cache, regions)
-        export_catalog(args.directory, data, times, memberships, scope_counts, client.calls, scope_times, region_scopes, regions)
+        WeeklyBatch(client, args.directory, regions, args.day, args.week_start, args.page_size, args.mode).run(args.workers)
 
 
 if __name__ == '__main__':

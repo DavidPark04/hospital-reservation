@@ -13,8 +13,9 @@ PLANS = {
     'thursday': ('목요일 · 대구·인천·경북', ('230000', '220000', '370000')),
     'friday': ('금요일 · 전북·충남·대전', ('350000', '340000', '250000')),
     'saturday': ('토요일 · 충북·강원·울산·제주·세종·광주 별도', ('330000', '320000', '260000', '390000', '410000', '240000')),
+    'sunday': ('일요일 · 실패 요청 재처리', ()),
 }
-# 15:00 UTC on Sunday-Friday is 00:00 KST on Monday-Saturday.
+# 15:00 UTC on Sunday-Saturday is 00:00 KST on Monday-Sunday.
 # The exact triggering cron is stable across queue delays and re-runs.
 SCHEDULES = {f'0 15 * * {index}': day for index, day in enumerate(PLANS)}
 
@@ -33,7 +34,8 @@ def select_plan(event_name, event):
     if not isinstance(day, str) or day not in PLANS:
         raise ValueError('invalid_catalog_day')
     label, regions = PLANS[day]
-    return {'day': day, 'label': label, 'regions': ','.join(regions)}
+    return {'day': day, 'label': label, 'regions': ','.join(regions),
+            'mode': 'retry' if day == 'sunday' else 'collect'}
 
 
 def main():

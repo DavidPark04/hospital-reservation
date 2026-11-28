@@ -9,12 +9,30 @@ export const DEPARTMENTS = Object.freeze({'01':'내과','02':'신경과','03':'�
   '14':'피부과','15':'비뇨의학과','21':'재활의학과','23':'가정의학과','49':'치과','80':'한방내과'});
 export const REGION_CODES = Object.freeze(['110000','210000','220000','230000','240000','250000','260000',
   '310000','320000','330000','340000','350000','360000','370000','380000','390000','410000']);
+export const CATALOG_WEEKDAY_REGIONS = Object.freeze({
+  monday:Object.freeze(['110000']),tuesday:Object.freeze(['310000']),
+  wednesday:Object.freeze(['210000','360000','380000']),thursday:Object.freeze(['220000','230000','370000']),
+  friday:Object.freeze(['250000','340000','350000']),saturday:Object.freeze(['240000','260000','320000','330000','390000','410000']),
+});
+const DAY_MS=24*3600_000,KST_OFFSET_MS=9*3600_000;
 const SCOPES = Object.freeze(['basic',...Object.keys(DEPARTMENTS)]);
 const SOURCE = 'https://www.data.go.kr/data/15001698/openapi.do';
 const COLLECTION = 'hospitals';
 
 export class SyncError extends Error {
   constructor(code) { super(code); this.name='SyncError'; this.code=code; }
+}
+export function catalogWeekStartTimestamp(weekStartKst) {
+  if(typeof weekStartKst!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(weekStartKst))throw new SyncError('invalid_catalog_week');
+  const timestamp=Date.parse(`${weekStartKst}T00:00:00+09:00`),local=new Date(timestamp+KST_OFFSET_MS);
+  if(!Number.isFinite(timestamp)||local.toISOString().slice(0,10)!==weekStartKst||local.getUTCDay()!==1)throw new SyncError('invalid_catalog_week');
+  return timestamp;
+}
+export function catalogWeekForTime(now=new Date()) {
+  if(!(now instanceof Date)||!Number.isFinite(now.getTime()))throw new SyncError('invalid_catalog_time');
+  const local=new Date(now.getTime()+KST_OFFSET_MS);
+  const monday=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-((local.getUTCDay()+6)%7)*DAY_MS;
+  return new Date(monday).toISOString().slice(0,10);
 }
 export function hospitalId(externalId) {
   const bytes=crypto.createHash('md5').update('HIRA:'+externalId,'utf8').digest();
@@ -89,11 +107,26 @@ function hasExactKeys(value,keys) {
     Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 }
 function snapshotRegions(manifest) {
-  if(manifest.schemaVersion!==3)return REGION_CODES;
+  if(![3,4].includes(manifest.schemaVersion))return REGION_CODES;
   const regions=manifest.regions;
   if(!Array.isArray(regions)||!regions.length||regions.some(region=>!REGION_CODES.includes(region))||
     JSON.stringify(regions)!==JSON.stringify(REGION_CODES.filter(region=>regions.includes(region))))throw new SyncError('invalid_selected_regions');
   return regions;
+}
+function validateRecovery(manifest,now,regions) {
+  const recovery=manifest.recovery;
+  if(!hasExactKeys(recovery,['mode','weekStartKst','originalDay','attempt','recoveredAt'])||
+    recovery.mode!=='sunday-failed-requests'||recovery.attempt!==1||
+    !Object.hasOwn(CATALOG_WEEKDAY_REGIONS,recovery.originalDay))throw new SyncError('invalid_catalog_recovery');
+  const allowed=CATALOG_WEEKDAY_REGIONS[recovery.originalDay];
+  if(regions.some(region=>!allowed.includes(region)))throw new SyncError('invalid_catalog_recovery_regions');
+  const weekStart=catalogWeekStartTimestamp(recovery.weekStartKst),sunday=weekStart+6*DAY_MS,end=weekStart+7*DAY_MS;
+  const timestamps=[manifest.firstFetchedAt,manifest.lastFetchedAt,manifest.completedAt,recovery.recoveredAt];
+  if(timestamps.some(value=>typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)))throw new SyncError('invalid_catalog_recovery_time');
+  const [first,last,completed,recovered]=timestamps.map(value=>Date.parse(value));
+  if(![first,last,completed,recovered,now.getTime()].every(Number.isFinite)||first<weekStart||last>=end||
+    first>last||last>completed||completed<sunday||completed>=end||recovered!==completed||
+    now-first>8*DAY_MS||now-completed>2*DAY_MS||completed-now>300_000)throw new SyncError('invalid_catalog_recovery_time');
 }
 function validateRegionalScopes(manifest,regions) {
   if(!hasExactKeys(manifest.regionScopes,regions))throw new SyncError('incomplete_regional_scopes');
@@ -121,16 +154,19 @@ function validateRegionalScopes(manifest,regions) {
 export async function validateSnapshot(directory,now=new Date()) {
   const manifest=JSON.parse(fs.readFileSync(path.join(directory,'catalog-manifest.json'),'utf8'));
   const filename=path.join(directory,'catalog.jsonl');
-  const regions=snapshotRegions(manifest),scoped=manifest.schemaVersion===3;
+  const regions=snapshotRegions(manifest),scoped=[3,4].includes(manifest.schemaVersion);
   const scope=scoped?'regions-with-department-memberships':'nationwide-with-department-memberships';
-  if(![1,2,3].includes(manifest.schemaVersion)||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!==scope||!Number.isSafeInteger(manifest.rows)||manifest.rows<(scoped&&regions.length<REGION_CODES.length?0:1))throw new SyncError('incomplete_catalog_snapshot');
+  if(![1,2,3,4].includes(manifest.schemaVersion)||manifest.complete!==true||manifest.source!=='hospInfoServicev2/getHospBasisList'||manifest.scope!==scope||!Number.isSafeInteger(manifest.rows)||manifest.rows<(scoped&&regions.length<REGION_CODES.length?0:1))throw new SyncError('incomplete_catalog_snapshot');
+  if(manifest.schemaVersion!==4&&Object.hasOwn(manifest,'recovery'))throw new SyncError('invalid_catalog_recovery');
   if(!scoped&&Object.hasOwn(manifest,'regions'))throw new SyncError('incomplete_catalog_snapshot');
   if(manifest.schemaVersion===1&&Object.hasOwn(manifest,'regionScopes'))throw new SyncError('incomplete_catalog_snapshot');
   if(canonical(manifest.departments||{})!==canonical(DEPARTMENTS)||manifest.scopeCounts?.basic!==manifest.rows||
     !hasExactKeys(manifest.scopeCounts,SCOPES)||!hasExactKeys(manifest.scopeTimes,SCOPES))throw new SyncError('incomplete_department_scopes');
   for(const code of Object.keys(DEPARTMENTS))if(!Number.isInteger(manifest.scopeCounts[code])||manifest.scopeCounts[code]<0)throw new SyncError('incomplete_department_scopes');
   const first=new Date(manifest.firstFetchedAt),last=new Date(manifest.lastFetchedAt),completed=new Date(manifest.completedAt);
-  if(![first,last,completed].every(value=>Number.isFinite(value.getTime()))||now-first>48*3600_000||first>last||last>completed||completed-now>300_000)throw new SyncError('stale_or_invalid_snapshot_time');
+  if(![first,last,completed].every(value=>Number.isFinite(value.getTime()))||
+    (manifest.schemaVersion!==4&&now-first>48*3600_000)||first>last||last>completed||completed-now>300_000)throw new SyncError('stale_or_invalid_snapshot_time');
+  if(manifest.schemaVersion===4)validateRecovery(manifest,now,regions);
   const scopeDates=[];
   for(const code of SCOPES) {
     const times=manifest.scopeTimes?.[code],start=new Date(times?.firstFetchedAt),end=new Date(times?.lastFetchedAt);
@@ -188,7 +224,9 @@ const regionMarkerId=(kind,region)=>`hospital-basic-region-${kind}:${region}`;
 
 export async function applySnapshot(db,snapshot,{apply=false,now=new Date(),progress=emit,heartbeatMs=30_000}={}) {
   const {manifest,documents}=snapshot;
-  const regions=snapshotRegions(manifest),scoped=manifest.schemaVersion===3;
+  const regions=snapshotRegions(manifest),scoped=[3,4].includes(manifest.schemaVersion);
+  if(manifest.schemaVersion===4)validateRecovery(manifest,now,regions);
+  else if(Object.hasOwn(manifest,'recovery'))throw new SyncError('invalid_catalog_recovery');
   const selected=new Set(regions),full=regions.length===REGION_CODES.length;
   if(scoped) {
     if(manifest.scope!=='regions-with-department-memberships'||!Number.isSafeInteger(manifest.rows)||manifest.rows<0||
