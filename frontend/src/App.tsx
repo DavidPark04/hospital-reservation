@@ -691,7 +691,7 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
       {accountType==='hospital' ? <HospitalAuthForm key={mode} mode={mode} onSuccess={onSuccess} onBusy={setHospitalBusy}/> : <>
         {socialError&&<Notice tone="error">{socialError}</Notice>}
         {preferredProvider&&<Notice>{loginMethod(preferredProvider)}로 로그인해 주세요.</Notice>}
-        {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
+        {preferredProvider&&preferredProvider!=='LOCAL'&&<SocialLoginButtons key={mode} beforeStart={beforeSocialLogin} disabled={busy} preferredProvider={preferredProvider}/>}
         <form onSubmit={submit} className={'auth-form '+(registering?'auth-signup-form personal-signup-form':'auth-login-form')}>
           {registering ? <>
             <SignupSteps step={signupStep} first="본인 정보" second="계정 설정"/>
@@ -748,7 +748,7 @@ function AuthDialog({mode,setMode,close,onSuccess,beforeSocialLogin,socialError,
             {mutation.isPending?<><LoaderCircle className="spin" size={18}/>처리 중</>:'로그인'}
           </button>}
         </form>
-        {(!registering||signupStep===1)&&(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons beforeStart={beforeSocialLogin} disabled={busy}/>}
+        {(!registering||signupStep===1)&&(!preferredProvider||preferredProvider==='LOCAL')&&<SocialLoginButtons key={mode} beforeStart={beforeSocialLogin} disabled={busy}/>}
       </>}
       <div className="auth-switch">{registering?'이미 계정이 있으신가요?':'처음 방문하셨나요?'}
         <button type="button" className="text-button" disabled={busy} onClick={switchMode}>{registering?'로그인':'회원가입'}</button>

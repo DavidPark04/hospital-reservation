@@ -1,6 +1,7 @@
 @import './auth-dialog.css';
 
 :root {
+  scrollbar-gutter: stable;
   --medipick-header-height: 70px;
   --accent: #365f96;
   --accent-strong: #294b77;
