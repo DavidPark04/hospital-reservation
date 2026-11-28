@@ -41,6 +41,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                 .requestMatchers(HttpMethod.POST, "/api/auth/logout", "/api/auth/social/profile").authenticated()
                 .requestMatchers(HttpMethod.PATCH, "/api/auth/password").hasAnyRole("USER", "ADMIN", "HOSPITAL")
+                .requestMatchers(HttpMethod.DELETE, "/api/members/me").hasAnyRole("USER", "ADMIN", "HOSPITAL")
                 .requestMatchers("/api/hospital/**").hasRole("HOSPITAL")
                 .requestMatchers("/api/admin/**").hasRole("ADMIN").anyRequest().hasAnyRole("USER", "ADMIN"))
             .exceptionHandling(errors -> errors

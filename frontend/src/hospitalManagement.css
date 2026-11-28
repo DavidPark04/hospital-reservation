@@ -1,4 +1,6 @@
 .auth-account-tabs{display:grid;grid-template-columns:1fr 1fr;padding:5px;gap:5px;border-radius:13px;background:#f0f4f8;margin:4px 0 20px}
+.doctor-editor-actions{align-items:center;justify-content:space-between;flex-wrap:wrap}.doctor-editor-actions .doctor-delete-action{margin-right:auto;color:#a43d49;border:1px solid #ead3d7}.doctor-save-actions{display:flex;gap:10px;margin-left:auto}.doctor-editor-actions .button{margin-top:0}
+@media(max-width:420px){.doctor-editor-actions{gap:8px}.doctor-save-actions{gap:6px}.doctor-editor-actions .button{padding-inline:10px;font-size:13px;min-height:44px}}
 .site-header .user-name>span{max-width:200px;overflow:hidden;text-overflow:ellipsis}
 .auth-account-tabs button{border:0;border-radius:9px;padding:12px;color:#637387;background:transparent;font-weight:700;cursor:pointer}
 .auth-account-tabs button[aria-selected=true]{background:#fff;color:#28599a;box-shadow:0 2px 7px #243b5310}

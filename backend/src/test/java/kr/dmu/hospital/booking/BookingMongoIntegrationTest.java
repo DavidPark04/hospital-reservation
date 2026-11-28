@@ -325,6 +325,152 @@ class BookingMongoIntegrationTest {
     }
 
     @Test
+    void deletingDoctorHidesItClosesUnusedFutureSlotsAndPreservesReservationHistory() {
+        mongo.insert(catalogHospital("test-hospital"), HospitalCatalog.COLLECTION);
+        authenticate("hospital-owner");
+        String doctorId = booking.createDoctor("삭제할 의료진", "05", "관절 진료").getString("id");
+        List<Document> slots = booking.createManagedSlots(doctorId, date, "13:00", "14:30", 30, 2);
+        String canceledSlot = slots.get(0).getString("id");
+        String pastSlot = slots.get(1).getString("id");
+        String unusedSlot = slots.get(2).getString("id");
+        String canceledId = booking.create("user-a", "cancel-history-create", canceledSlot).getString("id");
+        booking.cancel("user-a", canceledId, "cancel-history");
+        String pastId = booking.create("user-b", "past-history-create", pastSlot).getString("id");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(pastId)), new Update().set("startAt", new Date(1)), "reservations");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(pastSlot)), new Update().set("startAt", new Date(1)), "timeSlots");
+        Document canceledBefore = mongo.findById(canceledId, Document.class, "reservations");
+        Document pastBefore = mongo.findById(pastId, Document.class, "reservations");
+        long eventsBefore = mongo.getCollection("reservationEvents").countDocuments();
+
+        Document response = booking.deleteDoctor(doctorId);
+
+        assertEquals(new Document("id", doctorId).append("deleted", true), response);
+        Document deleted = mongo.findById(doctorId, Document.class, "doctors");
+        assertTrue(deleted.getBoolean("deleted"));
+        assertFalse(deleted.getBoolean("active"));
+        assertNotNull(deleted.getDate("deletedAt"));
+        assertTrue(booking.managedDoctors().stream().noneMatch(d -> doctorId.equals(d.getString("id"))));
+        assertTrue(booking.doctors("test-hospital", "05").isEmpty());
+        assertEquals(List.of("01"), mongo.findById("test-hospital", Document.class, "hospitalRegistrations").getList("departmentCodes", String.class));
+        assertTrue(mongo.findById(canceledSlot, Document.class, "timeSlots").getBoolean("closed"));
+        assertTrue(mongo.findById(unusedSlot, Document.class, "timeSlots").getBoolean("closed"));
+        assertFalse(mongo.findById(pastSlot, Document.class, "timeSlots").getBoolean("closed"));
+        assertEquals(1, count(pastSlot));
+        assertEquals(canceledBefore, mongo.findById(canceledId, Document.class, "reservations"));
+        assertEquals(pastBefore, mongo.findById(pastId, Document.class, "reservations"));
+        assertEquals(eventsBefore, mongo.getCollection("reservationEvents").countDocuments());
+        assertEquals("삭제할 의료진", booking.reservations("user-a").getFirst().getString("doctorName"));
+        assertEquals(2, booking.managedReservations(null, null).size());
+        assertEquals(response, booking.deleteDoctor(doctorId));
+        assertEquals(deleted, mongo.findById(doctorId, Document.class, "doctors"));
+    }
+
+    @Test
+    void futureReservationsPreventDoctorDeletionWithoutPartialChanges() {
+        authenticate("hospital-owner");
+        String doctorId = doctors.getFirst().getString("id");
+        String occupiedSlot = slot(0, 0);
+        String freeSlot = slot(0, 1);
+        String reservationId = booking.create("user-a", "before-delete", occupiedSlot).getString("id");
+        Document before = mongo.findById(doctorId, Document.class, "doctors");
+        Document registrationBefore = mongo.findById("test-hospital", Document.class, "hospitalRegistrations");
+
+        ApiException error = assertThrows(ApiException.class, () -> booking.deleteDoctor(doctorId));
+
+        assertEquals(409, error.getStatus());
+        assertTrue(error.getMessage().contains("예약을 먼저 변경하거나 취소"));
+        assertEquals(before, mongo.findById(doctorId, Document.class, "doctors"));
+        assertEquals(registrationBefore, mongo.findById("test-hospital", Document.class, "hospitalRegistrations"));
+        assertFalse(mongo.findById(freeSlot, Document.class, "timeSlots").getBoolean("closed"));
+        assertEquals(1, count(occupiedSlot));
+        assertEquals("RESERVED", mongo.findById(reservationId, Document.class, "reservations").getString("status"));
+        booking.cancelManagedReservation(reservationId, "cancel-before-delete");
+        assertTrue(booking.deleteDoctor(doctorId).getBoolean("deleted"));
+    }
+
+    @Test
+    void deletedDoctorCannotBeReactivatedScheduledOrBookedThroughStaleRequests() {
+        authenticate("hospital-owner");
+        String doctorId = doctors.getFirst().getString("id");
+        String oldSlot = slot(0, 0);
+        String reservationId = booking.create("user-a", "other-doctor-reservation", slot(1, 1)).getString("id");
+        booking.deleteDoctor(doctorId);
+
+        assertEquals(404, assertThrows(ApiException.class, () -> booking.editDoctor(doctorId, "복구 시도", "01", "", true)).getStatus());
+        assertThrows(ApiException.class, () -> booking.managedSlots(doctorId, date));
+        assertThrows(ApiException.class, () -> booking.slots(doctorId, date, false));
+        assertThrows(ApiException.class, () -> booking.slots(doctorId, date, true));
+        assertThrows(ApiException.class, () -> booking.createManagedSlots(doctorId, date, "13:00", "14:00", 30, 2));
+        assertThrows(ApiException.class, () -> booking.createSlots(doctorId, date, "13:00", "14:00", 30, 2));
+        assertThrows(ApiException.class, () -> booking.editManagedSlot(oldSlot, 2, false));
+        assertThrows(ApiException.class, () -> booking.editSlot(oldSlot, 2, false));
+        assertThrows(ApiException.class, () -> booking.create("user-b", "deleted-doctor-create", oldSlot));
+        assertThrows(ApiException.class, () -> booking.change("user-a", reservationId, "deleted-doctor-change", oldSlot));
+        assertThrows(ApiException.class, () -> booking.changeManagedReservation(reservationId, "deleted-doctor-managed-change", oldSlot));
+        assertEquals(0, count(oldSlot));
+        assertTrue(mongo.findById(oldSlot, Document.class, "timeSlots").getBoolean("closed"));
+        assertFalse(mongo.findById(doctorId, Document.class, "doctors").getBoolean("active"));
+        assertEquals(1, mongo.getCollection("reservations").countDocuments());
+    }
+
+    @Test
+    void doctorDeletionRequiresCurrentHospitalOwnership() {
+        seedOtherHospital();
+        Document other = mongo.findById("other-doctor", Document.class, "doctors");
+        authenticate("hospital-owner");
+        assertEquals(404, assertThrows(ApiException.class, () -> booking.deleteDoctor("other-doctor")).getStatus());
+        assertEquals(other, mongo.findById("other-doctor", Document.class, "doctors"));
+        authenticate("user-a");
+        assertEquals(403, assertThrows(ApiException.class, () -> booking.deleteDoctor("doctor-0")).getStatus());
+        authenticate("hospital-owner");
+        mongo.updateFirst(Query.query(Criteria.where("_id").is("test-hospital")), new Update().set("status", "DISABLED"), "hospitalRegistrations");
+        assertEquals(403, assertThrows(ApiException.class, () -> booking.deleteDoctor("doctor-0")).getStatus());
+        assertTrue(mongo.findById("doctor-0", Document.class, "doctors").getBoolean("active"));
+    }
+
+    @Test
+    void concurrentBookingAndDoctorDeletionCannotBothCommit() throws Exception {
+        String doctorId = doctors.getFirst().getString("id");
+        String selectedSlot = slot(0, 0);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Future<Boolean> reservation = executor.submit(() -> {
+            start.await();
+            try {
+                booking.create("user-a", "race-delete-create", selectedSlot);
+                return true;
+            } catch (ApiException blocked) {
+                assertEquals(409, blocked.getStatus());
+                return false;
+            }
+        });
+        Future<Boolean> deletion = executor.submit(() -> {
+            authenticate("hospital-owner");
+            try {
+                start.await();
+                booking.deleteDoctor(doctorId);
+                return true;
+            } catch (ApiException blocked) {
+                assertEquals(409, blocked.getStatus());
+                return false;
+            } finally {
+                SecurityContextHolder.clearContext();
+            }
+        });
+        start.countDown();
+        try {
+            boolean booked = reservation.get(30, TimeUnit.SECONDS);
+            boolean deleted = deletion.get(30, TimeUnit.SECONDS);
+            assertNotEquals(booked, deleted);
+            assertEquals(deleted, mongo.findById(doctorId, Document.class, "doctors").getBoolean("deleted", false));
+            assertEquals(booked ? 1 : 0, count(selectedSlot));
+            assertEquals(booked ? 1 : 0, mongo.getCollection("reservations").countDocuments());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void hospitalChangeAndCancelAreIdempotentAndKeepCapacityAndEventsTogether() {
         authenticate("hospital-owner");
         String first = slot(0, 0); String next = slot(0, 1);
