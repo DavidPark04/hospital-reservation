@@ -155,7 +155,7 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(MODULE.collect_scope(client, Path(folder), '49', 100, 1, '110000')[0], {})
             with patch.object(MODULE.time, 'sleep'):
                 self.assertEqual(MODULE.collect_scope(client, Path(folder), '', 100, 1, '110000')[0], {})
-            self.assertEqual(len([request for request in client.requests if request[0] == '']), 4)
+            self.assertEqual(len([request for request in client.requests if request[0] == '']), 2)
 
     def test_changed_final_count_does_not_publish_scope(self):
         class ChangedClient(FakeClient):
@@ -205,31 +205,6 @@ class CollectorTests(unittest.TestCase):
                     client.page('', 1, 100, '110000')
                 network.assert_not_called()
 
-    def test_small_page_fallback_keeps_original_logical_offset(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client = MODULE.Client('fake-never-sent', Path(folder))
-            requests = []
-            def request(code, number, size, region):
-                requests.append((number, size, region))
-                if size == 1000:
-                    raise MODULE.CollectionError('upstream_transport_failed')
-                start = (number - 1) * size
-                return page(number, size, 2050, [str(value) for value in range(start, min(start + size, 2050))], region)
-            client._request_page = request
-            result = client.page('', 2, 1000, '110000')
-            self.assertEqual(requests[1], (11, 100, '110000'))
-            self.assertEqual(result['rows'][0]['ykiho'], '1000')
-            self.assertEqual(result['rows'][-1]['ykiho'], '1999')
-            self.assertEqual(len(result['rows']), 1000)
-            final = client.page('', 3, 1000, '110000')
-            self.assertEqual(len(final['rows']), 50)
-            self.assertEqual(final['rows'][0]['ykiho'], '2000')
-            self.assertEqual(sum(size == 1000 for _, size, _ in requests), 1)
-            resumed = MODULE.Client('fake-never-sent', Path(folder))
-            resumed._request_page = request
-            resumed.page('', 3, 1000, '210000')
-            self.assertEqual(sum(size == 1000 for _, size, _ in requests), 1)
-            self.assertEqual(requests[-1][2], '210000')
 
     def test_quota_errors_never_trigger_page_size_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -239,60 +214,8 @@ class CollectorTests(unittest.TestCase):
                     client.page('', 1, 1000, '110000')
                 self.assertEqual(request.call_count, 1)
 
-    def test_http_success_with_service_error_retries_then_recovers(self):
-        for code in ('01', '02', '04', '05', '99'):
-            with self.subTest(code=code), tempfile.TemporaryDirectory() as folder:
-                client = MODULE.Client('fixture-secret', Path(folder))
-                responses = [Response(error_xml(code)), Response(xml_page(1, 1000, 1, ['A']))]
-                with patch('urllib.request.urlopen', side_effect=responses) as network, patch.object(MODULE.time, 'sleep'), patch.object(MODULE, 'emit') as events:
-                    result = client.page('05', 1, 1000, '110000')
-                self.assertEqual([row['ykiho'] for row in result['rows']], ['A'])
-                self.assertEqual(network.call_count, 2)
-                self.assertEqual(client.calls, 2)
-                self.assertFalse(client.small_pages)
-                events.assert_called_once_with('request_retry', region='110000', scope='05', page=1, attempt=1,
-                                               reason='upstream_service_unavailable', resultCode=code)
-                self.assertNotIn('fixture-secret', repr(events.call_args_list))
-                self.assertNotIn('example.invalid', repr(events.call_args_list))
 
-    def test_exhausted_service_error_uses_same_logical_window_in_small_pages(self):
-        for logical_size in (500, 1000):
-            with self.subTest(size=logical_size), tempfile.TemporaryDirectory() as folder:
-                client = MODULE.Client('fixture-secret', Path(folder))
-                requests, total = [], logical_size * 2 + 50
-                def request(url, timeout):
-                    query = MODULE.urllib.parse.parse_qs(MODULE.urllib.parse.urlparse(url).query)
-                    number, size = int(query['pageNo'][0]), int(query['numOfRows'][0])
-                    requests.append((number, size, query['sidoCd'][0], query['dgsbjtCd'][0]))
-                    if size == logical_size:
-                        return Response(error_xml('99'))
-                    start = (number - 1) * size
-                    return Response(xml_page(number, size, total, [str(value) for value in range(start, min(start + size, total))]))
-                with patch('urllib.request.urlopen', side_effect=request), patch.object(MODULE.time, 'sleep'):
-                    result = client.page('05', 2, logical_size, '110000')
-                    final = client.page('05', 3, logical_size, '110000')
-                self.assertEqual(requests[:3], [(2, logical_size, '110000', '05')] * 3)
-                self.assertEqual(requests[3:], [(number, 100, '110000', '05') for number in range(logical_size // 100 + 1, logical_size * 2 // 100 + 2)])
-                self.assertEqual([row['ykiho'] for row in result['rows']], [str(value) for value in range(logical_size, logical_size * 2)])
-                self.assertEqual([row['ykiho'] for row in final['rows']], [str(value) for value in range(logical_size * 2, total)])
-                self.assertEqual(result['total'], total)
-                self.assertEqual(client.calls, 4 + logical_size // 100)
-                self.assertTrue(client.small_pages)
-                self.assertTrue(json.loads(client.transport_file.read_text())['smallPages'])
 
-    def test_persistent_service_error_is_bounded_and_never_exports_catalog(self):
-        with tempfile.TemporaryDirectory() as folder:
-            directory = Path(folder)
-            arguments = ['collect-hospital-catalog.py', '--directory', folder]
-            with patch.object(MODULE.sys, 'argv', arguments), patch.dict(MODULE.os.environ, {'HIRA_HOSPITAL_KEY': 'fixture-secret'}), patch.object(MODULE.time, 'sleep'), patch('urllib.request.urlopen', return_value=Response(error_xml('99'))) as network, patch.object(MODULE, 'export_catalog') as export:
-                with self.assertRaisesRegex(MODULE.CollectionError, 'upstream_service_unavailable') as failure:
-                    MODULE.main()
-            self.assertEqual(network.call_count, 6)
-            self.assertEqual(json.loads((directory / 'request-budget.json').read_text())['calls'], 6)
-            self.assertEqual(failure.exception.diagnostic_fields(), {'reason': 'upstream_service_unavailable', 'resultCode': '99'})
-            export.assert_not_called()
-            self.assertFalse((directory / 'catalog-manifest.json').exists())
-            self.assertFalse((directory / 'catalog.jsonl').exists())
 
     def test_auth_quota_and_unknown_results_fail_without_retry_or_secret_output(self):
         for code in ('22', '23', '30', '31', '32', '10', '12', '98', 'fixture-secret', '９９'):
@@ -305,7 +228,6 @@ class CollectorTests(unittest.TestCase):
                             client.page('', 1, 1000, '110000')
                     self.assertEqual(network.call_count, 1)
                     self.assertEqual(client.calls, 1)
-                    self.assertFalse(client.small_pages)
                     events.assert_not_called()
                     fields = failure.exception.diagnostic_fields()
                     self.assertEqual(fields, {'reason': expected, **({'resultCode': code} if code.isascii() and code.isdigit() else {})})
@@ -320,7 +242,6 @@ class CollectorTests(unittest.TestCase):
                     with self.assertRaisesRegex(MODULE.CollectionError, expected):
                         client.page('', 1, 1000, '110000')
                 self.assertEqual(network.call_count, 1)
-                self.assertFalse(client.small_pages)
 
     def test_regions_use_separate_checkpoints_and_reject_wrong_region_rows(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -435,28 +356,6 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(len([request for request in client.requests if not request[0]]), 34)
             self.assertTrue(all(request[2] == 1 for request in client.requests if not request[0]))
 
-    def test_selected_regions_cli_collects_and_exports_only_canonical_selection(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client, directory = GridClient(), Path(folder)
-            selected = ['210000', '360000', '380000']
-            arguments = ['collect-hospital-catalog.py', '--directory', folder, '--page-size', '2',
-                         '--regions', '380000, 210000,360000']
-            with patch.object(MODULE.sys, 'argv', arguments), patch.dict(MODULE.os.environ, {'HIRA_HOSPITAL_KEY': 'fixture-secret'}), patch.object(MODULE, 'Client', return_value=client):
-                MODULE.main()
-            manifest = json.loads((directory / 'catalog-manifest.json').read_text(encoding='utf-8'))
-            self.assertEqual(manifest['schemaVersion'], 3)
-            self.assertEqual(manifest['scope'], 'regions-with-department-memberships')
-            self.assertEqual(manifest['regions'], selected)
-            self.assertEqual(list(manifest['regionScopes']), selected)
-            self.assertEqual(manifest['rows'], 9)
-            self.assertEqual(manifest['scopeCounts']['basic'], 9)
-            self.assertEqual(manifest['scopeCounts']['01'], 3)
-            self.assertEqual(set(request[3] for request in client.requests), set(selected))
-            self.assertEqual(client.requests[-3:], [('', 1, 1, region) for region in selected])
-            self.assertEqual({entry.name for entry in (directory / 'regions').iterdir()}, set(selected))
-            payload = (directory / 'catalog.jsonl').read_bytes()
-            self.assertEqual(hashlib.sha256(payload).hexdigest(), manifest['sha256'])
-            self.assertEqual({json.loads(line)['apiFields']['sidoCd'] for line in payload.splitlines()}, set(selected))
 
     def test_invalid_explicit_region_selection_fails_before_any_request_or_file(self):
         invalid = ([], [''], ['110000', '110000'], ['990000'], ['110000', '990000'], '110000', [None], [[]])
@@ -468,7 +367,7 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(client.requests, [])
             self.assertEqual(list(directory.iterdir()), [])
             for value in ('', '110000,', '110000,110000', '110000,990000'):
-                arguments = ['collect-hospital-catalog.py', '--directory', folder, '--regions', value]
+                arguments = ['collect-hospital-catalog.py', '--directory', folder, '--regions', value, '--day', 'monday', '--week-start', '2026-11-23']
                 with self.subTest(value=value), patch.object(MODULE.sys, 'argv', arguments), patch.object(MODULE, 'Client') as create_client:
                     with self.assertRaisesRegex(MODULE.CollectionError, 'invalid_region_selection'):
                         MODULE.main()

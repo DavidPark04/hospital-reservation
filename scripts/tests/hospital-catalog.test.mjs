@@ -165,6 +165,107 @@ async function withCatalogDb(check) {
   try {await check(db);}finally{await db.dropDatabase();await client.close();}
 }
 
+const recoveryMonday='2026-11-22T15:05:00.000Z',recoverySunday='2026-11-28T15:10:00.000Z';
+function recoverySnapshot(region='110000',originalDay='monday') {
+  const documents=regionDocuments(region,8,recoveryMonday);
+  documents[1]=changedDocument(documents[1],recoverySunday,{addr:'recovered address'});
+  const snapshot=scopedSnapshot(documents,[region],recoveryMonday);
+  Object.assign(snapshot.manifest,{schemaVersion:4,lastFetchedAt:recoverySunday,completedAt:recoverySunday,
+    recovery:{mode:'sunday-failed-requests',weekStartKst:'2026-11-23',originalDay,attempt:1,recoveredAt:recoverySunday}});
+  snapshot.manifest.scopeTimes.basic.lastFetchedAt=recoverySunday;
+  snapshot.manifest.regionScopes[region].scopeTimes.basic.lastFetchedAt=recoverySunday;
+  return snapshot;
+}
+
+test('Sunday recovery validates same-week reused pages while ordinary snapshots retain the 48-hour limit',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    const snapshot=recoverySnapshot();
+    await writeScopedSnapshot(directory,snapshot);
+    assert.equal((await validateSnapshot(directory,new Date(recoverySunday))).documents.size,8);
+    snapshot.manifest.schemaVersion=3;
+    await writeScopedSnapshot(directory,snapshot);
+    await assert.rejects(validateSnapshot(directory,new Date(recoverySunday)),/invalid_catalog_recovery/);
+    delete snapshot.manifest.recovery;
+    await writeScopedSnapshot(directory,snapshot);
+    await assert.rejects(validateSnapshot(directory,new Date(recoverySunday)),/stale_or_invalid_snapshot_time/);
+    const subset=recoverySnapshot('360000','wednesday');
+    await writeScopedSnapshot(directory,subset);
+    assert.equal((await validateSnapshot(directory,new Date(recoverySunday))).documents.size,8);
+    const empty=scopedSnapshot([],['240000'],recoveryMonday);
+    Object.assign(empty.manifest,{schemaVersion:4,completedAt:recoverySunday,recovery:{...recoverySnapshot('240000','saturday').manifest.recovery}});
+    await writeScopedSnapshot(directory,empty);
+    assert.equal((await validateSnapshot(directory,new Date(recoverySunday))).documents.size,0);
+  });
+});
+
+test('Sunday recovery rejects invalid metadata, extra attempts, wrong weeks and weekday/region mismatches',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    for(const [change,error] of [
+      [manifest=>{delete manifest.recovery;},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.attempt=2;},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.attempt='1';},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.mode='unrestricted-retry';},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.originalDay='sunday';},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.extra=true;},/invalid_catalog_recovery/],
+      [manifest=>{manifest.recovery.originalDay='tuesday';},/invalid_catalog_recovery_regions/],
+      [manifest=>{manifest.recovery.weekStartKst='2026-11-24';},/invalid_catalog_week/],
+      [manifest=>{manifest.recovery.weekStartKst='2026-02-30';},/invalid_catalog_week/],
+      [manifest=>{manifest.recovery.weekStartKst='2026-11-16';},/invalid_catalog_recovery_time/],
+      [manifest=>{manifest.recovery.weekStartKst='2026-11-30';},/invalid_catalog_recovery_time/],
+    ]) {
+      const snapshot=recoverySnapshot();change(snapshot.manifest);
+      await writeScopedSnapshot(directory,snapshot);
+      await assert.rejects(validateSnapshot(directory,new Date(recoverySunday)),error);
+    }
+  });
+});
+
+test('Sunday recovery enforces Sunday completion, same-week observations, eight-day and 48-hour expiry',async()=>{
+  await withRegionalSnapshot(async directory=>{
+    for(const change of [
+      manifest=>{manifest.recovery.recoveredAt='2026-11-28T15:11:00.000Z';},
+      manifest=>{manifest.completedAt=manifest.recovery.recoveredAt='2026-11-29T15:00:00.000Z';},
+      manifest=>{manifest.lastFetchedAt=manifest.completedAt=manifest.recovery.recoveredAt='2026-11-28T14:59:59.000Z';},
+      manifest=>{manifest.firstFetchedAt='2026-11-22T14:59:59.000Z';},
+      manifest=>{manifest.lastFetchedAt=manifest.completedAt=manifest.recovery.recoveredAt='2026-11-30T00:00:00.000Z';},
+      manifest=>{manifest.recovery.recoveredAt='2026-11-29T00:10:00';},
+    ]) {
+      const snapshot=recoverySnapshot();change(snapshot.manifest);
+      await writeScopedSnapshot(directory,snapshot);
+      await assert.rejects(validateSnapshot(directory,new Date('2026-11-30T01:00:00.000Z')),/invalid_catalog_recovery_time/);
+    }
+    const snapshot=recoverySnapshot();
+    await writeScopedSnapshot(directory,snapshot);
+    await assert.rejects(validateSnapshot(directory,new Date('2026-11-30T15:10:01.000Z')),/invalid_catalog_recovery_time/);
+    await assert.rejects(validateSnapshot(directory,new Date('2026-11-28T15:00:00.000Z')),/stale_or_invalid_snapshot_time/);
+    // Independently exceed eight days while keeping the completed snapshot under 48 hours old.
+    snapshot.manifest.completedAt=snapshot.manifest.recovery.recoveredAt='2026-11-29T14:59:00.000Z';
+    await writeScopedSnapshot(directory,snapshot);
+    await assert.rejects(validateSnapshot(directory,new Date('2026-11-30T15:06:00.000Z')),/invalid_catalog_recovery_time/);
+  });
+});
+
+test('Mongo Sunday recovery preserves unrelated hospitals and cannot bypass newer region generations', {skip:!process.env.MONGODB_TEST_URI},async()=>{
+  await withCatalogDb(async db=>{
+    const old='2026-11-16T00:00:00.000Z',seoul=regionDocuments('110000',8,old),busan=regionDocuments('210000',8,old);
+    await applySnapshot(db,scopedSnapshot([...seoul,...busan],REGION_CODES,old),{apply:true,progress:()=>{}});
+    const catalog=db.collection('hospitals'),runs=db.collection('hospitalImportRuns');
+    const unrelated=await catalog.find({'apiFields.sidoCd':'210000'}).sort({_id:1}).toArray();
+    const recovery=recoverySnapshot();
+    assert.equal((await applySnapshot(db,recovery,{apply:true,now:new Date(recoverySunday),progress:()=>{}})).verified,8);
+    assert.deepEqual(await catalog.find({'apiFields.sidoCd':'210000'}).sort({_id:1}).toArray(),unrelated);
+    const current='2026-11-29T16:00:00.000Z';
+    const newer=scopedSnapshot(regionDocuments('110000',8,current),['110000'],current);
+    await applySnapshot(db,newer,{apply:true,now:new Date(current),progress:()=>{}});
+    const marker=await runs.findOne({_id:'hospital-basic-region-current:110000'});
+    await assert.rejects(applySnapshot(db,recovery,{apply:true,now:new Date(current),progress:()=>{}}),/snapshot_older_than_published_catalog/);
+    assert.deepEqual(await runs.findOne({_id:'hospital-basic-region-current:110000'}),marker);
+    const invalid=recoverySnapshot();invalid.manifest.recovery.attempt=2;
+    const noDb={listCollections(){throw new Error('database_must_not_be_used');}};
+    await assert.rejects(applySnapshot(noDb,invalid,{apply:true,now:new Date(recoverySunday),progress:()=>{}}),/invalid_catalog_recovery/);
+  });
+});
+
 test('selected-region snapshots validate only declared regions and allow an explicitly empty subset',async()=>{
   await withRegionalSnapshot(async directory=>{
     const snapshot=scopedSnapshot(regionDocuments('110000'),['110000']);
